@@ -18,9 +18,9 @@
 
 AlpacaTradingAgent introduces powerful new capabilities specifically designed for Alpaca users:
 
-### 🔄 **Real-Time Alpaca Integration**
-- **Live Trading**: Direct integration with Alpaca API for real-time trading execution
-- **Paper & Live Trading**: Support for both paper trading (testing) and live trading with real money
+### 🔄 **Real-Time Alpaca Integration (Paper-Only)**
+- **Paper Trading Only**: Direct integration with the Alpaca Paper API for simulated execution; live trading is disabled
+- **No Live Trading Path**: The trading client is hard-locked to `paper=True`; live endpoints fail closed
 - **Margin Trading**: Full support for margin accounts, including short selling capabilities
 - **Portfolio Management**: Real-time portfolio tracking, position monitoring, and order management
 
@@ -128,11 +128,10 @@ For full functionality including real-time trading, you'll need to set up the fo
 2. **Edit the `.env` file** with your API keys:
 
 #### Essential APIs
-- **Alpaca API Keys** (Required for trading):
+- **Alpaca API Keys** (Required for paper trading):
   - Sign up at [Alpaca Markets](https://app.alpaca.markets/signup)
-  - Get your API key and secret from the dashboard
-  - Set `ALPACA_USE_PAPER=True` for paper trading (recommended for testing)
-  - Set `ALPACA_USE_PAPER=False` for live trading with real money
+  - Get your Paper API key and secret from the dashboard
+  - Keep `ALPACA_USE_PAPER=True` (paper-only; `False` fails closed, no live path exists)
 
 - **OpenAI API Key** (Default LLM provider and OpenAI web-search tools):
   - Sign up at [OpenAI Platform](https://platform.openai.com/api-keys)
@@ -244,9 +243,9 @@ The web interface offers comprehensive trading and analysis capabilities:
   <img src="assets/demo/config_and_run.gif" style="width: 100%; height: auto;">
 </p>
 
-**Live Trading Integration**
-- View current Alpaca positions and recent orders
-- Execute trades directly from the interface
+**Paper Trading Integration**
+- View current Alpaca Paper positions and recent orders
+- Execute paper trades directly from the interface
 - Liquidate positions with one-click functionality
 - Real-time portfolio value tracking
 
@@ -284,7 +283,7 @@ The web interface offers comprehensive trading and analysis capabilities:
 
 ### Implementation Details
 
-Built with LangGraph for flexibility and modularity. The enhanced version integrates with multiple financial APIs and supports both paper and live trading through Alpaca. We recommend `gpt-5-nano` for the cheapest testing runs or `gpt-5.4-nano` for a newer low-cost default, as the framework makes numerous API calls across all 5 agents.
+Built with LangGraph for flexibility and modularity. The enhanced version integrates with multiple financial APIs and executes paper-only through Alpaca. We recommend `gpt-5-nano` for the cheapest testing runs or `gpt-5.4-nano` for a newer low-cost default, as the framework makes numerous API calls across all 5 agents.
 
 ### Python Usage
 

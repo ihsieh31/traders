@@ -8,7 +8,6 @@ import pandas as pd
 from datetime import datetime
 import pytz
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-from tradingagents.dataflows.config import get_alpaca_use_paper
 
 
 ORDERS_PAGE_SIZE = 10
@@ -406,10 +405,8 @@ def get_recent_orders(page=1, page_size=ORDERS_PAGE_SIZE):
         return []
 
 def render_alpaca_account_section():
-    """Render the complete Alpaca account section"""
-    use_paper_str = get_alpaca_use_paper()
-    is_paper = str(use_paper_str).strip().lower() not in ("false", "0", "no")
-    account_mode_label = "Paper Trading" if is_paper else "Live Trading"
+    """Render the complete Alpaca Paper account section (paper-only)."""
+    account_mode_label = "Paper Trading"
     return html.Div([
         html.H4([
             html.I(className="fas fa-chart-line me-2"),

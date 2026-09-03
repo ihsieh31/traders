@@ -219,7 +219,12 @@ def get_alpaca_secret_key() -> str:
 
 
 def get_alpaca_use_paper() -> str:
-    """Get Alpaca paper trading flag from runtime, environment variables, or config."""
+    """Legacy paper flag reader (paper-only since Phase A.1).
+
+    Kept for diagnostics/backward compatibility only. Execution no longer
+    branches on this value: get_alpaca_trading_client() always builds
+    paper=True and fails closed on an explicit false/live setting.
+    """
     value = get_api_key("alpaca_use_paper", "ALPACA_USE_PAPER")
     # Handle boolean values from WebUI
     if isinstance(value, bool):

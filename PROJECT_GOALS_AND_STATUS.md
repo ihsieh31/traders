@@ -253,9 +253,9 @@ Phase A 只 gate execution 必要資料：account、positions、orders、fills �
 | Gate | 工作 | 必須通過的證據 | 狀態 |
 |---|---|---|---|
 | A0 基準 | clone、架構盤點、計劃、離線 suite | upstream SHA；`298 passed, 158 subtests passed` | 完成 |
-| A1 封死邊界 | Paper-only、strict TradeIntent、集中 execution entry | live config 無法送單；所有 structured failure 零 broker call | 未開始 |
-| A2 Durable intent | 三表 SQLite、兩層 ID、commit-before-submit | duplicate callback 與三個 crash points 都不重複送單 | 未開始 |
-| A3 Order recovery | state machine、partial fill、UNKNOWN、固定 retry | timeout/restart/partial/terminal transition tests | 未開始 |
+| A1 封死邊界 | Paper-only、strict TradeIntent、集中 execution entry | live config 無法送單；所有 structured failure 零 broker call | Accepted |
+| A2 Durable intent | 三表 SQLite、兩層 ID、commit-before-submit | duplicate callback 與三個 crash points 都不重複送單 | Accepted |
+| A3 Order recovery | state machine、partial fill、UNKNOWN、固定 retry | timeout/restart/partial/terminal transition tests | Accepted |
 | A4 Broker authority | BrokerSnapshot、startup/post-order reconciliation | mismatch/unavailable/duplicate/unknown 全部 `PAUSED` | 未開始 |
 | A5 無人值守 | freshness、single lock、periodic reconciliation | stale snapshot 與雙 process 都是零新增曝險 | 未開始 |
 | A6 Paper E2E | 真實 Alpaca Paper sandbox | submit、partial/cancel、timeout recovery、restart、reconcile 證據 | 未開始 |
@@ -317,13 +317,14 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 - [x] tracked secrets 與大於 50 MB 檔案檢查未發現候選項目。
 - [x] 計劃重整為 Phase A/B/C；durable outbox、fail-closed matrix、兩層 idempotency 與 retry policy 已明文化。
 - [x] Phase A 已拆成兩份 implementation 與兩份 fresh read-only acceptance prompts。
+- [x] Phase A.1 實作（A1–A3，約 45%）：paper-only hard lock、strict TradeIntent、唯一 execution entry、三表 SQLite durable outbox、兩層 idempotency、order state machine 與最小 UNKNOWN lookup/adopt — Accepted（fresh read-only acceptance 通過：`321 passed, 158 subtests passed`，對抗 PoC 9/9，mock only，無外部 call）。
 
 ### 尚未完成
 
-- [ ] Phase A 程式實作與驗收。
+- [ ] Phase A.2（A4–A6）：BrokerSnapshot、reconciliation、freshness、single lock、Paper E2E；A.1 已 Accepted，可開始。
 - [ ] 真實 Alpaca Paper credentials 與 A6 E2E 驗證。
 - [ ] Phase B、Phase C；目前明確延後。
 
 ## 13. 下一個具體行動
 
-只開始 A1：建立唯一 paper-only trading client、移除 live 設定與 UI/README 宣稱、讓 Risk Manager structured failure 固定 `NO_TRADE`，並移除 WebUI/CLI 的 legacy signal execution fallback。A1 驗收通過後停止，不提前建立 SQLite ledger。
+Phase A.1 已 Accepted：獨立 read-only 驗收通過（驗收矩陣 17/17、對抗 PoC 9/9、完整離線 suite 綠燈；owner 確認 worktree 即待驗收實作並 waive ponytail skill 缺席）。下一步按 `PHASE_A2_IMPLEMENTATION_PROMPT.md` 開始 Phase A.2（A4–A6）。

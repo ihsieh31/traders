@@ -1,12 +1,14 @@
 """Protective stop-loss / take-profit orders must actually reach the broker.
 
-Before this feature, ``execute_trade_intent`` recorded stops and targets as
-advisory metadata only (``protective_order_status: "advisory_only"``) — no
-protective order was ever submitted to Alpaca.  These tests drive the real
-bracket/OTO submission path with a mocked trading client.
+These tests drive the single durable execution entry
+(tradingagents.execution.ExecutionService) with a mocked broker: bracket/OTO
+legs ride on the parent submit, and a protective-leg rejection falls back to
+a plain market order without a second logical order.
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from tradingagents.agents.schemas import (
@@ -84,11 +86,10 @@ class BracketExecutionTests(unittest.TestCase):
         disabled_guard = MagicMock()
         disabled_guard.enabled = False
 
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
         self.patches = [
-            patch(
-                "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
-                return_value=self.client,
-            ),
             patch.object(
                 AlpacaUtils,
                 "get_latest_quote",
@@ -104,12 +105,17 @@ class BracketExecutionTests(unittest.TestCase):
         self.addCleanup(lambda: [p.stop() for p in self.patches])
 
     def _execute(self, intent, symbol="AAPL", current_position="NEUTRAL", allow_shorts=False):
-        return AlpacaUtils.execute_trade_intent(
-            symbol=symbol,
-            current_position=current_position,
+        from tradingagents.execution import ExecutionService
+
+        svc = ExecutionService(
+            db_path=str(Path(self._tmp.name) / "execution.db"),
+            broker_factory=lambda: self.client,
+        )
+        return svc.execute(
             trade_intent=intent.model_dump(mode="json"),
             dollar_amount=1000,
             allow_shorts=allow_shorts,
+            current_position=current_position,
         )
 
     def test_buy_with_stop_and_target_submits_bracket_order(self):
@@ -159,7 +165,7 @@ class BracketExecutionTests(unittest.TestCase):
 
     def test_config_flag_disables_bracket_submission(self):
         with patch(
-            "tradingagents.dataflows.alpaca_utils.get_config",
+            "tradingagents.dataflows.config.get_config",
             return_value={"protective_bracket_orders_enabled": False},
         ):
             result = self._execute(_intent(stop_loss="182.50", take_profit="195"))

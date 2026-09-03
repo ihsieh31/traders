@@ -103,8 +103,8 @@ def register_api_config_callbacks(app):
 
         env_vars = _env_values()
 
-        alpaca_paper_str = os.getenv("ALPACA_USE_PAPER", "True")
-        env_alpaca_paper = alpaca_paper_str.lower() in ("true", "1", "yes")
+        # Paper-only (Phase A.1): the UI never offers a live switch.
+        env_alpaca_paper = True
 
         env_keys_set = sum(1 for v in env_vars.values() if v)
         if env_keys_set > 0:
@@ -128,9 +128,12 @@ def register_api_config_callbacks(app):
                 env_status,
             )
 
-        apply_api_keys_to_config(stored_keys)
+        # Force paper-only even for legacy stored False values.
+        coerced = dict(stored_keys or {})
+        coerced["alpaca-paper"] = True
+        apply_api_keys_to_config(coerced)
         return tuple(stored_keys.get(api_id, "") for api_id in api_ids) + (
-            stored_keys.get("alpaca-paper", True),
+            True,
             env_status,
         )
 
@@ -151,12 +154,12 @@ def register_api_config_callbacks(app):
             raise PreventUpdate
 
         key_values = values[:len(api_ids)]
-        alpaca_paper = values[len(api_ids)]
         new_keys = {
             api_id: (value or "")
             for api_id, value in zip(api_ids, key_values)
         }
-        new_keys["alpaca-paper"] = alpaca_paper if alpaca_paper is not None else True
+        # Paper-only: ignore any client-supplied toggle value.
+        new_keys["alpaca-paper"] = True
 
         apply_api_keys_to_config(new_keys)
         return new_keys
@@ -194,10 +197,8 @@ def register_api_config_callbacks(app):
             raise PreventUpdate
 
         env_vars = _env_values()
-        alpaca_paper_str = os.getenv("ALPACA_USE_PAPER", "True")
-        alpaca_paper = alpaca_paper_str.lower() in ("true", "1", "yes")
-
-        return tuple(env_vars.get(api_id, "") for api_id in api_ids) + (alpaca_paper,)
+        # Paper-only: loading from .env never enables live trading.
+        return tuple(env_vars.get(api_id, "") for api_id in api_ids) + (True,)
     
     # Callback to update API key status indicators
     for api_config in api_configs:
@@ -239,7 +240,8 @@ def apply_api_keys_to_config(api_keys):
             "fred_api_key": api_keys.get("fred", ""),
             "coindesk_api_key": api_keys.get("coindesk", ""),
             "alpha_vantage_api_key": api_keys.get("alpha-vantage", ""),
-            "alpaca_use_paper": api_keys.get("alpaca-paper", True)
+            # Paper-only: runtime can never select live trading from the UI.
+            "alpaca_use_paper": True,
         }
         
         set_runtime_api_keys(config_keys)

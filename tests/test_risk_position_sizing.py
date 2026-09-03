@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -245,8 +246,50 @@ def _buy_intent(confidence="high"):
 
 
 class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
+    """Deterministic sizing runs inside the single durable entry.
+
+    These tests drive ExecutionService with a mocked broker and assert on
+    the submitted broker request (notional / protective legs) plus the
+    risk_sizing report. No real Alpaca calls.
+    """
+
+    def _service(self, tmp, broker):
+        from tradingagents.execution import ExecutionService
+
+        return ExecutionService(
+            db_path=str(Path(tmp) / "execution.db"),
+            broker_factory=lambda: broker,
+        )
+
+    def _broker(self, order_id="broker-1"):
+        broker = MagicMock()
+        order = MagicMock()
+        order.id = order_id
+        order.symbol = "AAPL"
+        order.side = "buy"
+        order.qty = 5
+        order.notional = None
+        order.status = "accepted"
+        broker.submit_order.return_value = order
+        close_order = MagicMock()
+        close_order.id = "close-1"
+        close_order.symbol = "AAPL"
+        close_order.side = "sell"
+        close_order.qty = 5
+        close_order.status = "accepted"
+        broker.close_position.return_value = close_order
+        return broker
+
+    def _disabled_guard(self):
+        guard = MagicMock()
+        guard.enabled = False
+        return guard
+
     def test_risk_sizing_shrinks_dollar_amount_before_execution(self):
-        with patch.object(
+        import tempfile
+
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils,
             "get_account_risk_snapshot",
             return_value={"equity": 100_000.0, "gross_exposure": 0.0},
@@ -256,14 +299,11 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             AlpacaUtils,
             "get_latest_quote",
             return_value={"bid_price": 100.0, "ask_price": 100.0},
-        ), patch.object(
-            AlpacaUtils,
-            "execute_trading_action",
-            return_value={"success": True, "symbol": "AAPL", "actions": []},
-        ) as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="NEUTRAL",
+        ), patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=50_000,
                 allow_shorts=False,
@@ -274,12 +314,18 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         sizing = result["risk_sizing"]
         self.assertTrue(sizing["applied"])
         self.assertAlmostEqual(sizing["notional"], 12_500.0, places=2)
-        self.assertAlmostEqual(
-            execute.call_args.kwargs["dollar_amount"], 12_500.0, places=2
-        )
+        # The sized stop rides the same parent submit as an OTO leg with
+        # whole-share qty resolved from the quote (12500 / 100 = 125).
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.stop_loss.stop_price), 96.0)
+        self.assertEqual(float(request.qty), 125.0)
+        self.assertEqual(result["protective_order_status"], "submitted_oto")
 
     def test_risk_sizing_rejection_blocks_order_submission(self):
-        with patch.object(
+        import tempfile
+
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils,
             "get_account_risk_snapshot",
             return_value={"equity": 100_000.0, "gross_exposure": 79_995.0},
@@ -289,10 +335,11 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             AlpacaUtils,
             "get_latest_quote",
             return_value={"bid_price": 100.0, "ask_price": 100.0},
-        ), patch.object(AlpacaUtils, "execute_trading_action") as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="NEUTRAL",
+        ), patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=10_000,
                 allow_shorts=False,
@@ -301,9 +348,12 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertIn("risk", result["error"].lower())
-        execute.assert_not_called()
+        broker.submit_order.assert_not_called()
+        broker.close_position.assert_not_called()
 
     def test_risk_sizing_stop_is_forwarded_to_protective_order_execution(self):
+        import tempfile
+
         sizing = SizingDecision(
             approved=True,
             notional=1_000.0,
@@ -312,16 +362,18 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             caps_applied=["requested_notional"],
             reason="test",
         )
-        with patch.object(
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils, "compute_risk_sized_amount", return_value=sizing
         ), patch.object(
             AlpacaUtils,
-            "execute_trading_action",
-            return_value={"success": True, "symbol": "AAPL", "actions": []},
-        ) as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="NEUTRAL",
+            "get_latest_quote",
+            return_value={"bid_price": 100.0, "ask_price": 100.0},
+        ), patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=1_000.0,
                 allow_shorts=False,
@@ -329,24 +381,22 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             )
 
         self.assertTrue(result["success"])
-        self.assertEqual(
-            execute.call_args.kwargs["protective_prices"]["stop_loss_price"],
-            95.0,
-        )
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.stop_loss.stop_price), 95.0)
 
     def test_risk_engine_data_failure_fails_open_with_warning(self):
-        with patch.object(
+        import tempfile
+
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils,
             "get_account_risk_snapshot",
             side_effect=RuntimeError("alpaca down"),
-        ), patch.object(
-            AlpacaUtils,
-            "execute_trading_action",
-            return_value={"success": True, "symbol": "AAPL", "actions": []},
-        ) as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="NEUTRAL",
+        ), patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=50_000,
                 allow_shorts=False,
@@ -355,12 +405,15 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertFalse(result["risk_sizing"]["applied"])
-        self.assertEqual(execute.call_args.kwargs["dollar_amount"], 50_000)
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.notional), 50_000)
         self.assertTrue(
             any("risk sizing" in w.lower() for w in result["intent_warnings"])
         )
 
     def test_risk_sizing_skipped_for_closing_actions(self):
+        import tempfile
+
         intent = build_trade_intent_from_risk_decision(
             symbol="AAPL",
             trading_mode="investment",
@@ -375,57 +428,58 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             ),
         ).model_dump(mode="json")
 
-        with patch.object(
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils, "get_account_risk_snapshot"
-        ) as snapshot, patch.object(
-            AlpacaUtils,
-            "execute_trading_action",
-            return_value={"success": True, "symbol": "AAPL", "actions": []},
-        ) as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="LONG",
+        ) as snapshot, patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=intent,
                 dollar_amount=10_000,
                 allow_shorts=False,
                 risk_params={},
+                current_position="LONG",
             )
 
         self.assertTrue(result["success"])
         snapshot.assert_not_called()
-        self.assertEqual(execute.call_args.kwargs["dollar_amount"], 10_000)
+        broker.close_position.assert_called_once()
 
     def test_risk_sizing_skipped_when_target_position_is_already_held(self):
-        with patch.object(
+        import tempfile
+
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils, "get_account_risk_snapshot"
-        ) as snapshot, patch.object(
-            AlpacaUtils,
-            "execute_trading_action",
-            return_value={"success": True, "symbol": "AAPL", "actions": []},
-        ) as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="LONG",
+        ) as snapshot, patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=10_000,
                 allow_shorts=False,
                 risk_params={},
+                current_position="LONG",
             )
 
         self.assertTrue(result["success"])
         snapshot.assert_not_called()
         self.assertNotIn("risk_sizing", result)
-        self.assertEqual(execute.call_args.kwargs["dollar_amount"], 10_000)
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.notional), 10_000)
 
     def test_default_call_without_risk_params_preserves_legacy_behavior(self):
-        with patch.object(
-            AlpacaUtils,
-            "execute_trading_action",
-            return_value={"success": True, "symbol": "AAPL", "actions": []},
-        ) as execute:
-            result = AlpacaUtils.execute_trade_intent(
-                symbol="AAPL",
-                current_position="NEUTRAL",
+        import tempfile
+
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=1_000,
                 allow_shorts=False,
@@ -433,48 +487,102 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         self.assertNotIn("risk_sizing", result)
-        self.assertEqual(execute.call_args.kwargs["dollar_amount"], 1_000)
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.notional), 1_000)
 
 
 class CalcQtyPriceFailureTests(unittest.TestCase):
-    def test_buy_without_price_data_fails_instead_of_guessing_quantity(self):
-        with patch.object(
+    """Size honesty inside the single durable entry.
+
+    Plain notional orders never need a price guess. Broker-side protective
+    legs need whole-share qty: without a trustworthy quote the service
+    submits a plain market order (advisory) instead of guessing shares.
+    """
+
+    def _service(self, tmp, broker):
+        from tradingagents.execution import ExecutionService
+
+        return ExecutionService(
+            db_path=str(Path(tmp) / "execution.db"),
+            broker_factory=lambda: broker,
+        )
+
+    def _broker(self):
+        broker = MagicMock()
+        order = MagicMock()
+        order.id = "broker-1"
+        order.symbol = "AAPL"
+        order.side = "buy"
+        order.qty = 5
+        order.notional = None
+        order.status = "accepted"
+        broker.submit_order.return_value = order
+        return broker
+
+    def _disabled_guard(self):
+        guard = MagicMock()
+        guard.enabled = False
+        return guard
+
+    def test_plain_notional_needs_no_price_guess(self):
+        import tempfile
+
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils, "get_latest_quote", return_value={}
-        ), patch.object(AlpacaUtils, "place_market_order") as place_order:
-            result = AlpacaUtils.execute_trading_action(
-                symbol="AAPL",
-                current_position="NEUTRAL",
-                signal="BUY",
+        ), patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
+                trade_intent=_buy_intent(),
                 dollar_amount=1_000,
                 allow_shorts=False,
             )
 
-        place_order.assert_not_called()
-        self.assertFalse(result["success"])
-        buy_action = result["actions"][0]
-        self.assertFalse(buy_action["result"]["success"])
-        self.assertIn("price", buy_action["result"]["error"].lower())
+        self.assertTrue(result["success"])
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.notional), 1_000)
 
-    def test_budget_below_one_share_does_not_exceed_the_notional_cap(self):
-        disabled_guard = MagicMock()
-        disabled_guard.enabled = False
-        with patch(
-            "tradingagents.safety.get_safety_guard", return_value=disabled_guard
-        ), patch.object(
-            AlpacaUtils,
-            "get_latest_quote",
-            return_value={"bid_price": 500.0, "ask_price": 501.0},
-        ), patch.object(AlpacaUtils, "place_market_order") as place_order:
-            result = AlpacaUtils.execute_trading_action(
-                symbol="AAPL",
-                current_position="NEUTRAL",
-                signal="BUY",
-                dollar_amount=100.0,
+    def test_protective_legs_without_quote_fall_back_to_plain(self):
+        import tempfile
+
+        from tradingagents.agents.schemas import build_trade_intent_from_risk_decision as build
+
+        intent = build(
+            symbol="AAPL",
+            trading_mode="investment",
+            current_position="NEUTRAL",
+            allow_shorts=False,
+            trade_date="2026-01-02",
+            decision=RiskDecision(
+                action=ExecutableAction.BUY,
+                confidence="high",
+                risk_rationale="Buy setup.",
+                required_controls="Stop at 95, target 110.",
+                stop_loss="95",
+                take_profit="110",
+            ),
+        ).model_dump(mode="json")
+        broker = self._broker()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            AlpacaUtils, "get_latest_quote", return_value={}
+        ), patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=self._disabled_guard(),
+        ):
+            result = self._service(tmp, broker).execute(
+                trade_intent=intent,
+                dollar_amount=1_000,
                 allow_shorts=False,
             )
 
-        self.assertFalse(result["success"])
-        place_order.assert_not_called()
+        # No share quantity was guessed: plain notional order, advisory status.
+        self.assertTrue(result["success"])
+        request = broker.submit_order.call_args[0][0]
+        self.assertEqual(float(request.notional), 1_000)
+        self.assertIsNone(getattr(request, "stop_loss", None))
+        self.assertEqual(result["protective_order_status"], "advisory_only")
 
 
 if __name__ == "__main__":

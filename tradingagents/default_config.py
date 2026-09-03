@@ -172,6 +172,8 @@ DEFAULT_CONFIG = {
     "finnhub_api_key": None,
     "alpaca_api_key": None,
     "alpaca_secret_key": None,
-    "alpaca_use_paper": "True",  # Set to "True" to use paper trading, "False" for live trading
+    # Paper-only (Phase A.1): live trading is unsupported. Keep "True";
+    # an explicit False fails closed in get_alpaca_trading_client().
+    "alpaca_use_paper": "True",
     "coindesk_api_key": None,
 }

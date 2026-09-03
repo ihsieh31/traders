@@ -217,15 +217,18 @@ def create_api_config_modal():
     # Build API input rows
     api_inputs = [create_api_input_row(api) for api in API_CONFIGS]
     
-    # Add Alpaca paper trading toggle
+    # Phase A.1 paper-only: live trading removed. The switch is kept only
+    # as a disabled, always-True placeholder so legacy callbacks/storage
+    # keep working; it can never enable a live path.
     alpaca_paper_toggle = dbc.Row([
         dbc.Col([
             dbc.Label([
                 html.I(className="fas fa-flask me-2"),
-                "Alpaca Paper Trading"
+                "Alpaca Paper Trading (paper-only)"
             ], className="fw-bold"),
             html.Small(
-                "Enable paper trading mode (recommended for testing)",
+                "This build is paper-only. Live trading is disabled and any "
+                "live endpoint setting fails closed.",
                 className="text-muted d-block mb-1"
             ),
         ], width=8),
@@ -234,6 +237,7 @@ def create_api_config_modal():
                 id="api-alpaca-paper",
                 label="",
                 value=True,
+                disabled=True,
                 className="mt-2"
             ),
         ], width=4, className="d-flex align-items-center justify-content-end"),

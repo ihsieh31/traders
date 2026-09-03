@@ -112,9 +112,8 @@ class StructuredDecisionTests(unittest.TestCase):
             ),
         ).model_dump(mode="json")
 
-        with patch.object(
-            AlpacaUtils,
-            "execute_trading_action",
+        with patch(
+            "tradingagents.execution.service.ExecutionService.execute",
             return_value={"success": True, "symbol": "AAPL", "actions": []},
         ) as execute:
             result = AlpacaUtils.execute_trade_intent(
@@ -126,14 +125,10 @@ class StructuredDecisionTests(unittest.TestCase):
             )
 
         self.assertTrue(result["success"])
-        self.assertEqual(result["trade_intent"]["action"], "BUY")
-        execute.assert_called_once_with(
-            symbol="AAPL",
-            current_position="NEUTRAL",
-            signal="BUY",
-            dollar_amount=1000,
-            allow_shorts=False,
-        )
+        _, kwargs = execute.call_args
+        self.assertEqual(kwargs["trade_intent"]["action"], "BUY")
+        self.assertEqual(kwargs["dollar_amount"], 1000)
+        self.assertEqual(kwargs["allow_shorts"], False)
 
     def test_structured_failure_falls_back_to_plain_text(self):
         content = invoke_structured_or_freetext(

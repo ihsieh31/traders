@@ -8,6 +8,7 @@ import dash.dependencies
 import json
 
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.execution import ExecutionService
 from webui.components.alpaca_account import (
     ORDERS_PAGE_SIZE,
     render_orders_pagination,
@@ -25,14 +26,8 @@ def register_trading_callbacks(app):
         Input("api-keys-store", "data")
     )
     def update_account_title(stored_keys):
-        """Update account section title to reflect current paper/live trading mode"""
-        if isinstance(stored_keys, dict) and "alpaca-paper" in stored_keys:
-            use_paper_val = stored_keys["alpaca-paper"]
-        else:
-            from tradingagents.dataflows.config import get_alpaca_use_paper
-            use_paper_val = get_alpaca_use_paper()
-        is_paper = str(use_paper_val).strip().lower() not in ("false", "0", "no")
-        return f"Alpaca {'Paper' if is_paper else 'Live'} Trading Account"
+        """Paper-only account title (live trading removed in Phase A.1)."""
+        return "Alpaca Paper Trading Account"
 
     @app.callback(
         Output("orders-page-store", "data"),
@@ -126,16 +121,14 @@ def register_trading_callbacks(app):
             # Extract symbol from confirmation message
             symbol = message.split(" in ")[1].split("?")[0]
 
-            # Import AlpacaUtils for liquidation
-            from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-
-            # Execute liquidation
-            result = AlpacaUtils.close_position(symbol)
+            # Liquidation through the single execution entry (durable + paper-only).
+            result = ExecutionService().liquidate(symbol)
 
             if result.get("success"):
+                order_ref = result.get("broker_order_id") or result.get("order_id", "N/A")
                 return dbc.Alert([
                     html.I(className="fas fa-check-circle me-2"),
-                    f"Successfully liquidated position in {symbol}. Order ID: {result.get('order_id', 'N/A')}"
+                    f"Successfully liquidated position in {symbol}. Order ID: {order_ref}"
                 ], color="success", duration=5000, className="mt-3")
             else:
                 return dbc.Alert([

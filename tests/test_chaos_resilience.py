@@ -20,6 +20,28 @@ from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.safety.guardrails import SafetyGuard
 
 
+def _buy_intent():
+    from tradingagents.agents.schemas import (
+        ExecutableAction,
+        RiskDecision,
+        build_trade_intent_from_risk_decision,
+    )
+
+    return build_trade_intent_from_risk_decision(
+        symbol="AAPL",
+        trading_mode="investment",
+        current_position="NEUTRAL",
+        allow_shorts=False,
+        trade_date="2026-01-02",
+        decision=RiskDecision(
+            action=ExecutableAction.BUY,
+            confidence="medium",
+            risk_rationale="test",
+            required_controls="test",
+        ),
+    ).model_dump(mode="json")
+
+
 def _guard(tmp, **config):
     merged = {"safety_enabled": True}
     merged.update(config)
@@ -113,64 +135,98 @@ class NanAndGarbageEquityTests(unittest.TestCase):
 
 
 class MidFlipOutageTests(unittest.TestCase):
-    """API dies between closing one side and opening the other."""
+    """API dies between closing one side and opening the other.
 
-    def _run_flip(self, guard, close_result, open_side_effect):
-        with patch.object(AlpacaUtils, "close_position", return_value=close_result), \
-             patch.object(
-                 AlpacaUtils, "place_market_order", side_effect=open_side_effect
-             ), \
-             patch.object(AlpacaUtils, "_safety_context", return_value=(None, None)), \
-             patch.object(
-                 AlpacaUtils,
-                 "get_latest_quote",
-                 return_value={"bid_price": 100.0, "ask_price": 100.1},
-             ), \
-             patch("tradingagents.safety.get_safety_guard", return_value=guard):
-            return AlpacaUtils.execute_trading_action(
-                symbol="AAPL",
-                current_position="LONG",
-                signal="SHORT",
+    Driven through the single durable entry: the close leg commits first,
+    the open leg follows only when the close succeeded, and broker POST
+    outcomes feed the rejection breaker.
+    """
+
+    def _flip_intent(self):
+        from tradingagents.agents.schemas import (
+            ExecutableAction,
+            RiskDecision,
+            build_trade_intent_from_risk_decision,
+        )
+
+        return build_trade_intent_from_risk_decision(
+            symbol="AAPL",
+            trading_mode="trading",
+            current_position="LONG",
+            allow_shorts=True,
+            trade_date="2026-01-02",
+            decision=RiskDecision(
+                action=ExecutableAction.SHORT,
+                confidence="medium",
+                risk_rationale="flip",
+                required_controls="None.",
+            ),
+        ).model_dump(mode="json")
+
+    def _run_flip(self, tmp, guard, broker):
+        from tradingagents.execution import ExecutionService
+
+        svc = ExecutionService(
+            db_path=str(Path(tmp) / "execution.db"),
+            broker_factory=lambda: broker,
+        )
+        with patch("tradingagents.safety.get_safety_guard", return_value=guard):
+            return svc.execute(
+                trade_intent=self._flip_intent(),
                 dollar_amount=5000.0,
                 allow_shorts=True,
+                current_position="LONG",
             )
 
     def test_open_leg_failure_reports_failure_and_feeds_the_breaker(self):
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp, max_consecutive_rejections=5)
-            outcome = self._run_flip(
-                guard,
-                close_result={"success": True, "message": "closed"},
-                open_side_effect=[{"success": False, "error": "connection reset"}],
-            )
+            broker = Mock()
+            close_order = Mock()
+            close_order.id = "close-1"
+            close_order.status = "accepted"
+            broker.close_position.return_value = close_order
+            broker.submit_order.return_value = {
+                "success": False,
+                "error": "connection reset",
+            }
+            outcome = self._run_flip(tmp, guard, broker)
             self.assertFalse(outcome["success"])
-            actions = [a["action"] for a in outcome["actions"]]
-            self.assertEqual(actions, ["close_long", "open_short"])
+            roles = [r.get("status") for r in outcome["results"]]
+            self.assertEqual(len(roles), 2)
             # One success (close) then one rejection (open): streak is 1.
             self.assertEqual(guard.consecutive_rejections(), 1)
 
     def test_close_leg_failure_never_attempts_the_open_leg(self):
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp)
+            broker = Mock()
+            broker.close_position.return_value = {
+                "success": False,
+                "error": "504 gateway timeout",
+            }
             open_order = Mock()
-            outcome = self._run_flip(
-                guard,
-                close_result={"success": False, "error": "504 gateway timeout"},
-                open_side_effect=open_order,
-            )
+            broker.submit_order = open_order
+            outcome = self._run_flip(tmp, guard, broker)
             self.assertFalse(outcome["success"])
             open_order.assert_not_called()
 
-    def test_unexpected_exception_mid_flip_returns_error_dict(self):
+    def test_unexpected_exception_mid_flip_goes_unknown_without_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp)
-            outcome = self._run_flip(
-                guard,
-                close_result={"success": True},
-                open_side_effect=ConnectionError("socket closed mid-request"),
+            broker = Mock()
+            close_order = Mock()
+            close_order.id = "close-1"
+            close_order.status = "accepted"
+            broker.close_position.return_value = close_order
+            broker.submit_order.side_effect = ConnectionError(
+                "socket closed mid-request"
             )
+            outcome = self._run_flip(tmp, guard, broker)
             self.assertFalse(outcome["success"])
-            self.assertIn("error", outcome)
+            self.assertTrue(outcome.get("has_unknown"))
+            # Ambiguous POST: exactly one attempt, never an immediate retry.
+            self.assertEqual(broker.submit_order.call_count, 1)
 
 
 class KillSwitchAndBreakerFlowTests(unittest.TestCase):
@@ -178,23 +234,23 @@ class KillSwitchAndBreakerFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp)
             guard.engage_kill_switch("chaos drill")
-            broker_call = Mock()
-            with patch.object(AlpacaUtils, "close_position", broker_call), \
-                 patch.object(AlpacaUtils, "place_market_order", broker_call), \
-                 patch.object(
-                     AlpacaUtils, "_safety_context", return_value=(None, None)
-                 ), \
-                 patch("tradingagents.safety.get_safety_guard", return_value=guard):
-                outcome = AlpacaUtils.execute_trading_action(
-                    symbol="AAPL",
-                    current_position="NEUTRAL",
-                    signal="BUY",
+            broker_factory = Mock()
+            with patch(
+                "tradingagents.safety.get_safety_guard", return_value=guard
+            ):
+                from tradingagents.execution import ExecutionService
+
+                outcome = ExecutionService(
+                    db_path=str(Path(tmp) / "execution.db"),
+                    broker_factory=broker_factory,
+                ).execute(
+                    trade_intent=_buy_intent(),
                     dollar_amount=1000.0,
                     allow_shorts=False,
                 )
             self.assertFalse(outcome["success"])
             self.assertTrue(outcome.get("safety_blocked"))
-            broker_call.assert_not_called()
+            broker_factory.assert_not_called()
 
     def test_rejection_streak_halts_subsequent_order_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -209,24 +265,21 @@ class KillSwitchAndBreakerFlowTests(unittest.TestCase):
         """Broker down: orders are not wrongly blocked by absent breakers."""
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp, daily_loss_halt_pct=10.0, max_drawdown_halt_pct=15.0)
-            with patch.object(
-                AlpacaUtils,
-                "place_market_order",
-                return_value={"success": True, "message": "ok"},
-            ), \
-                 patch.object(
-                     AlpacaUtils, "_safety_context", return_value=(None, None)
-                 ), \
-                 patch.object(
-                     AlpacaUtils,
-                     "get_latest_quote",
-                     return_value={"bid_price": 100.0, "ask_price": 100.1},
-                 ), \
-                 patch("tradingagents.safety.get_safety_guard", return_value=guard):
-                outcome = AlpacaUtils.execute_trading_action(
-                    symbol="AAPL",
-                    current_position="NEUTRAL",
-                    signal="BUY",
+            broker = Mock()
+            order = Mock()
+            order.id = "broker-1"
+            order.status = "accepted"
+            broker.submit_order.return_value = order
+            with patch(
+                "tradingagents.safety.get_safety_guard", return_value=guard
+            ):
+                from tradingagents.execution import ExecutionService
+
+                outcome = ExecutionService(
+                    db_path=str(Path(tmp) / "execution.db"),
+                    broker_factory=lambda: broker,
+                ).execute(
+                    trade_intent=_buy_intent(),
                     dollar_amount=1000.0,
                     allow_shorts=False,
                 )
@@ -343,15 +396,9 @@ class PositionFetchOutageTests(unittest.TestCase):
             with patch(
                 "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
                 return_value=client,
-            ), patch.object(
-                AlpacaUtils,
-                "get_latest_quote",
-                return_value={"bid_price": 100.0, "ask_price": 100.1},
-            ), patch.object(
-                AlpacaUtils,
-                "place_market_order",
-                return_value={"success": True},
-            ) as place_order, patch(
+            ), patch(
+                "webui.components.analysis.ExecutionService",
+            ) as service_cls, patch(
                 "tradingagents.safety.get_safety_guard", return_value=guard
             ), patch(
                 "tradingagents.portfolio.adjust_new_position_notional",
@@ -361,7 +408,8 @@ class PositionFetchOutageTests(unittest.TestCase):
             ):
                 execute_trade_after_analysis("AAPL", allow_shorts=False, trade_amount=1000)
 
-            place_order.assert_not_called()
+            # Strict position check aborts before the single entry is reached.
+            service_cls.assert_not_called()
             self.assertIn("error", state.get("trading_results") or {})
 
 

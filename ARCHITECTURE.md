@@ -25,7 +25,7 @@ and operators who want to know where things happen and why.
 │                                                               typed TradeIntent          │
 └──────────────────────────────────────────────────────────────────┬───────────────────────┘
                                                                    ▼
-                                      Alpaca execution (paper or live) — market/close orders
+                                       Alpaca Paper execution (paper-only) — market/close orders
 ```
 
 Final decisions are executable actions (`BUY/HOLD/SELL` in investment mode,
@@ -63,8 +63,13 @@ advisory.
    risky/safe/neutral risk debate stress-tests it; the risk manager issues
    the final decision plus a typed `TradeIntent`.
 5. **Signal + execution** — `SignalProcessor` extracts the executable
-   action. If auto-trading is on, the WebUI executes it via
-   `AlpacaUtils.execute_trade_intent` / `execute_trading_action`.
+   action. If auto-trading is on, the WebUI executes the typed `TradeIntent`
+   via the single durable entry `tradingagents.execution.ExecutionService`
+   (SQLite outbox commit before any broker POST, deterministic
+   `client_order_id`, UNKNOWN lookup/adopt). Raw-signal execution
+   (`AlpacaUtils.execute_trading_action`) is disabled fail-closed, and the
+   direct helpers (`place_market_order` / `place_protected_market_order` /
+   `close_position`) were removed; `AlpacaUtils` keeps data/query helpers only.
 6. **Decision log** — the completed decision is appended to a markdown
    memory log as `pending`, and resolved later with realized returns and a
    reflection once the outcome is known.
@@ -98,8 +103,9 @@ Two complementary memories:
 
 `tradingagents/default_config.py` is the single source of truth; the WebUI
 and CLI pass overrides per run, and API keys come from `.env` /
-environment (see `env.sample`). `ALPACA_USE_PAPER=True` keeps everything
-on the paper API — never develop against live trading.
+environment (see `env.sample`). This build is paper-only: the trading client
+is hard-locked to `paper=True`, `ALPACA_USE_PAPER=False` fails closed, and
+only the explicit paper endpoint is allowed.
 
 ## Testing conventions
 

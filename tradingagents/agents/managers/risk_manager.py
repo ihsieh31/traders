@@ -15,7 +15,7 @@ from ..utils.report_context import (
     get_agent_context_bundle,
     build_debate_digest,
 )
-from ..utils.structured import bind_structured, invoke_structured_object_or_freetext
+from ..utils.structured import bind_structured, invoke_risk_structured_strict
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.prompts import render_prompt
 
@@ -149,37 +149,98 @@ def create_risk_manager(llm, memory, config=None):
         # Capture the COMPLETE prompt that gets sent to the LLM
         capture_agent_prompt("final_trade_decision", prompt, company_name)
 
-        response_content, structured_decision = invoke_structured_object_or_freetext(
+        # Strict Risk boundary (Phase A.1): structured bind/invoke/
+        # validation/timeout/provider/empty/illegal failures all emit
+        # INVALID/NO_TRADE. Free-text/Markdown/regex must never become a
+        # tradable action. Analyst/Research/Trader keep their fallbacks;
+        # only risk is strict because only risk produces TradeIntent.
+        trading_mode = trading_context["mode"]
+        neutral_action = "NEUTRAL" if trading_mode == "trading" else "HOLD"
+        response_content, structured_decision, strict_error = invoke_risk_structured_strict(
             structured_llm,
-            llm,
             prompt,
             render_risk_decision,
             "Risk Manager",
+            schema=RiskDecision,
         )
 
-        # Extract the recommendation from the response
-        trading_mode = trading_context["mode"]
-        extracted_recommendation = extract_recommendation(response_content, trading_mode)
-        if not extracted_recommendation:
-            extracted_recommendation = "NEUTRAL" if trading_mode == "trading" else "HOLD"
-        
+        if strict_error is not None or structured_decision is None:
+            reason = strict_error or "structured_unavailable"
+            final_decision_content = (
+                f"INVALID risk decision ({reason}). NO_TRADE.\n\n"
+                f"Structured RiskDecision was unavailable; no action is inferred "
+                f"from free text. Review manually.\n\n"
+                f"FINAL TRANSACTION PROPOSAL: **{neutral_action}**"
+            )
+            trade_intent = None
+            extracted_recommendation = neutral_action
+            new_risk_debate_state = {
+                "judge_decision": final_decision_content,
+                "history": risk_debate_state["history"],
+                "risky_history": risk_debate_state["risky_history"],
+                "safe_history": risk_debate_state["safe_history"],
+                "neutral_history": risk_debate_state["neutral_history"],
+                "risky_messages": risk_debate_state.get("risky_messages", []),
+                "safe_messages": risk_debate_state.get("safe_messages", []),
+                "neutral_messages": risk_debate_state.get("neutral_messages", []),
+                "latest_speaker": "Judge",
+                "current_risky_response": risk_debate_state["current_risky_response"],
+                "current_safe_response": risk_debate_state["current_safe_response"],
+                "current_neutral_response": risk_debate_state["current_neutral_response"],
+                "count": risk_debate_state["count"],
+            }
+            return {
+                "risk_debate_state": new_risk_debate_state,
+                "final_trade_decision": final_decision_content,
+                "final_trade_intent": trade_intent,
+                "trading_mode": trading_mode,
+                "current_position": current_position,
+                "recommended_action": extracted_recommendation,
+                "risk_invalid_reason": reason,
+            }
+
+        # Structured success: still fail closed on illegal cross-mode actions.
+        allowed_actions = (
+            {"LONG", "NEUTRAL", "SHORT"}
+            if trading_mode == "trading"
+            else {"BUY", "HOLD", "SELL"}
+        )
+        action_value = structured_decision.action.value
+        if action_value not in allowed_actions:
+            reason = f"illegal_action_for_mode:{action_value}:{trading_mode}"
+            final_decision_content = (
+                f"INVALID risk decision ({reason}). NO_TRADE.\n\n"
+                f"FINAL TRANSACTION PROPOSAL: **{neutral_action}**"
+            )
+            new_risk_debate_state = {
+                "judge_decision": final_decision_content,
+                "history": risk_debate_state["history"],
+                "risky_history": risk_debate_state["risky_history"],
+                "safe_history": risk_debate_state["safe_history"],
+                "neutral_history": risk_debate_state["neutral_history"],
+                "risky_messages": risk_debate_state.get("risky_messages", []),
+                "safe_messages": risk_debate_state.get("safe_messages", []),
+                "neutral_messages": risk_debate_state.get("neutral_messages", []),
+                "latest_speaker": "Judge",
+                "current_risky_response": risk_debate_state["current_risky_response"],
+                "current_safe_response": risk_debate_state["current_safe_response"],
+                "current_neutral_response": risk_debate_state["current_neutral_response"],
+                "count": risk_debate_state["count"],
+            }
+            return {
+                "risk_debate_state": new_risk_debate_state,
+                "final_trade_decision": final_decision_content,
+                "final_trade_intent": None,
+                "trading_mode": trading_mode,
+                "current_position": current_position,
+                "recommended_action": neutral_action,
+                "risk_invalid_reason": reason,
+            }
+
+        extracted_recommendation = action_value
         final_decision_content = ensure_final_transaction_proposal(
             response_content, extracted_recommendation, trading_mode
         )
-
-        if structured_decision is None:
-            structured_decision = RiskDecision(
-                action=ExecutableAction(extracted_recommendation),
-                confidence="unknown",
-                risk_rationale=(
-                    "Structured risk output was unavailable; execution intent was derived "
-                    "from the final transaction proposal line."
-                ),
-                required_controls=(
-                    "Review the Markdown risk report manually. Broker stop-loss and "
-                    "take-profit controls are not inferred from free text."
-                ),
-            )
 
         trade_intent = build_trade_intent_from_risk_decision(
             symbol=company_name,

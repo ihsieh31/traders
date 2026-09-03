@@ -8,6 +8,7 @@ from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.execution import ExecutionService
 from tradingagents.agents.schemas import trade_intent_action
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
 from webui.utils.state import app_state
@@ -134,30 +135,37 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
             return
         print(f"[TRADE] Current position for {ticker}: {current_position}")
 
-        # Execute the typed intent when present; fall back to legacy signal execution
-        # for older runs or providers that could not produce structured output.
-        if trade_intent:
-            risk_params = (
-                dict(DEFAULT_CONFIG.get("risk_sizing_params") or {})
-                if DEFAULT_CONFIG.get("risk_sizing_enabled")
-                else None
+        # Single execution entry (Phase A.1 strict boundary): a missing or
+        # schema-invalid TradeIntent is fail-closed with zero broker calls.
+        # Legacy signal/Markdown/regex fallback is intentionally removed:
+        # display compatibility (recommended_action text) never implies
+        # tradability.
+        if not trade_intent:
+            print(
+                f"[TRADE] No schema-valid TradeIntent for {ticker}; "
+                "fail-closed with zero broker calls (legacy signal fallback removed)"
             )
-            result = AlpacaUtils.execute_trade_intent(
-                symbol=ticker,
-                current_position=current_position,
-                trade_intent=trade_intent,
-                dollar_amount=trade_amount,
-                allow_shorts=allow_shorts,
-                risk_params=risk_params,
-            )
-        else:
-            result = AlpacaUtils.execute_trading_action(
-                symbol=ticker,
-                current_position=current_position,
-                signal=recommended_action,
-                dollar_amount=trade_amount,
-                allow_shorts=allow_shorts
-            )
+            state["trading_results"] = {
+                "error": (
+                    "Missing schema-valid TradeIntent; trade skipped fail-closed. "
+                    "Legacy signal execution is disabled in Phase A.1."
+                ),
+                "fail_closed": True,
+                "broker_attempted": False,
+            }
+            return
+        service = ExecutionService()
+        result = service.execute(
+            trade_intent=trade_intent,
+            dollar_amount=trade_amount,
+            allow_shorts=allow_shorts,
+        )
+        # Normalize to the legacy result shape expected below.
+        if "actions" not in result:
+            result = dict(result)
+            result["actions"] = [
+                {"action": "execution_service", "result": result}
+            ] if not result.get("success") else []
 
         # Check individual action results and provide detailed feedback
         successful_actions = []

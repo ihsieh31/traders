@@ -216,13 +216,103 @@ class StatusAndTogglesTests(unittest.TestCase):
 
 
 class ExecutionIntegrationTests(unittest.TestCase):
-    """execute_trading_action must consult the safety layer before any order."""
+    """ExecutionService must consult the safety layer before any broker POST."""
 
     @classmethod
     def setUpClass(cls):
         # Importing dataflows first trips a known circular import on main;
         # importing agents first is the production-safe order.
         import tradingagents.agents  # noqa: F401
+
+    def _service(self, tmp, broker_factory):
+        from tradingagents.execution import ExecutionService
+
+        return ExecutionService(
+            db_path=str(Path(tmp) / "execution.db"),
+            broker_factory=broker_factory,
+        )
+
+    def _buy_intent(self):
+        from tradingagents.agents.schemas import (
+            ExecutableAction,
+            RiskDecision,
+            build_trade_intent_from_risk_decision,
+        )
+
+        return build_trade_intent_from_risk_decision(
+            symbol="AAPL",
+            trading_mode="investment",
+            current_position="NEUTRAL",
+            allow_shorts=False,
+            trade_date="2026-01-02",
+            decision=RiskDecision(
+                action=ExecutableAction.BUY,
+                confidence="medium",
+                risk_rationale="test",
+                required_controls="test",
+            ),
+        ).model_dump(mode="json")
+
+    def _sell_intent(self):
+        from tradingagents.agents.schemas import (
+            ExecutableAction,
+            RiskDecision,
+            build_trade_intent_from_risk_decision,
+        )
+
+        return build_trade_intent_from_risk_decision(
+            symbol="AAPL",
+            trading_mode="investment",
+            current_position="LONG",
+            allow_shorts=False,
+            trade_date="2026-01-02",
+            decision=RiskDecision(
+                action=ExecutableAction.SELL,
+                confidence="medium",
+                risk_rationale="exit",
+                required_controls="None.",
+            ),
+        ).model_dump(mode="json")
+
+    def _flip_intent(self):
+        from tradingagents.agents.schemas import (
+            ExecutableAction,
+            RiskDecision,
+            build_trade_intent_from_risk_decision,
+        )
+
+        return build_trade_intent_from_risk_decision(
+            symbol="AAPL",
+            trading_mode="trading",
+            current_position="LONG",
+            allow_shorts=True,
+            trade_date="2026-01-02",
+            decision=RiskDecision(
+                action=ExecutableAction.SHORT,
+                confidence="medium",
+                risk_rationale="flip",
+                required_controls="None.",
+            ),
+        ).model_dump(mode="json")
+
+    def _mock_broker(self):
+        broker = MagicMock()
+        order = MagicMock()
+        order.id = "broker-1"
+        order.symbol = "AAPL"
+        order.side = "buy"
+        order.qty = 5
+        order.notional = None
+        order.status = "accepted"
+        broker.submit_order.return_value = order
+        close_order = MagicMock()
+        close_order.id = "close-1"
+        close_order.symbol = "AAPL"
+        close_order.side = "sell"
+        close_order.qty = 5
+        close_order.status = "accepted"
+        broker.close_position.return_value = close_order
+        return broker
 
     def _blocked_guard(self):
         guard = MagicMock(spec=SafetyGuard)
@@ -233,16 +323,13 @@ class ExecutionIntegrationTests(unittest.TestCase):
         return guard
 
     def test_blocked_verdict_prevents_broker_calls(self):
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-
         guard = self._blocked_guard()
-        with patch("tradingagents.safety.get_safety_guard", return_value=guard), patch(
-            "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client"
-        ) as client_factory:
-            result = AlpacaUtils.execute_trading_action(
-                symbol="AAPL",
-                current_position="NEUTRAL",
-                signal="BUY",
+        broker_factory = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tradingagents.safety.get_safety_guard", return_value=guard
+        ):
+            result = self._service(tmp, broker_factory).execute(
+                trade_intent=self._buy_intent(),
                 dollar_amount=1_000_000.0,
                 allow_shorts=False,
             )
@@ -250,23 +337,18 @@ class ExecutionIntegrationTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertTrue(result.get("safety_blocked"))
         self.assertIn("max trade notional exceeded", result["error"])
-        client_factory.assert_not_called()
+        broker_factory.assert_not_called()
 
     def test_order_results_feed_rejection_tracker(self):
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-
+        broker = self._mock_broker()
         guard = MagicMock(spec=SafetyGuard)
         guard.enabled = True
         guard.check_order.return_value = SafetyVerdict(allowed=True)
-        with patch("tradingagents.safety.get_safety_guard", return_value=guard), patch.object(
-            AlpacaUtils, "place_market_order", return_value={"success": True}
-        ), patch.object(
-            AlpacaUtils, "get_latest_quote", return_value={"bid_price": 100.0}
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tradingagents.safety.get_safety_guard", return_value=guard
         ):
-            AlpacaUtils.execute_trading_action(
-                symbol="AAPL",
-                current_position="NEUTRAL",
-                signal="BUY",
+            self._service(tmp, lambda: broker).execute(
+                trade_intent=self._buy_intent(),
                 dollar_amount=1_000.0,
                 allow_shorts=False,
             )
@@ -274,55 +356,41 @@ class ExecutionIntegrationTests(unittest.TestCase):
         guard.record_order_result.assert_called_with(True)
 
     def test_loss_breaker_does_not_trap_an_existing_position(self):
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-
         with tempfile.TemporaryDirectory() as tmp:
             guard = make_guard(tmp, max_consecutive_rejections=1)
             guard.record_order_result(False)
+            broker = self._mock_broker()
             with patch(
                 "tradingagents.safety.get_safety_guard", return_value=guard
-            ), patch.object(
-                AlpacaUtils,
-                "close_position",
-                return_value={"success": True},
-            ) as close_position:
-                result = AlpacaUtils.execute_trading_action(
-                    symbol="AAPL",
-                    current_position="LONG",
-                    signal="SELL",
+            ):
+                result = self._service(tmp, lambda: broker).execute(
+                    trade_intent=self._sell_intent(),
                     dollar_amount=10_000.0,
                     allow_shorts=False,
+                    current_position="LONG",
                 )
 
         self.assertTrue(result["success"])
-        close_position.assert_called_once_with("AAPL")
+        broker.close_position.assert_called_once_with("AAPL")
 
     def test_position_flip_closes_first_then_blocks_new_exposure(self):
-        from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-
         with tempfile.TemporaryDirectory() as tmp:
             guard = make_guard(tmp, max_trade_notional_usd=100.0)
+            broker = self._mock_broker()
             with patch(
                 "tradingagents.safety.get_safety_guard", return_value=guard
-            ), patch.object(
-                AlpacaUtils,
-                "close_position",
-                return_value={"success": True},
-            ) as close_position, patch.object(
-                AlpacaUtils, "place_market_order"
-            ) as place_order:
-                result = AlpacaUtils.execute_trading_action(
-                    symbol="AAPL",
-                    current_position="LONG",
-                    signal="SHORT",
+            ):
+                result = self._service(tmp, lambda: broker).execute(
+                    trade_intent=self._flip_intent(),
                     dollar_amount=1_000.0,
                     allow_shorts=True,
+                    current_position="LONG",
                 )
 
         self.assertFalse(result["success"])
         self.assertTrue(result["safety_blocked"])
-        close_position.assert_called_once_with("AAPL")
-        place_order.assert_not_called()
+        broker.close_position.assert_called_once_with("AAPL")
+        broker.submit_order.assert_not_called()
 
 
 class RunLoggerBudgetFeedTests(unittest.TestCase):

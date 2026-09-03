@@ -48,7 +48,7 @@ class ErrorDiagnostics:
             "solutions": [
                 "1. Get API keys from https://app.alpaca.markets/paper/dashboard/overview",
                 "2. Add to .env file: ALPACA_API_KEY=your_key and ALPACA_SECRET_KEY=your_secret",
-                "3. Ensure you're using the correct environment (paper vs live trading)",
+                "3. Use Alpaca Paper keys only: this build is paper-only and live paths fail closed",
                 "4. Check API key permissions include market data access"
             ],
             "links": [

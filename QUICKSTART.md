@@ -31,9 +31,9 @@ Edit `.env` — the minimum to run:
 | `FRED_API_KEY` | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) — macro analyst | optional |
 | `COINDESK_API_KEY` | crypto news | optional |
 
-> **Keep `ALPACA_USE_PAPER=True`.** Everything works against the paper
-> API; switch to live only when you have a tested, reviewed setup and
-> accept the risk.
+> **Paper-only: keep `ALPACA_USE_PAPER=True`.** Everything works against the
+> Alpaca Paper API. Live trading is disabled; `False` or a live endpoint
+> fails closed with zero broker calls.
 
 ## 3. Run
 
@@ -74,7 +74,7 @@ a fresh clone.
 | Symptom | Fix |
 |---|---|
 | `Alpaca API key or secret not found` | `.env` not loaded or keys empty — recheck step 2. |
-| `unauthorized` from Alpaca | Keys expired or live keys used against paper — regenerate paper keys. |
+| `unauthorized` from Alpaca | Paper keys expired — regenerate paper keys (live keys are unsupported). |
 | Analysis stalls at an analyst | Usually a rate limit; lower research depth or increase the start delays in settings. |
 | Crypto symbol not found | Use the slash format: `BTC/USD`, not `BTCUSD`. |
 
