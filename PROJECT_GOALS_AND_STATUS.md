@@ -1,244 +1,317 @@
-# Traders：專案目標與狀況
+# Traders：專案目標、執行計劃與目前狀況
+
+版本：2.0
 
 最後更新：2026-09-03
 
-基準來源：[huygiatrng/AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent)
-
-基準 commit：`8d9d770da9ecc108d70fd8a97caae032c53caad0`
-
 GitHub：[ihsieh31/traders](https://github.com/ihsieh31/traders)
 
-本機路徑：`/Users/zongen/Downloads/codex/tradingAlpaca`
+本機：`/Users/zongen/Downloads/codex/tradingAlpaca`
 
-## 1. 專案目標
+上游：[huygiatrng/AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) @ `8d9d770da9ecc108d70fd8a97caae032c53caad0`
 
-把 AlpacaTradingAgent 改造成一套可長時間自動執行、**只允許 Alpaca Paper Trading**、在任何不確定狀態下停止新增風險的多人 Agent 交易系統。
+## 1. 唯一目標
 
-本專案保留上游已完成的分析、辯論、風控、記憶、回測、WebUI、CLI 與告警能力，只補齊 P0 與 P1 的交易可靠性缺口。完成標準不是「能送出訂單」，而是重啟、逾時、重複執行、部分成交、資料過期與 broker/local 狀態不一致時，都不會猜測或重複下單。
+> **保留 AlpacaTradingAgent 的研究與策略系統，只重做最後「TradeIntent → Alpaca Paper → broker 真實狀態」這一段。**
 
-### 成功條件
+Phase A 完成後，系統必須能在單機、單 Alpaca Paper 帳戶上長時間自動執行。程式遇到重啟、重複 callback、部分成交、broker timeout、資料過期或本機與 broker 狀態不一致時，必須停止新增風險，不能猜測或盲目重送。
 
-- 任何 production 路徑都無法連到 Alpaca live trading endpoint。
-- 只有通過 strict schema 與 deterministic safety checks 的 `TradeIntent` 可以跨越交易邊界。
-- 每個 logical order 有固定 `client_order_id`，重試不會建立第二筆訂單。
-- SQLite ledger 能追蹤 intent、order、fill 與完整狀態轉移。
-- 啟動及下單後 reconciliation 以 Alpaca 狀態為權威；不一致時暫停交易。
-- 過期或無法取得的 account、position、quote 資料一律 `NO_TRADE`。
-- 同一帳戶同一時間最多一個 execution worker。
-- P1 corporate action、primary-source data 與 universe 功能保持小而可驗收。
+## 2. 現階段範圍
 
-## 2. 明確非目標
+### Active：Phase A — 安全可靠的 Paper execution
 
-P0/P1 階段不做以下項目：
+Phase A 是目前唯一實作範圍，包含原計劃中真正必要的 P0＋P1：
 
-- Live trading、真實資金或切換 paper/live 的設定。
-- PostgreSQL、DB role/ownership 架構或大量 migrations。
-- 完整 immutable evidence ledger、source authority framework 或 security master graph。
-- 搬入 Seven-Lens 全套 formal contracts；沿用現有 `TradeIntent`，只新增 execution 必要資料。
-- 重寫 LangGraph、多 Agent、LLM provider、風控、回測、WebUI 或告警。
-- 複雜分散式 lease；單機 SQLite/file lock 足以覆蓋目前部署模型。
+1. Paper-only hard lock。
+2. Strict `TradeIntent`，交易邊界 fail closed。
+3. 兩層 idempotency：analysis decision/intent，以及 broker `client_order_id`。
+4. SQLite execution ledger，以及先 commit、後送單的 durable outbox。
+5. Order state machine、partial fill 與 `UNKNOWN` recovery。
+6. 固定的 broker GET/POST timeout 與 retry policy。
+7. BrokerSnapshot 作為 account、position、order、fill、cash 的唯一權威來源。
+8. Startup、送單後及週期性 reconciliation。
+9. Account、position、order、quote freshness gate。
+10. Account-scoped single execution lock。
 
-需要多主機、多帳戶或實測發現 SQLite 吞吐不足時，才重新評估以上項目。
+Phase A 完成且取得真實 Alpaca Paper E2E 證據後，才可開始長期 Paper run。
 
-## 3. 現有架構與可沿用能力
+### Deferred：Phase B — 策略品質
 
-### 執行流程
+Phase B 不阻擋 Phase A 完成：
+
+- SEC filing 與 company IR primary sources。
+- Corporate-action quarantine：split、ticker change、delisting、non-tradable。
+- Sector exposure constraints。
+- 驗證並調整既有 correlation、regime、memory/reflection；不重寫。
+
+### Deferred：Phase C — 自動選股
+
+最後才做：
+
+```text
+Universe -> liquidity/eligibility filter -> deterministic ranking
+         -> top-N candidates -> existing multi-agent analysis
+```
+
+Phase A、B 一律先用人工 watchlist。這能避免在 execution 尚未可靠前，同時引入整個市場的資料與資本競爭複雜度。
+
+## 3. 不做的事情
+
+- Live trading、真實資金或 paper/live 切換設定。
+- PostgreSQL、DB roles、ORM、message queue 或 distributed lock。
+- 完整 immutable evidence platform、security master、symbol-lineage graph。
+- 20+ contracts、source authority hierarchy 或多輪 Risk rejection/resubmission。
+- 重寫 LangGraph、Agent debate、LLM provider、WebUI、CLI、backtest 或 alerts。
+- 強化 ChromaDB memory、Kelly sizing、correlation 或 regime intelligence。
+- Phase A 期間建立 SEC/IR ingestion framework 或 automatic universe。
+
+需要多機、多帳戶或量測證明 SQLite 不足時，才重新評估儲存與分散式架構。
+
+## 4. 現有架構與保留項目
+
+### 現有流程
 
 ```text
 WebUI / CLI
-  -> 5 Analysts（Market、Social、News、Fundamentals、Macro）
-  -> Bull / Bear debate -> Research Manager
-  -> Trader -> Risky / Safe / Neutral debate -> Risk Manager
+  -> Market / Social / News / Fundamentals / Macro analysts
+  -> Bull / Bear -> Research Manager
+  -> Trader -> Risky / Safe / Neutral -> Risk Manager
   -> typed TradeIntent
-  -> deterministic sizing + safety guardrails
+  -> sizing + safety guardrails
   -> Alpaca order API
 ```
 
-### 主要模組
+### 直接沿用
 
-| 路徑 | 現有責任 | P0/P1 處理原則 |
-|---|---|---|
-| `tradingagents/graph/` | LangGraph 編排、checkpoint、signal processing | 沿用，不重寫 |
-| `tradingagents/agents/` | 分析、研究、Trader、Risk Manager、schemas | 只收緊最終 structured-output 邊界 |
-| `tradingagents/dataflows/alpaca_utils.py` | Alpaca data、account、position、order execution | execution reliability 的主要整合點 |
-| `tradingagents/risk/` | Kelly、ATR、曝險上限與 deterministic sizing | 沿用 |
-| `tradingagents/safety/` | notional/concentration、loss/drawdown/rejection breakers、kill switch | 沿用並維持 fail closed |
-| `tradingagents/portfolio/` | correlation、volatility、gross exposure | 沿用 |
-| `tradingagents/graph/checkpointer.py` | LangGraph SQLite resume | 與 execution ledger 分開；checkpoint 不是訂單帳本 |
-| `webui/`、`cli/` | 操作介面與排程入口 | 接入同一 execution service，不各自實作交易規則 |
-| `tests/` | 32 個離線 pytest 檔案 | 新增最小必要 regression tests |
-
-### 已有且不重做
-
-- typed `TradeIntent` / `OrderIntent`、broker-side bracket/OTO。
-- deterministic position sizing、portfolio exposure、regime scaling。
-- pre-trade guardrails、daily loss/drawdown/rejection circuit breakers、kill switch。
+- typed `TradeIntent` / `OrderIntent`。
+- broker-side bracket/OTO orders。
+- ATR、單筆 notional、單股 concentration、gross exposure 限制。
+- daily loss、drawdown、rejection breakers 與 kill switch。
 - broker position lookup 失敗時停止交易。
-- SQLite graph checkpoint、decision log、Chroma memory、run audit log。
+- LangGraph SQLite checkpoint、decision log、Chroma memory、run audit log。
+- portfolio correlation、volatility/regime scaling 的現有實作。
 - backtest、chaos tests、CI、daily report、Telegram/webhook alerts。
 
-## 4. 目前缺口
+Kelly 已存在但 `risk_sizing_enabled=False`；Phase A 保持關閉，不刪除也不強化。AI confidence 不是已校準勝率，不能把它直接當 Kelly edge。
 
-| 項目 | 2026-09-03 現況 | 判定 |
-|---|---|---|
-| Paper-only hard lock | `ALPACA_USE_PAPER` 仍可設為 false，`TradingClient(..., paper=use_paper)` | 缺少 |
-| Strict execution schema | Risk Manager structured output 失敗後仍從 free text 推導 action；舊路徑也可直接用 signal 下單 | 缺少 |
-| Deterministic idempotency | 系統會讀 broker 的 `client_order_id`，但送單時沒有自行產生固定 ID | 缺少 |
-| Authoritative order ledger | 有 audit log、decision memory、checkpoint，但沒有 intent/order/fill ledger | 缺少 |
-| Order state machine | 送單回傳即視為結果，沒有完整 partial/unknown/retry 流程 | 缺少 |
-| Reconciliation | 啟動及送單後沒有 orders/fills/positions/cash 一致性檢查 | 缺少 |
-| Broker snapshot authority | 執行前會查 position/account，但沒有版本化、freshness 與完整 snapshot | 部分完成 |
-| Single execution lease | WebUI 有 process-local 執行狀態，沒有 account-scoped 跨 process lock | 缺少 |
-| Corporate-action quarantine | 會讀 Alpaca asset/tradable 資訊，沒有 split/ticker/delisting quarantine 流程 | 缺少 |
-| SEC / IR primary sources | 現有 fundamentals/news sources 未形成 SEC + IR 最小 primary-source 路徑 | 缺少 |
-| Universe / screening | 可搜尋與輸入多 symbol，但沒有自動 eligibility/ranking pipeline | 缺少 |
+## 5. Phase A 目標架構
 
-## 5. P0：交易可靠性（必須先完成）
+```text
+Risk Manager
+    |
+    v
+strict TradeIntent -- invalid --> NO_TRADE
+    |
+    v
+decision_id unique
+    |
+    v
+SQLite transaction:
+  persist execution_intent + order row (PENDING)
+  COMMIT                         <- durable outbox boundary
+    |
+    v
+account-scoped execution lock
+    |
+    v
+fresh BrokerSnapshot + reconciliation == CLEAN
+    |
+    v
+existing deterministic safety checks
+    |
+    v
+SUBMITTING -> Alpaca Paper with deterministic client_order_id
+    |
+    +-- response --> ACCEPTED / PARTIAL / FILLED / terminal failure
+    |
+    +-- timeout --> UNKNOWN -> query client_order_id before any retry
+    |
+    v
+post-order reconciliation -> authoritative local ledger
+```
 
-### P0-1 Paper-only hard lock
+WebUI、CLI、scheduler、liquidation 與 protective orders 必須進入同一 execution service。其他模組不得直接呼叫 `submit_order()` 或 `close_position()`。
 
-最小實作：移除 `ALPACA_USE_PAPER` 切換能力，交易 client 固定 `paper=True`；若 runtime/base URL 不是 paper endpoint，啟動失敗。
+## 6. 最小 execution data model
 
-驗收：
+只使用 Python stdlib `sqlite3` 和三張表。`execution_intents` 的 pending row 同時就是 durable outbox，不另外建立 queue 或 outbox framework。
 
-- 設定 `ALPACA_USE_PAPER=False` 不能建立 live client，也不能觸發 broker call。
-- CLI、WebUI、排程、close/liquidate 與 protective order 全部走同一 paper-only client factory。
-- README、sample env 與 UI 不再宣稱或提供 live trading。
+### `execution_intents`
 
-### P0-2 Strict schema / fail closed
+- `intent_id` primary key。
+- `decision_id` unique：同一份分析結果只能建立一次 execution intent。
+- `run_id`、`symbol`、`action`、`target_position`。
+- `payload_json`：驗證完成的 `TradeIntent`。
+- `state`、`created_at`、`updated_at`。
 
-最小實作：研究階段仍可使用 free text；Risk Manager 的 structured output 若 bind、invoke 或 validation 失敗，結果固定為不可執行的 `HOLD/NEUTRAL`，且不建立可送單 intent。移除 execution 層的 legacy free-text signal fallback。
+### `orders`
 
-驗收：
+- `order_id` primary key。
+- `intent_id` foreign key。
+- `client_order_id` unique：同一 logical order 永遠使用相同 ID。
+- `broker_order_id` nullable unique。
+- `symbol`、`side`、`quantity` 或 `notional`。
+- `status`、`filled_qty`、`created_at`、`updated_at`。
 
-- schema failure、timeout、provider error、空輸出及非法 action 均為 `NO_TRADE`。
-- 任一失敗案例中 `submit_order` 與 `close_position` 呼叫次數皆為 0。
-- 正常且 schema-valid 的 `TradeIntent` 仍可通過既有 safety checks。
+### `fills`
 
-### P0-3 Deterministic ID + SQLite ledger
+- `execution_id` primary key：重複同步同一 fill 不會重複入帳。
+- `order_id`、`qty`、`price`、`filled_at`。
 
-最小實作：使用 Python stdlib `sqlite3` 建立單一 `execution.db`，只存必要的 `trade_intents`、`orders`、`fills`。由穩定 logical intent fields 產生一個符合 Alpaca 長度限制的 `client_order_id`，並以 unique constraint 保證一筆 logical order 只有一個 ID。
+必要 index 與 unique constraints 直接寫在 SQLite schema；Phase A 不使用 ORM 或 migration framework。
 
-最低必要欄位：`intent_id`、`run_id`、`symbol`、`side`、`quantity/notional`、`client_order_id`、`broker_order_id`、`status`、`filled_qty`、`created_at`、`updated_at`。
+## 7. 不可協商的規則
 
-驗收：
+### 7.1 Paper-only
 
-- 同一 intent 執行兩次，只產生一個 `client_order_id` 和一筆 logical order。
-- process 在 submit 前後中止，重啟後仍能判斷該查詢 broker 或安全送單。
-- 不新增 ORM、migration framework、queue 或 PostgreSQL。
+- 交易 client 固定 `paper=True`。
+- production code、設定、sample env、CLI 與 WebUI 移除 live 選項與宣稱。
+- 偵測到非 paper endpoint 或無法確認 endpoint 時 startup failed，broker call 為 0。
 
-### P0-4 Order state machine + UNKNOWN recovery
+### 7.2 Strict execution boundary
 
-最小狀態集：
+- Analyst、Research Manager 與 Trader 仍可 free-text fallback。
+- Risk Manager structured bind、invoke、validation、timeout、429 或 provider failure，一律 `INVALID/NO_TRADE`。
+- 不從 free text、Markdown 或 legacy signal 猜 `BUY/SELL/LONG/SHORT`。
+- 只有 schema-valid `TradeIntent` 能建立 `execution_intent`。
+
+### 7.3 兩層 idempotency
+
+```text
+analysis decision_id (unique)
+        -> execution intent_id
+        -> one or more logical orders
+        -> deterministic client_order_id (unique)
+```
+
+- callback、scheduler 或 process 重複處理同一 `decision_id` 時，只回傳既有 intent。
+- 重啟後沿用原 `intent_id` 與 `client_order_id`，不能重新產生。
+- protective child order 也必須可關聯至原 intent 與 broker parent order。
+
+### 7.4 Durable outbox
+
+- 必須先在一個 SQLite transaction 內寫入 intent 與 `PENDING` order，commit 成功後 executor 才能呼叫 Alpaca。
+- DB commit 失敗：零 broker call。
+- commit 後、submit 前 crash：startup recovery 重新取得該 row 並安全處理。
+- submit 成功、回寫 DB 前 crash：依既有 `client_order_id` 查 broker 並 adopt，不建立新 logical order。
+
+### 7.5 Order state machine
 
 ```text
 PENDING -> SUBMITTING -> ACCEPTED -> PARTIAL -> FILLED
                          |           |
-                         +-> CANCELED/REJECTED
-SUBMITTING -- ambiguous outcome --> UNKNOWN -- query client_order_id --> terminal/nonterminal state
+                         +-----------+-> CANCELED / REJECTED / EXPIRED
+
+SUBMITTING -- ambiguous outcome --> UNKNOWN
+UNKNOWN -- broker lookup --> ACCEPTED / PARTIAL / FILLED / terminal state
 ```
 
-驗收：
+- 非法狀態轉移拒絕並寫 audit。
+- `PARTIAL` 更新 `filled_qty`，不自動建立補單。
+- `UNKNOWN` 未解決前，該帳戶保持 `PAUSED` 且禁止新增風險。
 
-- 非法狀態轉移被拒絕並留在 ledger/audit 中。
-- partial fill 更新 `filled_qty`，不建立新的 logical order 補單。
-- submit timeout/connection loss 先依 `client_order_id` 查 broker；查清前禁止 retry。
+### 7.6 固定 retry policy
 
-### P0-5 Startup + post-order reconciliation
+- Idempotent GET failure：最多 3 次、短暫 exponential backoff；之後 fail closed。
+- POST validation/rejection：不 retry，直接記錄 terminal state。
+- POST submit timeout/connection loss：不直接 retry，先標記 `UNKNOWN`。
+- `UNKNOWN` 以同一 `client_order_id` 做 bounded lookup；找到即 adopt。
+- broker 明確回覆不存在後，才可用**同一個** `client_order_id` 再 submit；仍不確定則保持 `PAUSED`。
 
-最小實作：啟動時讀取 account、positions、open/recent orders 與 fills；每次送單後再同步該 order、position、cash/equity。以 broker 為權威更新 local ledger。
+### 7.7 Broker authority 與 reconciliation
 
-驗收：
+`BrokerSnapshot` 至少包含：
 
-- `CLEAN` 才能交易；missing/contradictory/unknown 狀態標記 `DIRTY` 並暫停新增風險。
-- restart 能恢復 accepted、partial 與 unknown order。
-- broker 不可用時 fail closed；風險降低型動作是否允許必須有獨立且明確的測試。
+- `observed_at`、account ID、equity、cash、buying power。
+- positions、open/recent orders、today fills、gross exposure。
 
-### P0-6 Authoritative BrokerSnapshot
+執行前 sizing、safety 與送單使用同一份 snapshot。Agent memory、checkpoint、audit log 與 local ledger 都不能覆寫 broker facts。
 
-最小實作：建立一個 execution-facing `BrokerSnapshot`，包含 `observed_at`、account ID、equity、cash、buying power、positions、open orders、today fills 與 gross exposure；Agent memory 不得覆寫這些欄位。
+只有 reconciliation=`CLEAN` 才能新增風險。以下全部轉為 `PAUSED`：
 
-驗收：
+- position mismatch。
+- unknown order 或 duplicate `client_order_id`。
+- cash/equity/account unavailable。
+- unresolved partial fill。
+- broker timeout 尚未解決。
+- snapshot 不完整、account ID 不符或過期。
 
-- 每次 sizing、safety 與 execution 使用同一份新鮮 snapshot。
-- snapshot 不完整、account 不符或過期時不新增風險。
-- audit log 可追溯本次決策使用的 snapshot timestamp/version。
+Startup、每次 order action 後及 scheduler 每輪開始前都要 reconciliation。風險降低型 exit 只有在 broker position 已即時確認，且沒有矛盾 open order 時才能執行；不能根據 stale local state 猜測。
 
-## 6. P1：無人值守能力
+### 7.8 Freshness
 
-執行順序以風險降低與工作量排序，不代表要一次做完。
+Phase A 只 gate execution 必要資料：account、positions、orders、fills 與 quote。TTL 使用少量明確預設值並集中設定；缺時戳、未來時間或超過 TTL 都是 `NO_TRADE`。News/SEC/IR freshness 留到 Phase B。
 
-### P1-1 Data/account freshness gate
+### 7.9 Single execution lock
 
-- 為 quote、account、portfolio snapshot、news/primary source 定義少量明確 TTL。
-- 時戳缺失、未來時間、超過 TTL 或 broker unavailable 一律 `NO_TRADE`。
-- TTL 保留設定旋鈕；不建立通用 policy framework。
+- 使用 SQLite transaction 或 stdlib file lock，以 Alpaca account ID 為 key。
+- 第二個 process 取不到 lock 時立即退出 execution，不送單。
+- crash 後可恢復；Phase A 不做 distributed lease。
 
-### P1-2 Single execution lease
+## 8. 實作順序與完成 Gate
 
-- 使用 stdlib file lock 或 SQLite transaction，key 為 Alpaca account ID。
-- 第二個 worker 無法取得 lease 時直接退出且不送單。
-- 支援 crash 後可恢復；單機模型足夠前不做 distributed lock。
-
-### P1-3 Corporate-action quarantine
-
-- 只處理 split、ticker change、delisting、non-tradable。
-- 偵測到異常後禁止新開倉、執行 reconciliation 並告警。
-- 不建立完整 security master 或 symbol-lineage graph。
-
-### P1-4 SEC + company IR primary sources
-
-- 只新增 SEC filing 與公司 IR 兩條 primary-source 路徑。
-- 每筆保留 `source/url/published_at/retrieved_at`；來源或時間無法驗證時不可宣稱為 primary evidence。
-- 不擴充到 BEA、BLS、EIA、Treasury、GDELT 或 source-role framework。
-
-### P1-5 Universe + screening
-
-- 第一版產出可交易、具最低流動性的候選清單，再用少量 deterministic 指標排序。
-- 每日只把前 N 名送入既有分析 pipeline，並保留人工 watchlist 模式。
-- 不先做 portfolio optimizer、point-in-time research platform 或 ML ranking。
-
-## 7. 建議里程碑與 Gate
-
-| 里程碑 | 範圍 | 完成 Gate | 狀態 |
+| Gate | 工作 | 必須通過的證據 | 狀態 |
 |---|---|---|---|
-| M0 基準 | clone、架構盤點、現有測試基準、目標文件 | upstream SHA、測試結果與缺口可重現 | 完成 |
-| M1 邊界封鎖 | P0-1、P0-2 | 無 live client；structured failure 零 broker call | 未開始 |
-| M2 安全送單 | P0-3、P0-4 | duplicate/timeout/partial-fill tests 全通過 | 未開始 |
-| M3 權威恢復 | P0-5、P0-6 | restart/reconciliation matrix 全通過 | 未開始 |
-| M4 執行互斥 | P1-1、P1-2 | stale data 與雙 worker 均 fail closed | 未開始 |
-| M5 長期資產安全 | P1-3 | corporate-action fixtures 觸發 quarantine | 未開始 |
-| M6 研究來源 | P1-4 | SEC/IR timestamp 與 fallback 行為可驗收 | 未開始 |
-| M7 候選產生 | P1-5 | 固定輸入得到 deterministic top-N | 未開始 |
-| M8 Paper E2E | 全部 P0/P1 | Alpaca paper sandbox 完整走過送單、部分/取消/重啟/對帳 | 未開始 |
+| A0 基準 | clone、架構盤點、計劃、離線 suite | upstream SHA；`298 passed, 158 subtests passed` | 完成 |
+| A1 封死邊界 | Paper-only、strict TradeIntent、集中 execution entry | live config 無法送單；所有 structured failure 零 broker call | 未開始 |
+| A2 Durable intent | 三表 SQLite、兩層 ID、commit-before-submit | duplicate callback 與三個 crash points 都不重複送單 | 未開始 |
+| A3 Order recovery | state machine、partial fill、UNKNOWN、固定 retry | timeout/restart/partial/terminal transition tests | 未開始 |
+| A4 Broker authority | BrokerSnapshot、startup/post-order reconciliation | mismatch/unavailable/duplicate/unknown 全部 `PAUSED` | 未開始 |
+| A5 無人值守 | freshness、single lock、periodic reconciliation | stale snapshot 與雙 process 都是零新增曝險 | 未開始 |
+| A6 Paper E2E | 真實 Alpaca Paper sandbox | submit、partial/cancel、timeout recovery、restart、reconcile 證據 | 未開始 |
 
-每個里程碑的最低發布規則：focused regression tests、完整離線 suite、無 secrets、工作樹乾淨。涉及 broker 的 Gate 需另外標示 mock evidence 與真實 Alpaca Paper evidence，不得互相替代。
+規則：一次只做一個 Gate。每個 Gate 要有 focused regression、完整離線 suite 與乾淨工作樹；mock evidence 與真實 Alpaca Paper evidence 分開報告。A6 通過前不得宣稱可長期無人值守。
 
-## 8. 目前狀況
+## 9. Phase A 驗收矩陣
+
+至少覆蓋以下情境：
+
+| 情境 | 預期結果 |
+|---|---|
+| `ALPACA_USE_PAPER=False` 或非 paper endpoint | startup failed；零 broker call |
+| Risk Manager schema/timeout/429/provider failure | `NO_TRADE`；零 order/close call |
+| 同一 `decision_id` 觸發兩次 | 回傳同一 intent；只產生一組 logical orders |
+| DB commit 前 crash | 無 broker order |
+| DB commit 後、submit 前 crash | restart 從 `PENDING` 恢復 |
+| submit 後、ACK 寫 DB 前 crash | 以 `client_order_id` adopt broker order |
+| POST timeout | `UNKNOWN`；lookup 前零 retry |
+| partial fill | 更新同一 order；不自動補單 |
+| broker/local position mismatch | `PAUSED`；禁止新增風險 |
+| account/cash/equity unavailable | `PAUSED` |
+| stale/invalid timestamp | `NO_TRADE` |
+| 兩個 executor 同時啟動 | 只有 lock owner 可執行 |
+| verified risk-reducing exit | 依明確 policy 執行並立即 reconcile |
+
+## 10. Phase B 與 C 的進入條件
+
+### Phase B
+
+只有 A6 通過並完成一段穩定 Paper observation 後開始。每項功能各自證明能改善資料品質或風險控制；沒有證據就不擴建。
+
+Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → quarantine → 禁止新增曝險 → reconcile → alert。SEC/IR 只保留 `source`、`url`、`published_at`、`retrieved_at`，不建立 evidence platform。
+
+### Phase C
+
+只有人工 watchlist 已穩定運作且使用者確認需要全市場自動選股時開始。第一版只用 Alpaca tradability、最低流動性與少量 deterministic 指標產生 top-N；不做 ML ranking、portfolio optimizer 或 point-in-time research platform。
+
+## 11. 目前狀況
 
 ### 已完成
 
-- [x] 完整 clone 上游 Git history 與工作樹。
-- [x] 確認基準 commit 與主要模組責任。
-- [x] 對照 P0/P1 與目前程式碼，排除上游已具備功能。
-- [x] Python `compileall` 通過（`cli`、`tradingagents`、`webui`）。
-- [x] Python 3.12 隔離環境完整離線 suite：`298 passed, 158 subtests passed`（21.38 秒）；4 個 warnings 均來自第三方套件。
-- [x] 檢查 tracked secrets 與大於 50 MB 的工作樹檔案；未發現候選項目。
-- [x] 建立公開 GitHub repo `ihsieh31/traders` 並推送 `main`。
+- [x] 完整 clone 上游 Git history；`upstream` 保留原 repo。
+- [x] 公開 GitHub repo `ihsieh31/traders`；`origin/main` 已同步。
+- [x] 現有 execution、structured output、risk、safety、WebUI/CLI 路徑盤點。
+- [x] Python `compileall` 通過。
+- [x] Python 3.12 隔離環境：`298 passed, 158 subtests passed`（21.38 秒）；4 warnings 均來自第三方套件。
+- [x] tracked secrets 與大於 50 MB 檔案檢查未發現候選項目。
+- [x] 計劃重整為 Phase A/B/C；durable outbox、fail-closed matrix、兩層 idempotency 與 retry policy 已明文化。
 
-### 尚未完成／限制
+### 尚未完成
 
-- [ ] P0、P1 程式實作。
-- [ ] 真實 Alpaca Paper credentials 與 broker E2E 驗證。
+- [ ] Phase A 程式實作與驗收。
+- [ ] 真實 Alpaca Paper credentials 與 A6 E2E 驗證。
+- [ ] Phase B、Phase C；目前明確延後。
 
-## 9. 已決定事項
+## 12. 下一個具體行動
 
-- 保留上游 Git history；新的 `origin` 指向 `ihsieh31/traders`，原始 repo 保留為 `upstream`。
-- 先完成全部 P0，再做 P1；P1 中 freshness 與 execution lease 優先。
-- execution path 只有一個入口，WebUI、CLI、排程與 liquidation 不各自維護可靠性邏輯。
-- SQLite 是 P0/P1 唯一新增的持久化技術；優先使用 stdlib 與既有依賴。
-- 任一不確定狀態採 fail closed，不用 LLM 或字串 parser 猜測 broker action。
-
-## 10. 下一個具體行動
-
-建立可重現的隔離測試環境，記錄完整 baseline；接著只做 M1：paper-only client factory 與 strict execution schema boundary。M1 驗收通過前不開始 ledger 或 reconciliation。
+只開始 A1：建立唯一 paper-only trading client、移除 live 設定與 UI/README 宣稱、讓 Risk Manager structured failure 固定 `NO_TRADE`，並移除 WebUI/CLI 的 legacy signal execution fallback。A1 驗收通過後停止，不提前建立 SQLite ledger。
