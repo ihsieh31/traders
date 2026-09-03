@@ -6,6 +6,10 @@
 
 基準 commit：`8d9d770da9ecc108d70fd8a97caae032c53caad0`
 
+GitHub：[ihsieh31/traders](https://github.com/ihsieh31/traders)
+
+本機路徑：`/Users/zongen/Downloads/codex/tradingAlpaca`
+
 ## 1. 專案目標
 
 把 AlpacaTradingAgent 改造成一套可長時間自動執行、**只允許 Alpaca Paper Trading**、在任何不確定狀態下停止新增風險的多人 Agent 交易系統。
@@ -220,10 +224,10 @@ SUBMITTING -- ambiguous outcome --> UNKNOWN -- query client_order_id --> termina
 - [x] Python `compileall` 通過（`cli`、`tradingagents`、`webui`）。
 - [x] Python 3.12 隔離環境完整離線 suite：`298 passed, 158 subtests passed`（21.38 秒）；4 個 warnings 均來自第三方套件。
 - [x] 檢查 tracked secrets 與大於 50 MB 的工作樹檔案；未發現候選項目。
+- [x] 建立公開 GitHub repo `ihsieh31/traders` 並推送 `main`。
 
 ### 尚未完成／限制
 
-- [ ] GitHub `ihsieh31/traders` 建立與 push。
 - [ ] P0、P1 程式實作。
 - [ ] 真實 Alpaca Paper credentials 與 broker E2E 驗證。
 
