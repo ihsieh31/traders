@@ -262,7 +262,18 @@ Phase A 只 gate execution 必要資料：account、positions、orders、fills �
 
 規則：一次只做一個 Gate。每個 Gate 要有 focused regression、完整離線 suite 與乾淨工作樹；mock evidence 與真實 Alpaca Paper evidence 分開報告。A6 通過前不得宣稱可長期無人值守。
 
-## 9. Phase A 驗收矩陣
+## 9. Phase A 提示詞執行順序
+
+工程量按依賴切成兩組，不允許跳步或由執行者自行選 Gate：
+
+1. [Phase A.1 實作](PHASE_A1_IMPLEMENTATION_PROMPT.md)：A1–A3，約 45%。
+2. [Phase A.1 fresh read-only 驗收](PHASE_A1_ACCEPTANCE_PROMPT.md)。
+3. [Phase A.2 實作](PHASE_A2_IMPLEMENTATION_PROMPT.md)：A4–A6，約 55%；前提是 A.1 已 Accepted。
+4. [Phase A.2 fresh read-only 驗收](PHASE_A2_ACCEPTANCE_PROMPT.md)：Phase A 最終 Gate。
+
+Implementation 只能回報 Implemented/pending acceptance；只有獨立 acceptance task 能給 Accepted。任何驗收中發生的修復都必須另開 remediation task，修復後再做 fresh acceptance。
+
+## 10. Phase A 驗收矩陣
 
 至少覆蓋以下情境：
 
@@ -282,7 +293,7 @@ Phase A 只 gate execution 必要資料：account、positions、orders、fills �
 | 兩個 executor 同時啟動 | 只有 lock owner 可執行 |
 | verified risk-reducing exit | 依明確 policy 執行並立即 reconcile |
 
-## 10. Phase B 與 C 的進入條件
+## 11. Phase B 與 C 的進入條件
 
 ### Phase B
 
@@ -294,7 +305,7 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 
 只有人工 watchlist 已穩定運作且使用者確認需要全市場自動選股時開始。第一版只用 Alpaca tradability、最低流動性與少量 deterministic 指標產生 top-N；不做 ML ranking、portfolio optimizer 或 point-in-time research platform。
 
-## 11. 目前狀況
+## 12. 目前狀況
 
 ### 已完成
 
@@ -305,6 +316,7 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 - [x] Python 3.12 隔離環境：`298 passed, 158 subtests passed`（21.38 秒）；4 warnings 均來自第三方套件。
 - [x] tracked secrets 與大於 50 MB 檔案檢查未發現候選項目。
 - [x] 計劃重整為 Phase A/B/C；durable outbox、fail-closed matrix、兩層 idempotency 與 retry policy 已明文化。
+- [x] Phase A 已拆成兩份 implementation 與兩份 fresh read-only acceptance prompts。
 
 ### 尚未完成
 
@@ -312,6 +324,6 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 - [ ] 真實 Alpaca Paper credentials 與 A6 E2E 驗證。
 - [ ] Phase B、Phase C；目前明確延後。
 
-## 12. 下一個具體行動
+## 13. 下一個具體行動
 
 只開始 A1：建立唯一 paper-only trading client、移除 live 設定與 UI/README 宣稱、讓 Risk Manager structured failure 固定 `NO_TRADE`，並移除 WebUI/CLI 的 legacy signal execution fallback。A1 驗收通過後停止，不提前建立 SQLite ledger。
