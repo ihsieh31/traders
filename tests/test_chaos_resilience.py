@@ -9,7 +9,9 @@ gets its own temp state so experiments never leak into each other.
 import math
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 # Importing dataflows first trips a known circular import on main (fixed in
@@ -18,6 +20,24 @@ from unittest.mock import Mock, patch
 import tradingagents.agents  # noqa: F401
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.safety.guardrails import SafetyGuard
+
+
+def _authority_broker(broker, *, positioned=False):
+    broker.get_account.return_value = SimpleNamespace(
+        id="paper-chaos", equity="100000", cash="100000", buying_power="200000"
+    )
+    broker.get_all_positions.return_value = (
+        [SimpleNamespace(symbol="AAPL", qty="5", market_value="500")]
+        if positioned else []
+    )
+    broker.get_orders.return_value = []
+    return broker
+
+
+def _fresh_quote(symbol):
+    from tradingagents.execution.authority import BrokerQuote
+
+    return BrokerQuote(symbol, 100.0, 100.1, datetime.now(timezone.utc))
 
 
 def _buy_intent():
@@ -168,7 +188,8 @@ class MidFlipOutageTests(unittest.TestCase):
 
         svc = ExecutionService(
             db_path=str(Path(tmp) / "execution.db"),
-            broker_factory=lambda: broker,
+            broker_factory=lambda: _authority_broker(broker, positioned=True),
+            quote_factory=_fresh_quote,
         )
         with patch("tradingagents.safety.get_safety_guard", return_value=guard):
             return svc.execute(
@@ -185,11 +206,10 @@ class MidFlipOutageTests(unittest.TestCase):
             close_order = Mock()
             close_order.id = "close-1"
             close_order.status = "accepted"
-            broker.close_position.return_value = close_order
-            broker.submit_order.return_value = {
-                "success": False,
-                "error": "connection reset",
-            }
+            broker.submit_order.side_effect = [
+                close_order,
+                {"success": False, "error": "connection reset"},
+            ]
             outcome = self._run_flip(tmp, guard, broker)
             self.assertFalse(outcome["success"])
             roles = [r.get("status") for r in outcome["results"]]
@@ -201,15 +221,13 @@ class MidFlipOutageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp)
             broker = Mock()
-            broker.close_position.return_value = {
+            broker.submit_order.return_value = {
                 "success": False,
                 "error": "504 gateway timeout",
             }
-            open_order = Mock()
-            broker.submit_order = open_order
             outcome = self._run_flip(tmp, guard, broker)
             self.assertFalse(outcome["success"])
-            open_order.assert_not_called()
+            self.assertEqual(broker.submit_order.call_count, 1)
 
     def test_unexpected_exception_mid_flip_goes_unknown_without_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -218,15 +236,15 @@ class MidFlipOutageTests(unittest.TestCase):
             close_order = Mock()
             close_order.id = "close-1"
             close_order.status = "accepted"
-            broker.close_position.return_value = close_order
-            broker.submit_order.side_effect = ConnectionError(
-                "socket closed mid-request"
-            )
+            broker.submit_order.side_effect = [
+                close_order,
+                ConnectionError("socket closed mid-request"),
+            ]
             outcome = self._run_flip(tmp, guard, broker)
             self.assertFalse(outcome["success"])
             self.assertTrue(outcome.get("has_unknown"))
             # Ambiguous POST: exactly one attempt, never an immediate retry.
-            self.assertEqual(broker.submit_order.call_count, 1)
+            self.assertEqual(broker.submit_order.call_count, 2)
 
 
 class KillSwitchAndBreakerFlowTests(unittest.TestCase):
@@ -261,8 +279,8 @@ class KillSwitchAndBreakerFlowTests(unittest.TestCase):
             self.assertFalse(verdict.allowed)
             self.assertEqual(verdict.checks["rejection_streak"]["status"], "fail")
 
-    def test_unreachable_account_degrades_to_cheap_checks_only(self):
-        """Broker down: orders are not wrongly blocked by absent breakers."""
+    def test_unreachable_account_fails_closed_before_order(self):
+        """Phase A.2: unavailable broker authority must pause new exposure."""
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp, daily_loss_halt_pct=10.0, max_drawdown_halt_pct=15.0)
             broker = Mock()
@@ -283,7 +301,9 @@ class KillSwitchAndBreakerFlowTests(unittest.TestCase):
                     dollar_amount=1000.0,
                     allow_shorts=False,
                 )
-            self.assertTrue(outcome["success"])
+            self.assertFalse(outcome["success"])
+            self.assertTrue(outcome["paused"])
+            broker.submit_order.assert_not_called()
 
 
 class MalformedBrokerPayloadTests(unittest.TestCase):

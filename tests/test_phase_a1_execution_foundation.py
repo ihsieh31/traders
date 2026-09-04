@@ -9,7 +9,9 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import tradingagents.agents  # noqa: F401  (production-safe import order)
@@ -46,7 +48,17 @@ def _mock_broker(order_id="broker-1", status="accepted"):
     order.qty = 5
     order.notional = None
     order.status = status
-    broker.submit_order.return_value = order
+    broker_orders = []
+
+    def submit(request):
+        order.client_order_id = getattr(request, "client_order_id", None)
+        order.filled_qty = 0
+        order.filled_avg_price = None
+        order.updated_at = datetime.now(timezone.utc)
+        broker_orders.append(order)
+        return order
+
+    broker.submit_order.side_effect = submit
     close_order = MagicMock()
     close_order.id = "close-1"
     close_order.symbol = "AAPL"
@@ -54,7 +66,21 @@ def _mock_broker(order_id="broker-1", status="accepted"):
     close_order.qty = 5
     close_order.status = "accepted"
     broker.close_position.return_value = close_order
+    broker.get_account.return_value = SimpleNamespace(
+        id="paper-account-1", equity="100000", cash="100000", buying_power="200000"
+    )
+    broker.get_all_positions.return_value = []
+    broker.get_orders.side_effect = lambda request=None: list(broker_orders)
     return broker
+
+
+def _fresh_quote(symbol):
+    from tradingagents.execution.authority import BrokerQuote
+
+    return BrokerQuote(
+        symbol=symbol.replace("/", ""), bid_price=100.0, ask_price=100.1,
+        observed_at=datetime.now(timezone.utc),
+    )
 
 
 def _disabled_guard():
@@ -99,16 +125,26 @@ class PaperOnlyLockTests(unittest.TestCase):
         from tradingagents.dataflows import alpaca_utils as au
 
         captured = {}
+        request_kwargs = []
 
         class FakeClient:
             def __init__(self, *a, **kw):
                 captured.update(kw)
+                self._retry = 3
+                self._session = SimpleNamespace(request=self._request)
+
+            @staticmethod
+            def _request(*args, **kwargs):
+                request_kwargs.append(kwargs)
 
         with patch.object(au, "get_api_key", return_value="dummy"):
             with patch.object(au, "get_alpaca_use_paper", return_value="True"):
                 with patch.object(au, "TradingClient", FakeClient):
-                    au.get_alpaca_trading_client()
+                    client = au.get_alpaca_trading_client()
                     self.assertTrue(captured.get("paper") is True)
+                    self.assertEqual(client._retry, 0)
+                    client._session.request("GET", "/v2/account")
+                    self.assertEqual(request_kwargs[-1]["timeout"], (3.05, 10.0))
                     captured.clear()
                     au.get_alpaca_trading_client(
                         base_url="https://paper-api.alpaca.markets"
@@ -230,6 +266,7 @@ class StrictRiskBoundaryTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: broker,
+                quote_factory=_fresh_quote,
             )
             with patch("tradingagents.safety.get_safety_guard", return_value=_disabled_guard()):
                 for bad_intent in (None, {}, {"symbol": "AAPL"}):
@@ -252,6 +289,7 @@ class SafetyPassthroughTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: broker,
+                quote_factory=_fresh_quote,
             )
             # Real guard with a tiny notional cap must block before broker.
             guard = SafetyGuard(
@@ -279,6 +317,7 @@ class DecisionIdempotencyTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: broker,
+                quote_factory=_fresh_quote,
             )
             with patch(
                 "tradingagents.safety.get_safety_guard",
@@ -386,6 +425,7 @@ class DurableOutboxTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: broker,
+                quote_factory=_fresh_quote,
             )
             with patch.object(
                 svc.store, "create_outbox", side_effect=RuntimeError("disk full")
@@ -407,7 +447,7 @@ class DurableOutboxTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             db = str(Path(tmp) / "execution.db")
-            svc = ExecutionService(db_path=db, broker_factory=lambda: _mock_broker())
+            svc = ExecutionService(db_path=db, broker_factory=lambda: _mock_broker(), quote_factory=_fresh_quote)
             # Simulate: durable commit happened, process died before submit.
             intent, orders, _ = svc.store.create_outbox(
                 decision_id="dec-crash-1",
@@ -429,7 +469,7 @@ class DurableOutboxTests(unittest.TestCase):
                 ],
             )
             # Restart: new service instance sees the same PENDING row.
-            restarted = ExecutionService(db_path=db, broker_factory=lambda: _mock_broker())
+            restarted = ExecutionService(db_path=db, broker_factory=lambda: _mock_broker(), quote_factory=_fresh_quote)
             pending = restarted.store.list_pending_orders()
             self.assertEqual(len(pending), 1)
             self.assertEqual(pending[0]["client_order_id"], orders[0]["client_order_id"])
@@ -446,6 +486,7 @@ class UnknownRecoveryTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: broker,
+                quote_factory=_fresh_quote,
             )
             with patch(
                 "tradingagents.safety.get_safety_guard",
@@ -469,7 +510,7 @@ class UnknownRecoveryTests(unittest.TestCase):
             db = str(Path(tmp) / "execution.db")
             broker = _mock_broker()
             broker.submit_order.side_effect = TimeoutError("timed out")
-            svc = ExecutionService(db_path=db, broker_factory=lambda: broker)
+            svc = ExecutionService(db_path=db, broker_factory=lambda: broker, quote_factory=_fresh_quote)
             with patch(
                 "tradingagents.safety.get_safety_guard",
                 return_value=_disabled_guard(),
@@ -493,7 +534,7 @@ class UnknownRecoveryTests(unittest.TestCase):
             found.status = "accepted"
             found.filled_qty = 0
             lookup_broker.get_order_by_client_order_id.return_value = found
-            svc2 = ExecutionService(db_path=db, broker_factory=lambda: lookup_broker)
+            svc2 = ExecutionService(db_path=db, broker_factory=lambda: lookup_broker, quote_factory=_fresh_quote)
             # Ensure lookup performs zero POSTs even if submit exists.
             if hasattr(lookup_broker, "submit_order"):
                 lookup_broker.submit_order.reset_mock()
@@ -522,6 +563,7 @@ class FillAndTerminalTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: broker,
+                quote_factory=_fresh_quote,
             )
             with patch(
                 "tradingagents.safety.get_safety_guard",
@@ -565,6 +607,7 @@ class FillAndTerminalTests(unittest.TestCase):
                 svc = ExecutionService(
                     db_path=str(Path(tmp) / "execution.db"),
                     broker_factory=lambda: _mock_broker(),
+                    quote_factory=_fresh_quote,
                 )
                 intent, orders, _ = svc.store.create_outbox(
                     decision_id=f"dec-term-{terminal}",
@@ -610,6 +653,7 @@ class StateMachineTests(unittest.TestCase):
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
                 broker_factory=lambda: _mock_broker(),
+                quote_factory=_fresh_quote,
             )
             _, orders, _ = svc.store.create_outbox(
                 decision_id="dec-sm-1",
@@ -729,6 +773,7 @@ class SingleEntryTests(unittest.TestCase):
                     allow_shorts=False,
                     db_path=str(Path(tmp) / "execution.db"),
                     broker_factory=lambda: broker,
+                    quote_factory=_fresh_quote,
                 )
             self.assertTrue(res["success"])
             self.assertEqual(broker.submit_order.call_count, 1)

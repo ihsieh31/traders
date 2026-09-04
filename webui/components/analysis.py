@@ -7,7 +7,6 @@ from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
-from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.execution import ExecutionService
 from tradingagents.agents.schemas import trade_intent_action
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
@@ -68,33 +67,6 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
 
         print(f"[TRADE] Executing trade for {ticker}: {recommended_action} with ${trade_amount}")
 
-        # Portfolio-level sizing: deterministic layer above the per-symbol
-        # decision (correlation penalty, inverse-vol sizing, gross exposure
-        # cap). Failure-isolated: any problem keeps the requested amount.
-        try:
-            from tradingagents.dataflows.config import get_config
-            from tradingagents.portfolio import (
-                PortfolioLimitsConfig,
-                adjust_new_position_notional,
-                gather_portfolio_state_via_alpaca,
-            )
-
-            trade_amount = adjust_new_position_notional(
-                symbol=ticker,
-                action=recommended_action,
-                requested_notional=trade_amount,
-                gather_state=lambda: gather_portfolio_state_via_alpaca(ticker),
-                config=PortfolioLimitsConfig.from_config(get_config() or {}),
-            )
-            if trade_amount <= 0:
-                print(
-                    f"[TRADE] Portfolio layer zeroed the {ticker} order "
-                    "(no gross-exposure headroom); skipping execution."
-                )
-                return
-        except Exception as exc:
-            print(f"[TRADE] Portfolio sizing unavailable for {ticker}: {exc}")
-
         # Regime-aware sizing: hostile regimes shrink NEW exposure, never
         # flip the decision. Failure-isolated - any problem keeps the
         # requested amount untouched.
@@ -114,26 +86,6 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
                     )
             except Exception as exc:
                 print(f"[TRADE] Regime sizing unavailable for {ticker}: {exc}")
-
-        # Get current position. strict=True: a broker outage here must abort
-        # the trade instead of reading as NEUTRAL — acting on a guessed
-        # NEUTRAL re-buys an existing holding on BUY (pyramiding every loop
-        # iteration the outage persists) and skips the exit on SELL.
-        try:
-            current_position = AlpacaUtils.get_current_position_state(ticker, strict=True)
-        except Exception as e:
-            print(
-                f"[TRADE] Could not verify current position for {ticker} ({e}); "
-                "skipping trade execution rather than guessing NEUTRAL"
-            )
-            state["trading_results"] = {
-                "error": (
-                    f"Position check failed for {ticker}; trade skipped to avoid "
-                    f"acting on an unverified position: {e}"
-                )
-            }
-            return
-        print(f"[TRADE] Current position for {ticker}: {current_position}")
 
         # Single execution entry (Phase A.1 strict boundary): a missing or
         # schema-invalid TradeIntent is fail-closed with zero broker calls.

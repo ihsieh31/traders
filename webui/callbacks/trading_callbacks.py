@@ -27,7 +27,12 @@ def register_trading_callbacks(app):
     )
     def update_account_title(stored_keys):
         """Paper-only account title (live trading removed in Phase A.1)."""
-        return "Alpaca Paper Trading Account"
+        status = ExecutionService().account_status()
+        reason = "; ".join(status.get("reasons", []))
+        suffix = f" — {status.get('state', 'PAUSED')}"
+        if reason:
+            suffix += f": {reason}"
+        return "Alpaca Paper Trading Account" + suffix
 
     @app.callback(
         Output("orders-page-store", "data"),
@@ -122,7 +127,9 @@ def register_trading_callbacks(app):
             symbol = message.split(" in ")[1].split("?")[0]
 
             # Liquidation through the single execution entry (durable + paper-only).
-            result = ExecutionService().liquidate(symbol)
+            result = ExecutionService().liquidate(
+                symbol, decision_id=f"ui-liquidate-{symbol}-{submit_n_clicks}"
+            )
 
             if result.get("success"):
                 order_ref = result.get("broker_order_id") or result.get("order_id", "N/A")

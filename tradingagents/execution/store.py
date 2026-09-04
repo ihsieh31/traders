@@ -1,11 +1,12 @@
-"""SQLite durable ledger for Phase A.1. Stdlib sqlite3 only, schema version 1.
+"""SQLite durable Phase A ledger. Stdlib sqlite3 only, schema version 2.
 
 Three tables only; execution_intents PENDING row + orders PENDING row is the
 durable outbox. No fourth generic outbox table (three tables already give
 atomic commit-before-submit).
 
-Ponytail ceiling note: single sqlite3 store + single execution service is
-enough for Phase A.1. Do not add ORM/migrations/queues without evidence.
+Ponytail ceiling note: the account CLEAN/PAUSED audit record reuses the
+execution_intents table, keeping the original three-table design. Do not add
+ORM/migrations/queues without evidence.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 ORDER_STATUSES = frozenset(
     {
@@ -43,7 +44,7 @@ _ALLOWED_ORDER_TRANSITIONS: dict[str, frozenset[str]] = {
     "ACCEPTED": frozenset({"PARTIAL", "FILLED", "CANCELED", "REJECTED", "EXPIRED"}),
     "PARTIAL": frozenset({"PARTIAL", "FILLED", "CANCELED", "REJECTED", "EXPIRED"}),
     "UNKNOWN": frozenset(
-        {"ACCEPTED", "PARTIAL", "FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+        {"SUBMITTING", "ACCEPTED", "PARTIAL", "FILLED", "CANCELED", "REJECTED", "EXPIRED"}
     ),
     # Terminal states: no outgoing edges (same-state treated as idempotent no-op).
 }
@@ -216,6 +217,8 @@ class ExecutionStore:
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,),
                 )
+            elif int(row["version"]) < SCHEMA_VERSION:
+                conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
             conn.execute("COMMIT")
         except Exception:
             try:
@@ -374,6 +377,36 @@ class ExecutionStore:
         finally:
             conn.close()
 
+    def list_all_orders(self) -> list[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            return [dict(row) for row in conn.execute("SELECT * FROM orders ORDER BY rowid")]
+        finally:
+            conn.close()
+
+    def list_recoverable_orders(self) -> list[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE status IN ('PENDING','SUBMITTING','UNKNOWN','PARTIAL') "
+                "ORDER BY created_at"
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_intent_for_order(self, order_id: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT i.* FROM execution_intents i JOIN orders o ON o.intent_id=i.intent_id "
+                "WHERE o.order_id=?",
+                (order_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     # -- state machine ----------------------------------------------------
 
     def transition_order(
@@ -429,6 +462,48 @@ class ExecutionStore:
             updated = self.get_order(order_id)
             assert updated is not None
             return True, updated
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+
+    def sync_order_from_broker(
+        self,
+        order_id: str,
+        status: str,
+        *,
+        broker_order_id: str,
+        filled_qty: float,
+    ) -> dict[str, Any]:
+        """Authoritatively project broker facts without weakening normal transitions."""
+        status_u = status.upper()
+        if status_u not in ORDER_STATUSES:
+            raise ValueError(f"unknown broker order status: {status!r}")
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"order not found: {order_id}")
+            existing = dict(row)
+            if existing.get("broker_order_id") not in (None, broker_order_id):
+                raise ValueError("broker order identity conflict")
+            # Broker authority may resolve a process that died while PENDING;
+            # terminal local rows never regress to non-terminal state.
+            current = str(existing["status"]).upper()
+            target = current if current in TERMINAL_STATUSES and status_u not in TERMINAL_STATUSES else status_u
+            conn.execute(
+                "UPDATE orders SET status=?, broker_order_id=?, filled_qty=?, updated_at=? WHERE order_id=?",
+                (target, broker_order_id, float(filled_qty), utcnow_iso(), order_id),
+            )
+            conn.execute("COMMIT")
+            updated = self.get_order(order_id)
+            assert updated is not None
+            return updated
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -559,5 +634,92 @@ class ExecutionStore:
             except Exception:
                 pass
             raise
+        finally:
+            conn.close()
+
+    def list_fills_since(self, timestamp: str) -> list[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT f.*, o.client_order_id FROM fills f JOIN orders o ON o.order_id=f.order_id "
+                "WHERE f.filled_at > ? ORDER BY f.filled_at, f.execution_id",
+                (timestamp,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_account_state(self, account_id: str) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM execution_intents WHERE decision_id=?",
+                (f"account-state-{hashlib.sha256(account_id.encode()).hexdigest()[:24]}",),
+            ).fetchone()
+            if row is None:
+                return None
+            raw = dict(row)
+            payload = json.loads(raw["payload_json"])
+            return {
+                "account_id": account_id,
+                "state": raw["state"],
+                "reasons_json": json.dumps(payload["reasons"]),
+                "snapshot_version": payload["snapshot_version"],
+                "baseline_positions_json": json.dumps(payload["baseline_positions"]),
+                "baseline_at": payload["baseline_at"],
+                "updated_at": raw["updated_at"],
+            }
+        finally:
+            conn.close()
+
+    def save_account_state(
+        self,
+        *,
+        account_id: str,
+        state: str,
+        reasons: tuple[str, ...],
+        snapshot_version: str,
+        baseline_positions: dict[str, float],
+    ) -> None:
+        now = utcnow_iso()
+        decision_id = f"account-state-{hashlib.sha256(account_id.encode()).hexdigest()[:24]}"
+        intent_id = intent_id_for_decision(decision_id)
+        existing = self.get_account_state(account_id)
+        baseline_at = existing["baseline_at"] if existing else now
+        baseline = (
+            json.loads(existing["baseline_positions_json"])
+            if existing else baseline_positions
+        )
+        payload = json.dumps(
+            {
+                "account_id": account_id,
+                "reasons": list(reasons),
+                "snapshot_version": snapshot_version,
+                "baseline_positions": baseline,
+                "baseline_at": baseline_at,
+            },
+            sort_keys=True,
+        )
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO execution_intents
+                (intent_id,decision_id,run_id,symbol,action,target_position,payload_json,state,created_at,updated_at)
+                VALUES (?,?,NULL,'__ACCOUNT__','RECONCILE','AUTHORITY',?,?,?,?)
+                ON CONFLICT(decision_id) DO UPDATE SET
+                  state=excluded.state,
+                  payload_json=excluded.payload_json,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    intent_id,
+                    decision_id,
+                    payload,
+                    state,
+                    now,
+                    now,
+                ),
+            )
         finally:
             conn.close()

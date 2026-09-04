@@ -8,7 +8,9 @@ a plain market order without a second logical order.
 
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from tradingagents.agents.schemas import (
@@ -82,6 +84,11 @@ class BracketExecutionTests(unittest.TestCase):
         order.status = "accepted"
         order.order_class = "bracket"
         self.client.submit_order.return_value = order
+        self.client.get_account.return_value = SimpleNamespace(
+            id="paper-bracket", equity="100000", cash="100000", buying_power="200000"
+        )
+        self.client.get_all_positions.return_value = []
+        self.client.get_orders.return_value = []
 
         disabled_guard = MagicMock()
         disabled_guard.enabled = False
@@ -110,6 +117,11 @@ class BracketExecutionTests(unittest.TestCase):
         svc = ExecutionService(
             db_path=str(Path(self._tmp.name) / "execution.db"),
             broker_factory=lambda: self.client,
+            quote_factory=lambda requested: __import__(
+                "tradingagents.execution.authority", fromlist=["BrokerQuote"]
+            ).BrokerQuote(
+                requested.replace("/", ""), 190.0, 190.1, datetime.now(timezone.utc)
+            ),
         )
         return svc.execute(
             trade_intent=intent.model_dump(mode="json"),
@@ -174,26 +186,14 @@ class BracketExecutionTests(unittest.TestCase):
         request = self.client.submit_order.call_args[0][0]
         self.assertIsNone(getattr(request, "stop_loss", None))
 
-    def test_bracket_rejection_falls_back_to_plain_market_order(self):
-        plain_order = MagicMock()
-        plain_order.id = "order-2"
-        plain_order.symbol = "AAPL"
-        plain_order.side = "buy"
-        plain_order.qty = 5
-        plain_order.notional = None
-        plain_order.status = "accepted"
-        self.client.submit_order.side_effect = [
-            Exception("bracket orders not allowed"),
-            plain_order,
-        ]
+    def test_bracket_rejection_is_terminal_without_plain_retry(self):
+        self.client.submit_order.side_effect = Exception("bracket orders not allowed")
 
         result = self._execute(_intent(stop_loss="182.50", take_profit="195"))
 
-        self.assertTrue(result["success"])
-        self.assertEqual(
-            result["protective_order_status"], "bracket_rejected_fallback_plain"
-        )
-        self.assertEqual(self.client.submit_order.call_count, 2)
+        self.assertFalse(result["success"])
+        self.assertEqual(self.client.submit_order.call_count, 1)
+        self.assertEqual(result["orders"][0]["status"], "REJECTED")
 
     def test_short_entry_bracket_prices_validated_inverted(self):
         # For a short entry the target sits below the stop.

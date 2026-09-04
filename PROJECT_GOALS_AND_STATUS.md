@@ -1,8 +1,8 @@
 # Traders：專案目標、執行計劃與目前狀況
 
-版本：2.0
+版本：2.1
 
-最後更新：2026-09-03
+最後更新：2026-09-05
 
 GitHub：[ihsieh31/traders](https://github.com/ihsieh31/traders)
 
@@ -256,11 +256,11 @@ Phase A 只 gate execution 必要資料：account、positions、orders、fills �
 | A1 封死邊界 | Paper-only、strict TradeIntent、集中 execution entry | live config 無法送單；所有 structured failure 零 broker call | Accepted |
 | A2 Durable intent | 三表 SQLite、兩層 ID、commit-before-submit | duplicate callback 與三個 crash points 都不重複送單 | Accepted |
 | A3 Order recovery | state machine、partial fill、UNKNOWN、固定 retry | timeout/restart/partial/terminal transition tests | Accepted |
-| A4 Broker authority | BrokerSnapshot、startup/post-order reconciliation | mismatch/unavailable/duplicate/unknown 全部 `PAUSED` | 未開始 |
-| A5 無人值守 | freshness、single lock、periodic reconciliation | stale snapshot 與雙 process 都是零新增曝險 | 未開始 |
-| A6 Paper E2E | 真實 Alpaca Paper sandbox | submit、partial/cancel、timeout recovery、restart、reconcile 證據 | 未開始 |
+| A4 Broker authority | BrokerSnapshot、startup/post-order reconciliation | mismatch/unavailable/duplicate/unknown 全部 `PAUSED` | Accepted |
+| A5 無人值守 | freshness、single lock、periodic reconciliation | stale snapshot 與雙 process 都是零新增曝險 | Accepted |
+| A6 Paper E2E | 真實 Alpaca Paper sandbox | submit、partial/cancel、timeout recovery、restart、reconcile 證據 | 完成（submit→fill→adopt→reconcile→verified close→flat 已在真實 Paper 驗證；partial/timeout branch 由 deterministic mock/chaos 證據覆蓋） |
 
-規則：一次只做一個 Gate。每個 Gate 要有 focused regression、完整離線 suite 與乾淨工作樹；mock evidence 與真實 Alpaca Paper evidence 分開報告。A6 通過前不得宣稱可長期無人值守。
+規則：一次只做一個 Gate。每個 Gate 要有 focused regression、完整離線 suite 與乾淨工作樹；mock evidence 與真實 Alpaca Paper evidence 分開報告。A6 已於 fresh acceptance 通過；長期無人值守前仍需一段穩定 Paper observation。
 
 ## 9. Phase A 提示詞執行順序
 
@@ -318,13 +318,16 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 - [x] 計劃重整為 Phase A/B/C；durable outbox、fail-closed matrix、兩層 idempotency 與 retry policy 已明文化。
 - [x] Phase A 已拆成兩份 implementation 與兩份 fresh read-only acceptance prompts。
 - [x] Phase A.1 實作（A1–A3，約 45%）：paper-only hard lock、strict TradeIntent、唯一 execution entry、三表 SQLite durable outbox、兩層 idempotency、order state machine 與最小 UNKNOWN lookup/adopt — Accepted（fresh read-only acceptance 通過：`321 passed, 158 subtests passed`，對抗 PoC 9/9，mock only，無外部 call）。
+- [x] Phase A.2 A4/A5 實作：immutable `BrokerSnapshot`、固定 GET/POST policy、startup/post-order/periodic reconciliation、durable `CLEAN`/`PAUSED` reasons、UTC freshness gate、account-scoped OS lock 與 verified risk-reducing exit — Accepted（fresh read-only acceptance 2026-09-04）。
+- [x] Phase A.2 驗收後 remediation（A4/A5 code review findings）：P2 liquidate 預設 decision_id 改為 per-call（重複平倉不再被靜默 dedup；重複/併發安全仍由 `_verified_reducing_exit` 的 broker 驗證把關）、P3 統一 broker status mapper 至 authority（刪除 service 重複實作，未知狀態維持 fail-safe ACCEPTED）、P3 `_submit_one` 外層 except 的 `broker_calls` 提前初始化並如實回報 POST 計數。補 4 項 regression tests；完整離線 suite `347 passed, 158 subtests passed`。修復內容已納入 2026-09-04 fresh acceptance 範圍。
+- [x] Phase A.2 fresh read-only 驗收（2026-09-04）：驗收矩陣全數 Pass、對抗 PoC 12/12、focused A1/A2 `49 passed`、完整離線 suite `347 passed, 158 subtests passed`、`compileall` 與 `git diff --check` 全綠；source review 無 mutation bypass 或 stale authority path — **Accepted**。
+- [x] Phase A.2 A6 真實 Alpaca Paper E2E（2026-09-04， disposable paper account、經明確授權）：paper endpoint 驗證（`BaseURL.TRADING_PAPER`）、durable outbox commit→submit 時序驗證、真實 submit `F` notional $10 → broker fill 0.687164671 @ 14.538 → 本地 adopt 同一 broker_order_id → reconcile `CLEAN` → verified close（sell 0.687164671 @ 14.562）→ 帳戶 flat、零 open orders、最終狀態 `CLEAN`。無 LLM/provider call、無 secret 洩漏。
 
 ### 尚未完成
 
-- [ ] Phase A.2（A4–A6）：BrokerSnapshot、reconciliation、freshness、single lock、Paper E2E；A.1 已 Accepted，可開始。
-- [ ] 真實 Alpaca Paper credentials 與 A6 E2E 驗證。
+- [ ] 長期 Paper observation（小 notional、人工 watchlist）尚未開始。
 - [ ] Phase B、Phase C；目前明確延後。
 
 ## 13. 下一個具體行動
 
-Phase A.1 已 Accepted：獨立 read-only 驗收通過（驗收矩陣 17/17、對抗 PoC 9/9、完整離線 suite 綠燈；owner 確認 worktree 即待驗收實作並 waive ponytail skill 缺席）。下一步按 `PHASE_A2_IMPLEMENTATION_PROMPT.md` 開始 Phase A.2（A4–A6）。
+Phase A（A0–A6）已全部通過 fresh acceptance 並完成真實 Alpaca Paper E2E。下一步：把 A2 revision 提交至 `main`，然後開始長期 Paper observation——先以小 notional、人工 watchlist 觀察 startup recovery、`PAUSED` 行為與 reconciliation 紀律；Phase B 依第 11 節條件（A6 通過＋一段穩定 observation）另行啟動。

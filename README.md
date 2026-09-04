@@ -57,6 +57,7 @@ AlpacaTradingAgent introduces powerful new capabilities specifically designed fo
 - **Scheduled Analysis**: Configurable recurring analysis every N hours
 - **Auto-Execution**: Optional automatic trade execution based on agent recommendations
 - **Smart Scheduling**: Respects market hours for different asset classes
+- **Fail-Closed Recovery**: Auto-trading starts only after durable orders are recovered and the Alpaca Paper account reconciles `CLEAN`
 
 ### 🌐 **Advanced Web Interface**
 - **Multi-Symbol Dashboard**: Analyze and trade multiple symbols simultaneously
@@ -273,6 +274,31 @@ The web interface offers comprehensive trading and analysis capabilities:
 - Configure auto-execution of trade recommendations
 - Set custom analysis intervals (every N hours)
 - Margin trading controls and risk management
+
+### Paper execution status and safe recovery
+
+The Alpaca account heading shows the last durable execution state and reason.
+`CLEAN` is required for new exposure. `PAUSED` means no new order will be sent;
+common causes are stale/malformed broker facts, a position mismatch, an unknown
+or duplicate order identity, an unresolved partial fill, or another process
+holding the account execution lock.
+
+To recover safely, stop duplicate app processes, confirm the Paper account and
+orders in Alpaca, then restart auto-trading. Startup reuses the durable
+`client_order_id` and reconciles again; do not delete SQLite rows or manually
+change their status to force `CLEAN`. Risk-reducing exits remain available only
+when the broker freshly verifies the position/side/quantity and no conflicting
+close order exists. Snapshot TTL defaults to 30 seconds and quote TTL to 15
+seconds; operators may override them with
+`TRADINGAGENTS_SNAPSHOT_TTL_SECONDS` and
+`TRADINGAGENTS_QUOTE_TTL_SECONDS`.
+
+Phase A.2 passed fresh independent acceptance (2026-09-04): full offline suite
+`347 passed, 158 subtests passed`, adversarial PoC 12/12, and a real Alpaca
+Paper E2E on a disposable paper account (submit → broker fill → adopt →
+reconcile `CLEAN` → verified close → account flat, no open orders). A stable
+observation period on small notional is still recommended before treating the
+build as ready for a long unattended run.
 
 **LLM and Runtime Controls**
 - Select OpenAI, local OpenAI-compatible, Google, Anthropic, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, or Azure OpenAI

@@ -25,7 +25,10 @@ and operators who want to know where things happen and why.
 │                                                               typed TradeIntent          │
 └──────────────────────────────────────────────────────────────────┬───────────────────────┘
                                                                    ▼
-                                       Alpaca Paper execution (paper-only) — market/close orders
+                                       BrokerSnapshot + reconciliation + account lock
+                                                       │
+                                                       ▼
+                                       Alpaca Paper execution (paper-only)
 ```
 
 Final decisions are executable actions (`BUY/HOLD/SELL` in investment mode,
@@ -66,7 +69,12 @@ advisory.
    action. If auto-trading is on, the WebUI executes the typed `TradeIntent`
    via the single durable entry `tradingagents.execution.ExecutionService`
    (SQLite outbox commit before any broker POST, deterministic
-   `client_order_id`, UNKNOWN lookup/adopt). Raw-signal execution
+   `client_order_id`, UNKNOWN lookup/adopt). Before mutation it captures one
+   immutable account-bound `BrokerSnapshot`, acquires a crash-safe account
+   file lock, recovers durable nonterminal orders, requires reconciliation
+   `CLEAN`, and validates a fresh symbol-bound quote. The same snapshot feeds
+   sizing, safety, reconciliation, and submit preflight. Every broker action
+   is followed immediately by another snapshot and reconciliation. Raw-signal execution
    (`AlpacaUtils.execute_trading_action`) is disabled fail-closed, and the
    direct helpers (`place_market_order` / `place_protected_market_order` /
    `close_position`) were removed; `AlpacaUtils` keeps data/query helpers only.
@@ -98,6 +106,25 @@ Two complementary memories:
 | `reports/YYYY-MM-DD.{md,html}` | Optional daily operations reports. |
 | `tradingagents/dataflows/data_cache/` | Cached market data. |
 | `eval_results/.../checkpoints` | Optional SQLite LangGraph checkpoints for resume. |
+| `eval_results/execution.db` | Three-table durable intent/order/fill ledger. A reserved account-status intent stores the latest `CLEAN`/`PAUSED` reasons and reconciliation baseline without a second persistence system. |
+| `eval_results/.execution-locks/` | Per-account stdlib OS locks. File descriptors are released by the OS after process exit/crash; no stale lease cleanup exists. |
+
+## Execution recovery and authority
+
+Scheduler/auto-trade startup calls `ExecutionService.startup_recover()` before
+analysis can dispatch orders. It performs bounded `client_order_id` lookup for
+`PENDING`, `SUBMITTING`, `UNKNOWN`, and `PARTIAL` rows. A definitively absent
+idempotent market order may be resubmitted once with the same ID; ambiguous
+lookups and non-idempotent closes stay `PAUSED`. Each scheduler execution calls
+the same recovery/reconciliation gate again.
+
+Only `CLEAN` accounts may add exposure. Missing/malformed account facts, stale
+snapshot/quote, identity conflicts, unknown orders, position mismatch, and
+unresolved partial fills persist a readable `PAUSED` reason. A paused account
+may only reduce risk when a fresh broker position proves the side and exact
+maximum quantity, no conflicting close order exists, and the paper/safety/lock
+gates pass. Explicit close market orders carry the durable `client_order_id`;
+POST validation/rejection is terminal and POST timeout becomes `UNKNOWN`.
 
 ## Configuration
 

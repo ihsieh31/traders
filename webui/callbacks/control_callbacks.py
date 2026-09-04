@@ -11,6 +11,7 @@ import time
 from webui.utils.state import app_state
 from webui.components.analysis import start_analysis
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.execution import ExecutionService
 from tradingagents.openai_model_registry import (
     get_default_model_for_provider,
     get_model_options_for_provider,
@@ -882,6 +883,14 @@ def register_control_callbacks(app):
             app_state.init_symbol_state(symbol)
 
         def analysis_thread():
+            if trade_enabled:
+                startup = ExecutionService().startup_recover()
+                if not startup.get("success"):
+                    app_state.trade_enabled = False
+                    print(
+                        "[EXECUTION] Auto-trading PAUSED at startup: "
+                        + "; ".join(startup.get("reconciliation_reasons", []))
+                    )
             if market_hour_enabled:
                 # Start market hour mode with scheduling logic
                 market_hour_config = {

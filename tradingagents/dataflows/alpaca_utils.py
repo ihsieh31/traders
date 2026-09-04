@@ -4,6 +4,7 @@ import math
 import os
 import pandas as pd
 import time
+from functools import partial
 from datetime import datetime, timedelta
 from typing import Annotated, Union, Optional, List, Dict, Any, TYPE_CHECKING
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
@@ -250,7 +251,7 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
     if resolved_base:
         kwargs["url_override"] = resolved_base
     try:
-        return TradingClient(api_key, api_secret, **kwargs)
+        client = TradingClient(api_key, api_secret, **kwargs)
     except TypeError:
         # Older alpaca-py without url_override: only the default paper
         # endpoint exists, which is exactly what paper-only requires.
@@ -259,7 +260,20 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
                 f"Custom Alpaca endpoint {resolved_base!r} is not supported by "
                 "the installed SDK; refusing to guess."
             )
-        return TradingClient(api_key, api_secret, paper=True)
+        client = TradingClient(api_key, api_secret, paper=True)
+    # alpaca-py exposes no public timeout option and otherwise retries 429s
+    # for every HTTP method. Execution owns retry semantics: disable the SDK
+    # retry loop (especially for POST) and give requests fixed connect/read
+    # timeouts so ambiguous mutation outcomes reach UNKNOWN promptly.
+    session = getattr(client, "_session", None)
+    request = getattr(session, "request", None)
+    if session is None or not callable(request) or not hasattr(client, "_retry"):
+        raise PaperTradingEnforcementError(
+            "Installed alpaca-py cannot enforce fixed execution timeouts/retry policy"
+        )
+    client._retry = 0
+    session.request = partial(request, timeout=(3.05, 10.0))
+    return client
 
 
 def _parse_timeframe(tf: Union[str, TimeFrame]) -> TimeFrame:
@@ -865,6 +879,8 @@ class AlpacaUtils:
         requested_notional: float,
         risk_params: Optional[dict] = None,
         side: str = "buy",
+        authoritative_snapshot: Optional[Any] = None,
+        authoritative_quote: Optional[Any] = None,
     ) -> SizingDecision:
         """Run the deterministic sizing engine against live account/market data.
 
@@ -872,15 +888,24 @@ class AlpacaUtils:
         the caller can decide whether to fail open or block.
         """
         params = RiskParameters.from_dict(risk_params)
-        snapshot = AlpacaUtils.get_account_risk_snapshot()
+        if authoritative_snapshot is not None:
+            snapshot = {
+                "equity": authoritative_snapshot.equity,
+                "gross_exposure": authoritative_snapshot.gross_exposure,
+            }
+        else:
+            snapshot = AlpacaUtils.get_account_risk_snapshot()
 
-        quote = AlpacaUtils.get_latest_quote(symbol)
-        quoted = [
-            float(p)
-            for p in (quote.get("bid_price"), quote.get("ask_price"))
-            if p and float(p) > 0
-        ]
-        price = sum(quoted) / len(quoted) if quoted else None
+        if authoritative_quote is not None:
+            price = authoritative_quote.price
+        else:
+            quote = AlpacaUtils.get_latest_quote(symbol)
+            quoted = [
+                float(p)
+                for p in (quote.get("bid_price"), quote.get("ask_price"))
+                if p and float(p) > 0
+            ]
+            price = sum(quoted) / len(quoted) if quoted else None
 
         bars = AlpacaUtils.get_stock_data_window(
             symbol, look_back_days=max(40, params.atr_period * 3)
@@ -913,6 +938,7 @@ class AlpacaUtils:
         risk_params: Optional[dict] = None,
         db_path: Optional[str] = None,
         broker_factory: Optional[Any] = None,
+        quote_factory: Optional[Any] = None,
     ) -> dict:
         """Validate and execute a typed TradeIntent via the single durable entry.
 
@@ -948,7 +974,9 @@ class AlpacaUtils:
 
         from tradingagents.execution.service import ExecutionService
 
-        svc = ExecutionService(db_path=db_path, broker_factory=broker_factory)
+        svc = ExecutionService(
+            db_path=db_path, broker_factory=broker_factory, quote_factory=quote_factory
+        )
         return svc.execute(
             trade_intent=intent.model_dump(mode="json"),
             dollar_amount=dollar_amount,

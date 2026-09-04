@@ -8,7 +8,9 @@ LLM. Each guard is exercised on both sides of its threshold.
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from tradingagents.safety import (
@@ -230,6 +232,9 @@ class ExecutionIntegrationTests(unittest.TestCase):
         return ExecutionService(
             db_path=str(Path(tmp) / "execution.db"),
             broker_factory=broker_factory,
+            quote_factory=lambda symbol: __import__(
+                "tradingagents.execution.authority", fromlist=["BrokerQuote"]
+            ).BrokerQuote(symbol, 100.0, 100.1, datetime.now(timezone.utc)),
         )
 
     def _buy_intent(self):
@@ -312,6 +317,11 @@ class ExecutionIntegrationTests(unittest.TestCase):
         close_order.qty = 5
         close_order.status = "accepted"
         broker.close_position.return_value = close_order
+        broker.get_account.return_value = SimpleNamespace(
+            id="paper-safety", equity="100000", cash="100000", buying_power="200000"
+        )
+        broker.get_all_positions.return_value = []
+        broker.get_orders.return_value = []
         return broker
 
     def _blocked_guard(self):
@@ -360,6 +370,9 @@ class ExecutionIntegrationTests(unittest.TestCase):
             guard = make_guard(tmp, max_consecutive_rejections=1)
             guard.record_order_result(False)
             broker = self._mock_broker()
+            broker.get_all_positions.return_value = [
+                SimpleNamespace(symbol="AAPL", qty="5", market_value="500")
+            ]
             with patch(
                 "tradingagents.safety.get_safety_guard", return_value=guard
             ):
@@ -371,12 +384,16 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 )
 
         self.assertTrue(result["success"])
-        broker.close_position.assert_called_once_with("AAPL")
+        broker.submit_order.assert_called_once()
+        broker.close_position.assert_not_called()
 
     def test_position_flip_closes_first_then_blocks_new_exposure(self):
         with tempfile.TemporaryDirectory() as tmp:
             guard = make_guard(tmp, max_trade_notional_usd=100.0)
             broker = self._mock_broker()
+            broker.get_all_positions.return_value = [
+                SimpleNamespace(symbol="AAPL", qty="5", market_value="500")
+            ]
             with patch(
                 "tradingagents.safety.get_safety_guard", return_value=guard
             ):
@@ -389,8 +406,8 @@ class ExecutionIntegrationTests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertTrue(result["safety_blocked"])
-        broker.close_position.assert_called_once_with("AAPL")
-        broker.submit_order.assert_not_called()
+        broker.submit_order.assert_called_once()
+        broker.close_position.assert_not_called()
 
 
 class RunLoggerBudgetFeedTests(unittest.TestCase):
