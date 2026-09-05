@@ -1,6 +1,6 @@
 # Traders：專案目標、執行計劃與目前狀況
 
-版本：2.5
+版本：2.6
 
 最後更新：2026-09-05
 
@@ -63,6 +63,14 @@ Phase A 完成且取得真實 Alpaca Paper E2E 證據後，才可開始長期 Pa
 - 驗收記錄兩項非阻擋 Minor：M1（cache 無完整性密封，top40-內 member swap 篡改可通過重驗）與 M2（`ScreeningDeps.llm_factory` 死欄位）。
 
 M1 修復（驗收後同日，最小修復）：`selection_store.py` 加自雜湊 integrity seal（`save()` 蓋 SHA-256 章、`load_valid()` 於其他檢查前驗章；docstring 明示為 tamper evidence 非 provenance）、`SCHEMA_VERSION` 1→2（舊格式 cache 自動失效重掃一次）、`pipeline.py` 引用 `SCHEMA_VERSION` 單一來源。新增 5 項永久測試含原攻擊路徑（top40-member swap）必須被拒。修復後：focused `71 passed`、全 suite `533 passed, 172 subtests`、compileall/git diff --check 綠；PoC 重放確認攻擊路徑已封、gate fail-closed、正常同日 reuse 不受影響。M2 留待一般維修。
+
+R1–R4 生產整合 remediation（2026-09-05，同日 fresh read-only 獨立驗收判定 **Accepted**）：R1–R4 全數 Pass、無等效 bypass、全 suite `562 passed, 172 subtests`、compileall/git diff --check 綠、外部 call=0、驗收前後 source 一致。
+- R1：`screening/universe.py` 新增 `enum_value`（`getattr(value,"value",value)` lower），universe 與 holdings `get_asset()` 路徑共用；真實 `AssetStatus.ACTIVE`/`AssetClass.US_EQUITY` 接受、`INACTIVE`/錯 class/`tradable=False` 排除、純字串回相容。
+- R2：`execution/service.py:_resubmit_recovered` 在 POST 前重跑當日 `check_entry_allowed`（交易日＋當日 validated Top20），阻擋轉 `CANCELED`（durable、不重試）；broker 已有單直接 adopt 不 POST；verified reducing exit 與 crypto 走 Phase A 原路徑；`client_order_id` 不變、無重試迴圈。
+- R3：`dataflows/market_calendar.py` 新增 Alpaca `TradingClient.get_calendar(GetCalendarRequest)` 權威 adapter（`*_auth`＋bounded cache），`sessions.py`/`metrics.py`/`pipeline.py`/`gate.py`/`selection_store.py`/WebUI 全切權威路徑；2024–2027 靜態表僅留 legacy/test fixture；early close 按實際 close、2028+、DST、61-session、缺 final bar 不回退 `as_of`、calendar 不可用/incomplete 一律 fail-closed。
+- R4：`screening/metrics.py:fetch_daily_bars_batch` 固定 `DataFeed.SIP`、無 IEX fallback（失敗 raise `SIP consolidated bars unavailable (feed=sip)`）；`selection_store.py:SCHEMA_VERSION` 2→3＋`data_feed=sip` 綁入 payload/fingerprint，舊 IEX cache 永不復用；公式不變（ADV20/volume_ratio 獨立手算吻合）。
+- 測試：新增 `tests/test_phase_c_remediation.py` 29 項（R1 真 enum、R2 P1–P5＋loop、R3 P1–P9＋`GetCalendarRequest`、R4 P1–P6），另更新 `test_phase_c_screening.py`/`test_market_hours.py` 走權威路徑。
+- 驗收記錄一項非阻擋觀察：WebUI `is_market_open` 在 close 缺失的畸形列上回退 `16:00`（正常 early close 與完全不可用皆正確 fail-closed；不影響 execution gate 權威路徑）。
 
 未覆蓋限制：真實Alpaca universe/bars資料品質、真實Screening vendor輸出品質、與長期Paper observation皆未驗證；離線驗收僅證明mock鏈路與fail-closed語義。**Accepted** 僅代表離線P3功能；真實資料與小額Paper observation另經授權執行，不自行啟動無人值守Paper run。
 

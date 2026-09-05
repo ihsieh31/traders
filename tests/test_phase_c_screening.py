@@ -71,6 +71,27 @@ def _tmp_dirs():
     return root, Path(root) / "cache", Path(root) / "results"
 
 
+def _std_rows(as_of=None, count=95):
+    """Deterministic authoritative rows matching the legacy window (offline).
+
+    Covers both the scan ``_AS_OF`` (2026-09-04) and the next trading day
+    (2026-09-08, after the Labor Day holiday) so next-day cache invalidation
+    can be proven without network.
+    """
+    from datetime import datetime as _dt
+
+    anchor = as_of if as_of is not None else date(2026, 9, 8)
+    dates = session_dates_ending_at(anchor, count)
+    return [
+        SimpleNamespace(
+            date=d,
+            open=_dt(d.year, d.month, d.day, 9, 30),
+            close=_dt(d.year, d.month, d.day, 16, 0),
+        )
+        for d in dates
+    ]
+
+
 def _base_config(**overrides):
     root, cache, results = _tmp_dirs()
     config = dict(DEFAULT_CONFIG)
@@ -86,6 +107,8 @@ def _base_config(**overrides):
             "screening_as_of_override": _AS_OF.isoformat(),
             "sector_mapping": {},
             "corporate_action_events": [],
+            # Offline authoritative calendar (no network in tests).
+            "calendar_rows": _std_rows(),
         }
     )
     config.update(overrides)
@@ -128,6 +151,7 @@ def _universe(symbols):
 def _candidates(n, *, prefix="T", base=100.0):
     """n eligible SymbolFeatures rows with distinct, monotone factors."""
     sessions = session_dates_ending_at(_AS_OF, 61)
+    rows = _std_rows()
     features = []
     for i in range(n):
         bars = _bars_df(
@@ -136,7 +160,8 @@ def _candidates(n, *, prefix="T", base=100.0):
             250_000.0,
         )
         window, err = validate_and_clean_bars(
-            f"{prefix}{i:02d}", bars, as_of=_AS_OF, thresholds=EligibilityThresholds()
+            f"{prefix}{i:02d}", bars, as_of=_AS_OF, thresholds=EligibilityThresholds(),
+            calendar_rows=rows,
         )
         assert err is None, err
         feature, ferr = compute_features(
@@ -166,7 +191,7 @@ def _fake_llm_invoke(candidates_out, *, counter=None, select_n=20):
 
 
 def _deps(universe, bars, *, positions=None, assets=None, invoke=None,
-          quarantine=None):
+          quarantine=None, calendar_rows=None):
     class _Asset:
         def __init__(self, tradable=True, status="active"):
             self.tradable = tradable
@@ -195,6 +220,7 @@ def _deps(universe, bars, *, positions=None, assets=None, invoke=None,
         asset_fn=asset_fn,
         quarantine_fn=lambda cfg: quarantine if callable(quarantine) else (lambda sym: None),
         screening_invoke_fn=invoke or _fake_llm_invoke(None),
+        calendar_rows=calendar_rows if calendar_rows is not None else _std_rows(),
     )
 
 
@@ -234,7 +260,8 @@ class SessionCalendarTests(unittest.TestCase):
         # bars built on these session dates validate across the DST boundary
         bars = _bars_df(sessions, _session_closes(sessions), 250_000.0)
         window, err = validate_and_clean_bars(
-            "DST", bars, as_of=as_of, thresholds=EligibilityThresholds()
+            "DST", bars, as_of=as_of, thresholds=EligibilityThresholds(),
+            calendar_rows=_std_rows(as_of, 90),
         )
         self.assertIsNone(err)
         self.assertEqual(len(window), 61)
@@ -400,7 +427,8 @@ class UniverseTests(unittest.TestCase):
 class EligibilityTests(unittest.TestCase):
     def _window(self, bars, **kw):
         return validate_and_clean_bars(
-            "SYM", bars, as_of=_AS_OF, thresholds=EligibilityThresholds(**kw)
+            "SYM", bars, as_of=_AS_OF, thresholds=EligibilityThresholds(**kw),
+            calendar_rows=_std_rows(),
         )
 
     def test_exactly_61_bars_qualify_60_do_not(self):
@@ -457,7 +485,8 @@ class EligibilityTests(unittest.TestCase):
             }
         )
         window, err = validate_and_clean_bars(
-            "SYM", pd.DataFrame(rows), as_of=_AS_OF, thresholds=EligibilityThresholds()
+            "SYM", pd.DataFrame(rows), as_of=_AS_OF, thresholds=EligibilityThresholds(),
+            calendar_rows=_std_rows(),
         )
         self.assertIsNone(err)
         self.assertEqual(len(window), 61)
@@ -550,6 +579,7 @@ class RankingFormulaTests(unittest.TestCase):
         window, err = validate_and_clean_bars(
             "SYM", _bars_df(sessions, closes, volumes),
             as_of=_AS_OF, thresholds=EligibilityThresholds(),
+            calendar_rows=_std_rows(),
         )
         self.assertIsNone(err)
         feature, ferr = compute_features(
@@ -587,6 +617,7 @@ class RankingFormulaTests(unittest.TestCase):
         scored, stats = scan_universe(
             universe, bars, as_of=_AS_OF,
             thresholds=EligibilityThresholds(), quarantine_checker=lambda s: None,
+            calendar_rows=_std_rows(),
         )
         self.assertEqual(stats.eligible, 2)
         self.assertAlmostEqual(scored[0].score, 100.0)
@@ -601,6 +632,7 @@ class RankingFormulaTests(unittest.TestCase):
         scored1, _ = scan_universe(
             universe, bars, as_of=_AS_OF,
             thresholds=EligibilityThresholds(), quarantine_checker=lambda s: None,
+            calendar_rows=_std_rows(),
         )
         self.assertEqual([f.symbol for f in scored1], ["AAA", "MMM", "ZZZ"])
         self.assertEqual(len({f.score for f in scored1}), 1)
@@ -609,6 +641,7 @@ class RankingFormulaTests(unittest.TestCase):
         scored2, _ = scan_universe(
             shuffled, bars, as_of=_AS_OF,
             thresholds=EligibilityThresholds(), quarantine_checker=lambda s: None,
+            calendar_rows=_std_rows(),
         )
         self.assertEqual(
             [(f.symbol, round(f.score, 12)) for f in scored1],
@@ -620,6 +653,7 @@ class RankingFormulaTests(unittest.TestCase):
         scored, _ = scan_universe(
             _universe(["ONE"]), bars, as_of=_AS_OF,
             thresholds=EligibilityThresholds(), quarantine_checker=lambda s: None,
+            calendar_rows=_std_rows(),
         )
         self.assertEqual(len(scored), 1)
         self.assertAlmostEqual(scored[0].score, 50.0)

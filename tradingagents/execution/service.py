@@ -1231,12 +1231,30 @@ class ExecutionService:
             position
             and ((position.qty > 0 and side == "sell") or (position.qty < 0 and side == "buy"))
         )
+        # Phase C: exposure-increasing US-equity recovery resubmits must
+        # re-run today's program-derived entry gate (trading day + validated
+        # current Top20) before any broker POST. Broker-existing orders are
+        # adopted upstream without reaching here; verified risk-reducing
+        # exits and crypto keep the Phase A path. Blocked rows become
+        # CANCELED (durable, non-retryable) with an operator-visible reason.
+        effective_notional = local.get("notional")
+        effective_quantity = local.get("quantity")
+        if not risk_reducing and "/" not in str(local.get("symbol") or "").upper():
+            from tradingagents.screening.gate import check_entry_allowed
+
+            entry_block = check_entry_allowed(
+                str(local.get("symbol") or ""),
+                config=_get_execution_config(),
+            )
+            if entry_block:
+                self._store.transition_order(local["order_id"], "CANCELED")
+                raise BrokerAuthorityError(
+                    f"recovery resubmit blocked by Phase C entry gate for {local['symbol']}: {entry_block}"
+                )
         # Phase B: recovery resubmits recompute every gate from the fresh
         # snapshot — quarantine and exposure caps included. Headroom is never
         # reused from the original submit; when the caps allow less than the
         # original size, the resubmit is clipped to the allowed notional.
-        effective_notional = local.get("notional")
-        effective_quantity = local.get("quantity")
         if not risk_reducing:
             quarantine = self._quarantine_rejection(local["symbol"])
             if quarantine:

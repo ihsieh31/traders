@@ -8,10 +8,11 @@ watchlist mode is untouched: the gate is active only when the ambient run
 config enables ``auto_screening_enabled``.
 
 Fail-closed rules when the gate is active:
-- New entries are refused on non-trading days entirely.
-- Entries require a cache-valid selection for the current trading date;
-  a stale, corrupted, or configuration-changed selection blocks every
-  opening order (it never falls back to an old list).
+- New entries are refused on non-trading days entirely (authoritative Alpaca
+  calendar; calendar failures block entries, never fall back to static).
+- Entries require a cache-valid selection for the current authoritative
+  trading date; a stale, corrupted, or configuration-changed selection blocks
+  every opening order (it never falls back to an old list).
 - Symbols outside the validated Top20 (including extra holdings pulled in
   only for held-risk review) may HOLD, SELL, or take a verified
   risk-reducing exit — never a new BUY/LONG, a flip's opening leg, or a
@@ -24,7 +25,7 @@ Fail-closed rules when the gate is active:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from tradingagents.screening.selection_store import (
     SelectionStore,
@@ -32,8 +33,22 @@ from tradingagents.screening.selection_store import (
 )
 from tradingagents.screening.sessions import (
     eastern_now,
-    is_us_trading_day,
+    is_us_trading_day_production,
 )
+
+
+def _resolve_calendar_args(
+    config: Dict[str, Any],
+    calendar_client: Any,
+    calendar_rows: Optional[List[Any]],
+) -> tuple[Any, Optional[List[Any]]]:
+    client = calendar_client
+    if client is None and config.get("calendar_client") is not None:
+        client = config.get("calendar_client")
+    rows = calendar_rows
+    if rows is None and isinstance(config.get("calendar_rows"), list):
+        rows = config.get("calendar_rows")
+    return client, rows
 
 
 def check_entry_allowed(
@@ -43,11 +58,15 @@ def check_entry_allowed(
     now: Optional[datetime] = None,
     store: Optional[SelectionStore] = None,
     resolved_spec: Any = None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
 ) -> Optional[str]:
     """Return ``None`` when a new entry is allowed, else a block reason.
 
     Reads only the on-disk validated selection — never in-memory round
-    state — so a restarted process re-derives the same answer.
+    state — so a restarted process re-derives the same answer. The trading-day
+    check and the selection date check both use the authoritative Alpaca
+    calendar; any calendar failure blocks the entry fail-closed.
     """
     if config is None:
         from tradingagents.dataflows.config import get_config
@@ -60,8 +79,16 @@ def check_entry_allowed(
     if not normalized or "/" in normalized:
         return None  # other asset classes keep their existing path
 
+    client, rows = _resolve_calendar_args(config, calendar_client, calendar_rows)
     eastern = eastern_now(now)
-    if not is_us_trading_day(eastern.date()):
+    try:
+        trading_day = is_us_trading_day_production(eastern.date(), client=client, calendar_rows=rows)
+    except Exception as exc:
+        return (
+            "auto screening: US equity trading calendar unavailable; "
+            f"new entries are blocked fail-closed ({exc})"
+        )
+    if not trading_day:
         return (
             "auto screening: today is not a US equity trading day; "
             "new entries are blocked (held risk management only)"
@@ -69,7 +96,9 @@ def check_entry_allowed(
 
     if store is None:
         store = SelectionStore(default_selection_cache_path(config))
-    selection = store.load_valid(config, spec=resolved_spec, now=now)
+    selection = store.load_valid(
+        config, spec=resolved_spec, now=now, calendar_client=client, calendar_rows=rows
+    )
     if selection is None:
         return (
             "auto screening: no validated Top20 selection for the current "

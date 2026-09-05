@@ -22,14 +22,17 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from tradingagents.dataflows.market_calendar import session_dates_ending_at
-from tradingagents.screening.sessions import most_recent_completed_session
+from tradingagents.dataflows.market_calendar import session_dates_ending_at_auth
+from tradingagents.screening.sessions import most_recent_completed_session_production
 
 FORMULA_VERSION = "phase-c-top40-1"
+# Authoritative consolidated feed for Phase C US-equity screening liquidity.
+# Hardcoded SIP: the $20M ADV20 threshold is defined on consolidated volume.
+SCREENING_DATA_FEED = "sip"
 
 FACTOR_KEYS = ("adv20", "r5", "r20", "r60", "vol20", "volume_ratio", "trend")
 
@@ -112,12 +115,27 @@ class ScanStats:
         self.excluded[reason] = self.excluded.get(reason, 0) + 1
 
 
-def resolve_as_of(config: Optional[dict] = None, now=None) -> date:
-    """Most recent completed US regular session (bars data date)."""
+def resolve_as_of(
+    config: Optional[dict] = None,
+    now=None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> date:
+    """Most recent completed authoritative session (bars data date).
+
+    Raises :class:`CalendarError` when the Alpaca calendar cannot prove the
+    session — callers must fail closed (no silent ``as_of`` rollback).
+    """
     override = (config or {}).get("screening_as_of_override")
     if override:
         return date.fromisoformat(str(override))
-    return most_recent_completed_session(now)
+    injected = calendar_rows
+    if injected is None and (config or {}).get("calendar_rows") is not None:
+        injected = (config or {}).get("calendar_rows")
+    client = calendar_client
+    if client is None and (config or {}).get("calendar_client") is not None:
+        client = (config or {}).get("calendar_client")
+    return most_recent_completed_session_production(now, client=client, calendar_rows=injected)
 
 
 def bars_for_symbol(bars_df: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -134,11 +152,16 @@ def validate_and_clean_bars(
     *,
     as_of: date,
     thresholds: EligibilityThresholds,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """Return (clean_window_df, None) or (None, exclusion_reason).
 
-    The clean frame holds exactly the ``required_bars`` sessions ending at
-    ``as_of`` with timestamp/close/volume columns, one row per session.
+    The clean frame holds exactly the ``required_bars`` authoritative sessions
+    ending at ``as_of`` with timestamp/close/volume columns, one row per
+    session. The expected window comes from the Alpaca calendar — a missing
+    session is never forward-filled, and ``as_of`` is never silently moved
+    backward when the final daily bar has not landed.
     """
     required = thresholds.required_bars
     if frame is None or len(frame) == 0:
@@ -184,9 +207,13 @@ def validate_and_clean_bars(
     if (window["volume"] < 0).any():
         return None, "bad_values"
 
-    # The required window must contain every trading session ending at
-    # as_of — a missing day is a hole, not something to forward-fill.
-    expected = session_dates_ending_at(as_of, required)
+    # The required window must contain every authoritative trading session
+    # ending at as_of — a missing day is a hole, not something to
+    # forward-fill. Calendar failures propagate (fail-closed, no silent
+    # as_of rollback).
+    expected = session_dates_ending_at_auth(
+        as_of, required, client=calendar_client, calendar_rows=calendar_rows
+    )
     actual = list(window["session"])
     if actual != expected:
         return None, "missing_session"
@@ -324,12 +351,16 @@ def scan_universe(
     thresholds: EligibilityThresholds,
     sector_mapping: Optional[Dict[str, str]] = None,
     quarantine_checker=None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
 ) -> Tuple[List[SymbolFeatures], ScanStats]:
     """Run eligibility + factors over the whole universe.
 
     ``quarantine_checker`` (P2 corporate-action gate) excludes quarantined
     symbols before ranking; an unavailable checker is a caller error —
-    the pipeline refuses to scan without it (fail-closed).
+    the pipeline refuses to scan without it (fail-closed). The expected
+    61-session window is authoritative (Alpaca calendar); calendar failures
+    propagate so the scan stops instead of using a different ``as_of``.
     """
     stats = ScanStats(universe_total=len(universe))
     mapping = sector_mapping or {}
@@ -343,7 +374,12 @@ def scan_universe(
                 stats.record("quarantined")
                 continue
         window, exclusion = validate_and_clean_bars(
-            symbol, bars_by_symbol.get(symbol), as_of=as_of, thresholds=thresholds
+            symbol,
+            bars_by_symbol.get(symbol),
+            as_of=as_of,
+            thresholds=thresholds,
+            calendar_client=calendar_client,
+            calendar_rows=calendar_rows,
         )
         if exclusion:
             stats.record(exclusion)
@@ -370,9 +406,13 @@ def fetch_daily_bars_batch(
 ) -> Dict[str, pd.DataFrame]:
     """Fetch daily bars for all symbols in bounded chunks (default 100).
 
-    Uses the existing Alpaca stock data client. Any transport-level
-    failure raises so the pipeline can stop the run — per-symbol data
-    problems surface later as exclusions, not transport errors.
+    Phase C screening liquidity (ADV20, volume_ratio) is defined on
+    consolidated US-market volume, so this path always requests
+    ``DataFeed.SIP``. Any transport/entitlement failure raises with SIP
+    context so the pipeline stops fail-closed — there is no IEX fallback
+    and the $20M threshold is never reinterpreted as an IEX threshold.
+    Per-symbol data problems surface later as exclusions, not transport
+    errors.
     """
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.historical import StockHistoricalDataClient
@@ -404,9 +444,13 @@ def fetch_daily_bars_batch(
             start=start.to_pydatetime(),
             end=end.to_pydatetime(),
             adjustment=adjustment_value,
-            feed=DataFeed.IEX,
+            feed=DataFeed.SIP,
         )
-        response = client.get_stock_bars(request)
+        try:
+            response = client.get_stock_bars(request)
+        except Exception as exc:
+            # No silent IEX retry: surface SIP/entitlement context and stop.
+            raise RuntimeError(f"SIP consolidated bars unavailable (feed=sip): {exc}") from exc
         batch_df = response.df.reset_index()
         for symbol in chunk:
             frames[symbol] = bars_for_symbol(batch_df, symbol)

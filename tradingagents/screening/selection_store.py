@@ -42,11 +42,16 @@ from typing import Any, Dict, Optional, Set
 from tradingagents.screening.metrics import FACTOR_KEYS, FORMULA_VERSION
 from tradingagents.screening.sessions import (
     current_trading_date,
+    current_trading_date_production,
     eastern_now,
     is_fresh_utc_timestamp,
 )
 
-SCHEMA_VERSION = 2
+# Bumped to invalidate pre-remediation IEX-feed selections: R4 binds the
+# consolidated feed ("sip") into the fingerprint and payload, and old
+# schema-2 files (without data_feed) are never valid.
+SCHEMA_VERSION = 3
+SCREENING_DATA_FEED = "sip"
 
 # The integrity seal field name stamped by ``save`` and verified by
 # ``load_valid`` before any other read-side check.
@@ -162,6 +167,9 @@ class SelectionStore:
             "bars_batch_size": config.get("screening_bars_batch_size"),
             "sector_mapping": config.get("sector_mapping") or {},
             "max_sector_exposure_pct": config.get("max_sector_exposure_pct"),
+            # R4: feed semantics change the selection; an IEX-era cache must
+            # never validate as a SIP selection.
+            "data_feed": SCREENING_DATA_FEED,
         }
         canonical = json.dumps(material, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -174,12 +182,17 @@ class SelectionStore:
         *,
         spec: Any = None,
         now=None,
+        calendar_client: Any = None,
+        calendar_rows: Any = None,
     ) -> Optional[dict]:
         """Return the cached selection only if it fully revalidates.
 
-        The cache's ``trading_date`` must equal the current trading date
-        (on a non-trading day ``current_trading_date`` falls back to the
-        last session, but callers must still refuse entries then).
+        The cache's ``trading_date`` must equal the current authoritative
+        trading date (on a non-trading day the authoritative date falls back
+        to the last session, but callers must still refuse entries then).
+        Calendar failures fail closed (treated as absent). Selections whose
+        feed semantics are not the current consolidated ``sip`` feed are
+        never valid.
         """
         payload = self.load_raw()
         if payload is None:
@@ -211,9 +224,24 @@ class SelectionStore:
                 return None
             if not as_of or not trading_date:
                 return None
+            # R4: only consolidated-feed selections are usable.
+            if payload.get("data_feed", "") != SCREENING_DATA_FEED:
+                return None
             # Next-day, weekend, or backdated caches are never valid:
-            # the trading_date must be the current trading date.
-            if trading_date != str(current_trading_date(now)):
+            # the trading_date must be the current authoritative trading date.
+            try:
+                injected = calendar_rows
+                if injected is None and isinstance(config.get("calendar_rows"), list):
+                    injected = config.get("calendar_rows")
+                client = calendar_client
+                if client is None and config.get("calendar_client") is not None:
+                    client = config.get("calendar_client")
+                expected_trading_date = str(
+                    current_trading_date_production(now, client=client, calendar_rows=injected)
+                )
+            except Exception:
+                return None
+            if trading_date != expected_trading_date:
                 return None
             if as_of > trading_date:
                 return None

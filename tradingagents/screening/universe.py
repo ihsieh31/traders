@@ -26,6 +26,17 @@ def normalize_symbol(symbol: Any) -> str:
     return "".join(text.split())
 
 
+def enum_value(value: Any) -> str:
+    """Lowercased underlying value for enum-or-string Alpaca fields.
+
+    Real ``alpaca-py`` models expose ``Asset.status`` / ``Asset.asset_class``
+    as enums where ``str(enum)`` is ``"AssetStatus.ACTIVE"`` (not ``"active"``).
+    ``getattr(value, "value", value)`` accepts both real enums and plain-string
+    fakes without changing the intended filters.
+    """
+    return str(getattr(value, "value", value) or "").lower()
+
+
 def _consume_pages(client: Any, request: Any) -> List[Any]:
     """Materialize the asset list across any pagination the API/SDK uses.
 
@@ -85,8 +96,8 @@ def fetch_us_equity_universe(broker: Optional[Any] = None) -> List[dict]:
     seen = set()
     for asset in assets:
         symbol = normalize_symbol(getattr(asset, "symbol", ""))
-        status = str(getattr(asset, "status", "") or "").lower()
-        asset_class = str(getattr(getattr(asset, "asset_class", ""), "value", getattr(asset, "asset_class", "")) or "").lower()
+        status = enum_value(getattr(asset, "status", ""))
+        asset_class = enum_value(getattr(asset, "asset_class", ""))
         if not symbol or symbol in seen:
             continue
         if status != "active" or asset_class != AssetClass.US_EQUITY.value:

@@ -1,19 +1,26 @@
 """
 Market hours utilities for validating trading hours and checking if the market is open.
+
+Production session authority is the Alpaca Trading Calendar API via
+``tradingagents.dataflows.market_calendar`` (shared with Phase C screening).
+The 2024-2027 static holiday lists below are LEGACY display data only and are
+NOT used as production authority; ``is_market_open`` / ``get_next_market_datetime``
+derive trading days and actual closes (including early closes) from the
+authoritative calendar and fail closed when it cannot be proven.
 """
 
 import datetime
-import pytz
-from typing import List, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-# US market holidays moved to the shared calendar module so tradingagents
-# (Phase C screening) and the WebUI stay on one source of truth.
+import pytz
+
+# LEGACY static tables — NOT production authority (see module docstring).
 from tradingagents.dataflows.market_calendar import (  # noqa: F401
+    ALL_US_MARKET_HOLIDAYS as _ALL_US_MARKET_HOLIDAYS,
     US_MARKET_HOLIDAYS_2024,
     US_MARKET_HOLIDAYS_2025,
     US_MARKET_HOLIDAYS_2026,
     US_MARKET_HOLIDAYS_2027,
-    ALL_US_MARKET_HOLIDAYS as _ALL_US_MARKET_HOLIDAYS,
 )
 
 # Market regular hours (EST/EDT)
@@ -71,45 +78,80 @@ def validate_market_hours(hours_str: str) -> Tuple[bool, List[int], str]:
     except ValueError:
         return False, [], "Please enter valid hour numbers (e.g., 11,13)"
 
-def is_market_open(target_datetime: datetime.datetime = None) -> Tuple[bool, str]:
+def is_market_open(
+    target_datetime: datetime.datetime = None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[list] = None,
+) -> Tuple[bool, str]:
     """
     Check if the US stock market is open at the given datetime.
 
+    Production authority is the Alpaca trading calendar (trading days and
+    actual close times, including early closes). Calendar failures fail
+    closed (reported as closed, never silently falling back to the static
+    2024-2027 table).
+
     Args:
         target_datetime: Datetime to check (defaults to current time)
+        calendar_client: injected Alpaca trading client (tests)
+        calendar_rows: injected authoritative calendar rows (tests)
 
     Returns:
         Tuple of (is_open, reason_if_closed)
     """
+    from tradingagents.dataflows.market_calendar import (
+        CalendarError,
+        is_us_trading_day_auth,
+        session_close_et_auth,
+    )
+
     target_datetime = _coerce_to_eastern(target_datetime)
 
-    # Check if it's a weekend
-    if target_datetime.weekday() >= 5:  # Saturday = 5, Sunday = 6
-        return False, "Market is closed on weekends"
+    # Authoritative trading-day check (weekends/holidays/2028+/exceptional).
+    try:
+        trading_day = is_us_trading_day_auth(
+            target_datetime.date(), client=calendar_client, calendar_rows=calendar_rows
+        )
+    except CalendarError as exc:
+        return False, f"Market calendar unavailable; treating as closed ({exc})"
+    if not trading_day:
+        if target_datetime.weekday() >= 5:
+            return False, "Market is closed on weekends"
+        return False, f"Market is closed for holiday on {target_datetime.strftime('%Y-%m-%d')}"
 
-    # Check if it's a holiday
-    date_str = target_datetime.strftime("%Y-%m-%d")
-    if date_str in _ALL_US_MARKET_HOLIDAYS:
-        return False, f"Market is closed for holiday on {date_str}"
-
-    # Check if it's within market hours (9:30 AM - 4:00 PM EST/EDT)
+    # Intraday window uses the authoritative close (early closes honored).
+    try:
+        close_t = session_close_et_auth(
+            target_datetime.date(), client=calendar_client, calendar_rows=calendar_rows
+        )
+    except CalendarError:
+        close_t = datetime.time(16, 0)
     market_open = target_datetime.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = target_datetime.replace(hour=16, minute=0, second=0, microsecond=0)
+    market_close = target_datetime.replace(
+        hour=close_t.hour, minute=close_t.minute, second=0, microsecond=0
+    )
 
     if target_datetime < market_open:
         return False, f"Market opens at 9:30 AM EST/EDT (currently {target_datetime.strftime('%I:%M %p %Z')})"
     elif target_datetime > market_close:
-        return False, f"Market closed at 4:00 PM EST/EDT (currently {target_datetime.strftime('%I:%M %p %Z')})"
+        return False, f"Market closed at {close_t.strftime('%I:%M %p')} EST/EDT (currently {target_datetime.strftime('%I:%M %p %Z')})"
 
     return True, "Market is open"
 
-def get_next_market_datetime(target_hour: int, from_datetime: datetime.datetime = None) -> datetime.datetime:
+def get_next_market_datetime(
+    target_hour: int,
+    from_datetime: datetime.datetime = None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[list] = None,
+) -> datetime.datetime:
     """
     Get the next market datetime for the specified hour.
 
     Args:
         target_hour: Hour to target (e.g., 11 for 11 AM)
         from_datetime: Starting datetime (defaults to current time)
+        calendar_client: injected Alpaca trading client (tests)
+        calendar_rows: injected authoritative calendar rows (tests)
 
     Returns:
         Next datetime when market will be open at the target hour
@@ -123,12 +165,14 @@ def get_next_market_datetime(target_hour: int, from_datetime: datetime.datetime 
     if target_dt <= from_datetime:
         target_dt += datetime.timedelta(days=1)
 
-    # Keep advancing until we find a valid market day
-    max_attempts = 10  # Prevent infinite loops
+    # Keep advancing until we find a valid market day (authoritative).
+    max_attempts = 15  # Prevent infinite loops
     attempts = 0
 
     while attempts < max_attempts:
-        is_open, reason = is_market_open(target_dt)
+        is_open, reason = is_market_open(
+            target_dt, calendar_client=calendar_client, calendar_rows=calendar_rows
+        )
         if is_open:
             return target_dt
 

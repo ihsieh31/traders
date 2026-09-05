@@ -47,12 +47,17 @@ from tradingagents.screening.metrics import (
 from tradingagents.screening.prompt import build_sector_plan, run_screening_invocation
 from tradingagents.screening.selection_store import (
     SCHEMA_VERSION,
+    SCREENING_DATA_FEED,
     SelectionStore,
     default_selection_cache_path,
     eastern_timestamp,
 )
-from tradingagents.screening.sessions import eastern_now, is_us_trading_day
-from tradingagents.screening.universe import fetch_us_equity_universe, normalize_symbol
+from tradingagents.screening.sessions import (
+    current_trading_date_production,
+    eastern_now,
+    is_us_trading_day_production,
+)
+from tradingagents.screening.universe import enum_value, fetch_us_equity_universe, normalize_symbol
 
 
 @dataclass
@@ -98,6 +103,10 @@ class ScreeningDeps:
     quarantine_fn: Optional[Callable[[Dict[str, Any]], Callable[[str], Optional[str]]]] = None
     screening_invoke_fn: Optional[Callable[..., List[Any]]] = None
     llm_factory: Optional[Callable[[Dict[str, Any], Dict[str, Any]], Any]] = None
+    # Authoritative calendar injection (tests/fakes). When None, the real
+    # Alpaca Trading Calendar API is used via config keys below.
+    calendar_client: Optional[Any] = None
+    calendar_rows: Optional[List[Any]] = None
 
     @classmethod
     def real(cls) -> "ScreeningDeps":
@@ -115,10 +124,7 @@ def _default_positions() -> List[dict]:
             {
                 "symbol": normalize_symbol(getattr(position, "symbol", "")),
                 "qty": qty,
-                "asset_class": str(
-                    getattr(getattr(position, "asset_class", ""), "value", getattr(position, "asset_class", ""))
-                    or ""
-                ).lower(),
+                "asset_class": enum_value(getattr(position, "asset_class", "")),
             }
         )
     return positions
@@ -165,6 +171,19 @@ def _stopped(reason: str, detail: str = "") -> RoundPlan:
     return RoundPlan(status="stopped", reason=reason, detail=detail)
 
 
+def _resolve_calendar(
+    config: Dict[str, Any], deps: ScreeningDeps
+) -> tuple[Any, Optional[List[Any]]]:
+    """Authoritative calendar injection: explicit deps win, else config keys."""
+    client = deps.calendar_client
+    if client is None and config.get("calendar_client") is not None:
+        client = config.get("calendar_client")
+    rows = deps.calendar_rows
+    if rows is None and isinstance(config.get("calendar_rows"), list):
+        rows = config.get("calendar_rows")
+    return client, rows
+
+
 def _run_scan(
     config: Dict[str, Any],
     resolved: Dict[str, Any],
@@ -177,9 +196,12 @@ def _run_scan(
     now=None,
 ) -> RoundPlan:
     """Full-market scan + one Screening invocation; saves the selection."""
+    from tradingagents.dataflows.market_calendar import CalendarError
+
     select_n = int(config.get("screening_select_n", 20))
     top_k = int(config.get("screening_top_k", 40))
     max_per_sector = int(config.get("screening_max_per_sector", 5))
+    calendar_client, calendar_rows = _resolve_calendar(config, deps)
 
     try:
         universe = (deps.universe_fn or (lambda _cfg: fetch_us_equity_universe()))(config)
@@ -205,14 +227,19 @@ def _run_scan(
         return _stopped("BARS_UNAVAILABLE", str(exc))
 
     sector_mapping = dict(config.get("sector_mapping") or {})
-    scored, stats = scan_universe(
-        universe,
-        bars_by_symbol,
-        as_of=as_of,
-        thresholds=thresholds,
-        sector_mapping=sector_mapping,
-        quarantine_checker=checker,
-    )
+    try:
+        scored, stats = scan_universe(
+            universe,
+            bars_by_symbol,
+            as_of=as_of,
+            thresholds=thresholds,
+            sector_mapping=sector_mapping,
+            quarantine_checker=checker,
+            calendar_client=calendar_client,
+            calendar_rows=calendar_rows,
+        )
+    except CalendarError as exc:
+        return _stopped("CALENDAR_UNAVAILABLE", str(exc))
     if len(scored) < select_n:
         return _stopped(
             "INSUFFICIENT_CANDIDATES",
@@ -253,6 +280,8 @@ def _run_scan(
         "trading_date": trading_date,
         "as_of": as_of.isoformat(),
         "generated_at": eastern_timestamp(now),
+        # R4: bind consolidated-feed semantics so IEX-era caches never validate.
+        "data_feed": SCREENING_DATA_FEED,
         "role": {
             "provider": spec.provider,
             "model": spec.model,
@@ -310,9 +339,15 @@ def prepare_screening_round(
     spec = resolved.get("spec")
     store = SelectionStore(default_selection_cache_path(config))
     thresholds = EligibilityThresholds.from_config(config)
+    calendar_client, calendar_rows = _resolve_calendar(config, deps)
 
     eastern = eastern_now(now)
-    trading_day = is_us_trading_day(eastern.date())
+    try:
+        trading_day = is_us_trading_day_production(
+            eastern.date(), client=calendar_client, calendar_rows=calendar_rows
+        )
+    except Exception as exc:
+        return _stopped("CALENDAR_UNAVAILABLE", str(exc))
 
     if refresh and not trading_day:
         return _stopped(
@@ -329,23 +364,41 @@ def prepare_screening_round(
 
     if trading_day:
         if not refresh:
-            selection = store.load_valid(config, spec=spec, now=now)
+            selection = store.load_valid(
+                config, spec=spec, now=now, calendar_client=calendar_client, calendar_rows=calendar_rows
+            )
             cached = selection is not None
         if selection is None:
             with store.scan_lock():
                 # Another runner may have finished the first scan while we
                 # waited for the lock; reuse it instead of re-scanning.
-                selection = store.load_valid(config, spec=spec, now=now)
+                selection = store.load_valid(
+                    config, spec=spec, now=now, calendar_client=calendar_client, calendar_rows=calendar_rows
+                )
                 cached = selection is not None
                 if selection is None:
+                    try:
+                        as_of = resolve_as_of(
+                            config, now, calendar_client=calendar_client, calendar_rows=calendar_rows
+                        )
+                    except Exception as exc:
+                        return _stopped("CALENDAR_UNAVAILABLE", str(exc))
+                    try:
+                        trading_date = str(
+                            current_trading_date_production(
+                                now, client=calendar_client, calendar_rows=calendar_rows
+                            )
+                        )
+                    except Exception as exc:
+                        return _stopped("CALENDAR_UNAVAILABLE", str(exc))
                     scan_plan = _run_scan(
                         config,
                         resolved,
                         deps,
-                        as_of=resolve_as_of(config, now),
+                        as_of=as_of,
                         thresholds=thresholds,
                         store=store,
-                        trading_date=str(eastern.date()),
+                        trading_date=trading_date,
                         now=now,
                     )
                     if scan_plan.stopped:
@@ -411,7 +464,7 @@ def prepare_screening_round(
         try:
             asset = (deps.asset_fn or _default_asset)(symbol)
             tradable = bool(getattr(asset, "tradable", False))
-            status = str(getattr(asset, "status", "") or "").lower()
+            status = enum_value(getattr(asset, "status", ""))
         except Exception as exc:
             blocked.append(
                 {"symbol": symbol, "reason": f"asset status unavailable: {exc}"}
