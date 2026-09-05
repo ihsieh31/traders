@@ -533,6 +533,29 @@ class ExecutionService:
                         list(reconciliation.reasons)
                         + ["close requires a fresh matching broker position and no conflicting close order"],
                     )
+                # Phase C entry gate: in auto-screening mode only today's
+                # validated Top20 may open exposure. Program-derived and
+                # re-verified inside the single execution entry, so direct
+                # callers and checkpoint resumes cannot bypass it. HOLD and
+                # verified reducing exits are untouched; recovery of already
+                # authorized orders has already happened above.
+                if opening:
+                    from tradingagents.screening.gate import check_entry_allowed
+
+                    entry_block = check_entry_allowed(
+                        intent_dict.get("symbol", ""),
+                        config=_get_execution_config(),
+                    )
+                    if entry_block:
+                        return {
+                            "success": False,
+                            "fail_closed": True,
+                            "entry_gate_blocked": True,
+                            "broker_attempted": False,
+                            "broker_calls": 0,
+                            "error": entry_block,
+                            "trade_intent": intent_dict,
+                        }
                 position = snapshot.position(intent_dict["symbol"])
                 target = str(intent_dict.get("target_position") or "").upper()
                 # Phase B note: the Phase A "already holds the target

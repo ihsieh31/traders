@@ -50,6 +50,13 @@ AlpacaTradingAgent introduces powerful new capabilities specifically designed fo
 - **Bounded Retries**: `llm_max_retries` (integer 0-3) gives first try + at most N retries = at most N+1 requests per logical invocation, covering plain, structured-output and tool-bound paths through one retry owner; transient failures (timeout/connection/429/5xx) retry with capped backoff, permanent failures (401/403/invalid) stop immediately
 - **Run-Stop Semantics**: A provider access failure stops the whole run (marked `stopped` in the run log with role/provider/model/attempts), never degrades into a normal `NO_TRADE`, and halts auto dispatch for the round until an operator restarts; Risk Manager schema/bind/validation failures still emit the Phase A strict `INVALID/NO_TRADE` with zero broker calls
 
+### 🌍 **Full-Market Auto Screening and the Daily Top20 (Phase C)**
+- **Third Fixed LLM Role (Screening)**: With `auto_screening_enabled` on, an independently configured `screening_provider` / `screening_model` / `screening_backend_url` ranks candidates — required values, never inherited from the Analysis/global settings, credential via `SCREENING_<PROVIDER>_API_KEY`; with screening off, no Screening client is ever built and the manual watchlist mode is untouched
+- **Deterministic Eligibility & Top40**: One full-market scan per US trading day pulls every ACTIVE tradable US_EQUITY asset (paginated; no search-limit or fallback lists), validates 61 complete daily bars against the shared NY calendar (no unclosed same-day bar, no missing sessions, no forward-fill, one explicit adjustment policy), then applies the fixed gates (close ≥ $5, 20-day mean dollar volume ≥ $20M) and the cross-sectional percentile formula (adv20/r20/r60/inverse-vol20/volume_ratio → 0-100 score) with symbol tie-breaks; fewer than 20 eligible candidates stops the round (`INSUFFICIENT_CANDIDATES`)
+- **Strict Top20 Contract**: The Screening role sees only the compact factor table (never holdings, cash, or news) and must return exactly 20 entries with unique ranks 1-20, input-member symbols, finite 0-100 scores and factor-grounded reasons; sector diversity (max 5 per sector) applies only when the P2 sector mapping covers every candidate (`INSUFFICIENT_SECTOR_CAPACITY` otherwise, explicit `sector_diversity_applied=false` degradation when metadata is missing); invalid outputs fail the round with no repair request
+- **Top20 ∪ Holdings**: Each round re-fetches fresh broker positions and analyzes `Top20 ∪ holdings` once per symbol; quarantined/non-tradable holdings get an explicit blocked-review reason instead of fabricated quotes; crypto and other asset classes keep their existing management path; only today's validated Top20 members may open new exposure — enforced inside the single execution entry (the Phase C entry gate), so direct callers and checkpoint resumes cannot bypass it, while verified reducing exits keep the Phase A path
+- **Daily Selection Cache**: One small JSON file (atomic replace, stdlib flock for concurrent first scans) stores trading date, as_of, role/model, config fingerprint, Top40 features and the validated Top20 — no credentials; next-day, corrupted, future-dated or configuration-changed caches are treated as absent; a manual refresh is an explicit new scan that invalidates the old list first, so a failed refresh can never fall back; any screening-stage or provider failure stops the whole round and the scheduler (no downstream analysis, zero new mutations)
+
 ### 🧾 **Structured Decisions, Memory, and Resume**
 - **Executable Final Action**: Final decisions preserve `BUY/HOLD/SELL` or `LONG/NEUTRAL/SHORT` for Alpaca execution
 - **Advisory Ratings**: Upstream-style ratings are treated as metadata only and never directly trigger Alpaca orders
@@ -312,22 +319,20 @@ P1 corresponds to Phase A, P2 to Phase B, and P3 to Phase C. The completed
 P1 prompt files have been retired; their history remains in Git.
 P2 (SEC/IR primary sources, corporate-action quarantine, sector caps,
 Analysis/Decision roles, bounded LLM retries with run-stop, fresh holdings
-context and deterministic exposure caps) is **implemented — pending
-independent acceptance**. Follow [the updated roadmap](PROJECT_GOALS_AND_STATUS.md) and these prompts in order:
+context and deterministic exposure caps) passed fresh independent acceptance
+on 2026-09-05 (**Accepted**). P3 (full-market screening: ACTIVE US_EQUITY
+universe, deterministic Top40, an independent Screening role returning a
+strictly validated Top20, the Top20 ∪ holdings deep-analysis set, the daily
+selection cache and the fail-closed Top20 entry gate) also passed fresh
+independent acceptance on 2026-09-05 (**Accepted**, C01–C23 all Pass);
+the acceptance Minor on cache integrity was remediated the same day with a
+self-hash seal on the selection cache. Follow [the status
+roadmap](PROJECT_GOALS_AND_STATUS.md) for the evidence trail.
 
-1. [P2 implementation](PHASE_B_IMPLEMENTATION_PROMPT.md): original SEC/IR,
-   corporate-action and sector work, Analysis/Decision providers, bounded LLM
-   retries, and fresh holdings context plus concentration headroom.
-2. [P2 independent acceptance](PHASE_B_ACCEPTANCE_PROMPT.md).
-3. [P3 implementation](PHASE_C_IMPLEMENTATION_PROMPT.md): full equity universe,
-   deterministic Top40, independent Screening Top20, holdings union and daily cache.
-4. [P3 independent acceptance](PHASE_C_ACCEPTANCE_PROMPT.md).
-
-Paper observation does not block P2/P3 implementation or offline acceptance.
-It remains required before enabling long-running unattended Paper auto-trading.
-P2 still requires fresh independent acceptance; P3 still requires independent
-P2 acceptance. P3 remains a planning document — no screening/universe code
-exists yet.
+Paper observation does not block offline acceptance. It remains required
+before enabling long-running unattended Paper auto-trading, which needs
+separate explicit authorization — the accepted build does not enable
+trading by itself.
 
 **LLM and Runtime Controls**
 - Select OpenAI, local OpenAI-compatible, Google, Anthropic, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, or Azure OpenAI

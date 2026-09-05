@@ -44,6 +44,8 @@ advisory.
 | `tradingagents/graph/` | LangGraph orchestration. `trading_graph.py` builds the graph and owns the LLM clients, memories, and reflection; `setup.py` wires nodes; `conditional_logic.py` controls debate rounds; `propagation.py` creates initial state; `signal_processing.py` extracts the final signal; `checkpointer.py` optional SQLite resume. |
 | `tradingagents/agents/` | The agents themselves: `analysts/` (market, social, news, fundamentals, macro), `researchers/` (bull/bear), `managers/`, `trader/`, `risk_mgmt/`, plus `utils/` (agent states, memory, trading modes) and `schemas.py` (typed `TradeIntent`). |
 | `tradingagents/dataflows/` | Every external data source behind one interface: `alpaca_utils.py` (bars, quotes, account, orders, execution), Finnhub, Google News, Reddit, FRED macro, crypto sources, with a yfinance fallback for supported failures. `config.py` holds runtime config + API keys. |
+| `tradingagents/screening/` | Phase C full-market screening: session math (`sessions.py`), the ACTIVE US_EQUITY universe with pagination (`universe.py`), deterministic bars validation + eligibility + Top40 formula (`metrics.py`), the third Screening role with the strict Top20 schema (`llm.py`, `prompt.py`), the daily selection cache (`selection_store.py`), the round pipeline (`pipeline.py`) and the execution entry gate (`gate.py`). |
+| `tradingagents/dataflows/market_calendar.py` | Single shared US-market holiday tables and session walks used by both the WebUI market-hours module and Phase C screening. |
 | `tradingagents/llm_clients/` | Provider adapters (OpenAI, Anthropic, Google, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, Azure, local endpoints) behind `create_llm_client`. `roles.py` resolves the fixed Analysis/Decision roles; `retry.py` is the single bounded retry owner (`ProviderFailure` + exact request caps). |
 | `tradingagents/prompts/` | All agent prompts as editable text templates (`TRADINGAGENTS_PROMPT_DIR` overrides). |
 | `tradingagents/run_logger.py` | Append-only audit trail: every prompt, tool call, LLM call (with token usage), state snapshot, and final state per run under `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/`. Provider failures add a `provider_failure` event and a `stopped` run status. |
@@ -86,6 +88,42 @@ advisory.
    memory log as `pending`, and resolved later with realized returns and a
    reflection once the outcome is known.
 
+## Phase C screening lifecycle (auto mode)
+
+Off by default. With `auto_screening_enabled` on, the scheduler (WebUI loop/market-hour modes, CLI) calls
+`tradingagents.screening.pipeline.prepare_screening_round` once per round:
+
+1. **Scan-or-cache** — the first round of a US trading day fetches the full
+   ACTIVE US_EQUITY universe, pulls daily bars in bounded 100-symbol batches
+   under one explicit adjustment policy, validates the 61-session window per
+   symbol (no unclosed bar, no holes, no NaN/Inf), applies the deterministic
+   gates and percentile score, and sends the Top40 compact table to the
+   Screening role, which must return exactly 20 strictly-validated entries.
+   The result is stored in one JSON selection file; later rounds the same
+   trading day reuse it after full revalidation (integrity seal, date,
+   fingerprint, schema, membership) — `save()` stamps a SHA-256 self-hash
+   over the payload and `load_valid()` verifies it first, so an edited or
+   pre-seal file is treated as absent and the day rescans (tamper evidence,
+   not provenance against a writer who recomputes the seal). Non-trading
+   days never scan and never enter.
+2. **Holdings union** — fresh broker positions are fetched every round
+   (never cached with the selection). US-equity holdings outside the Top20
+   are analyzed for held-risk review only; quarantined or non-tradable ones
+   are listed with an explicit blocked-review reason; crypto positions are
+   listed separately under their existing management path.
+3. **Entry gate** — inside the single `ExecutionService` entry, any
+   exposure-adding order in auto mode requires the symbol to be in today's
+   validated Top20 (holdings outside it may only HOLD or reduce risk through
+   the verified Phase A path). The gate reads the on-disk selection, so
+   restarts and direct callers get the same answer; P2 exposure caps and the
+   quarantine gate still run after it.
+4. **Stop semantics** — any screening-stage failure (universe/bars/
+   quarantine unavailable, <20 candidates, sector capacity, invalid LLM
+   output, provider exhaustion) or a holdings-fetch failure returns a
+   stopped plan; the scheduler halts the round and the schedule with zero
+   downstream analysis and zero new mutations. A manual refresh removes the
+   cached selection before scanning, so a failed refresh cannot fall back.
+
 ## Memory and learning
 
 Two complementary memories:
@@ -110,6 +148,7 @@ Two complementary memories:
 | `reports/YYYY-MM-DD.{md,html}` | Optional daily operations reports. |
 | `tradingagents/dataflows/data_cache/` | Cached market data. |
 | `eval_results/.../checkpoints` | Optional SQLite LangGraph checkpoints for resume. |
+| `dataflows/data_cache/screening_selection.json` | Phase C daily Top20 selection (trading date, as_of, role/model, config fingerprint, Top40 features, validated Top20, sector mode, `integrity` self-hash seal). No credentials; `.lock` sibling serializes concurrent first scans. |
 | `eval_results/execution.db` | Three-table durable intent/order/fill ledger. A reserved account-status intent stores the latest `CLEAN`/`PAUSED` reasons and reconciliation baseline without a second persistence system. |
 | `eval_results/.execution-locks/` | Per-account stdlib OS locks. File descriptors are released by the OS after process exit/crash; no stale lease cleanup exists. |
 
@@ -155,7 +194,10 @@ Phase B additions: `analysis_provider/model/backend_url` and
 clients use their provider SDK's default per-request timeout — retry count and
 backoff caps still bound every request in both modes),
 `sec_ir_*` and `company_ir_pages` for primary sources,
-`corporate_action_events` for the manual quarantine feed, and
+`corporate_action_events` for the manual quarantine feed,
+`auto_screening_enabled` + `screening_provider/model/backend_url` for the
+Phase C Screening role (required, never inherited, off by default) with the
+`screening_*` deterministic thresholds/constants, and
 `max_sector_exposure_pct` + `sector_mapping` (the sector cap is active once a
 mapping exists; unknown sectors then refuse new risk).
 

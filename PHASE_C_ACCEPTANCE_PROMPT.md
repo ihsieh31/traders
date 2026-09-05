@@ -48,7 +48,7 @@
 
 ## 必做對抗PoC與測試
 
-從scheduler或其真實dispatch入口跑至少：有效23symbol聯集；holdings-only LLM提議新entry；Screening輸出第21或越界symbol；人工refresh耗盡且舊cache存在；持股GET失敗；第一股後第二股Provider失敗；同日雙執行者；決策後broker持倉增加導致headroom縮小。記LLM transport count、分析symbol清單、cache狀態、intent rows與broker calls。若前一股已成交，報告stop後零新增mutation，不能把前一股訂單隱藏。
+從scheduler或其真實dispatch入口跑至少：有效23symbol聯集；holdings-only LLM提議新entry；Screening輸出第21或越界symbol；人工refresh耗盡且舊cache存在；持股GET失敗；第一股後第二股Provider失敗；同日雙執行者；決策後broker持倉增加導致headroom縮小。注入邊界：真實dispatch入口意指請求必須流經被測的驗證/gate邏輯本身；LLM輸出契約的反例（invalid schema、rank跳號/不連續、越界symbol、空或超長reason等）只能在transport或LLM client邊界注入fake（計數型fake transport經真實retry owner與strict驗證棧重放），不得經由會連同LLM呼叫與驗證邏輯一併取代的測試注入點（如pipeline層screening invoke seam）重現或宣稱閉環，invocation級以fake LLM直打同一strict驗證函式可作為補充證據。記LLM transport count、分析symbol清單、cache狀態、intent rows與broker calls。若前一股已成交，報告stop後零新增mutation，不能把前一股訂單隱藏。
 
 獨立重算rank fixture，不能以production同一函式產生expected。測試邊界應能捕捉60bars算60D、以calendar-day TTL誤殺週末、平均rank處理錯誤、已持但不在Top20加倉、refresh失敗重用cache等具體bug。
 

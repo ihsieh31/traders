@@ -532,6 +532,51 @@ def get_user_selections():
             {"llm_provider": selected_llm_provider, "backend_url": backend_url or None, **role_settings}
         )
 
+    # Step 5c: Optional Phase C full-market auto screening (Top20)
+    console.print(
+        create_question_box(
+            "Step 5c: Auto Screening (optional)",
+            "Enable the daily full-market screen? Screening derives a "
+            "validated Top20 and analyzes Top20 plus current holdings; "
+            "leave off to analyze the manual ticker above.",
+            "no",
+        )
+    )
+    screening_settings = {}
+    if typer.confirm("Enable auto screening?", default=False):
+        from tradingagents.screening.llm import resolve_screening_config
+
+        screening_provider = (
+            typer.prompt("Screening provider", default="", show_default=False).strip() or None
+        )
+        screening_model = (
+            typer.prompt("Screening model", default="", show_default=False).strip() or None
+        )
+        screening_url = (
+            typer.prompt(
+                "Screening endpoint override (empty = provider default)",
+                default="",
+                show_default=False,
+            ).strip()
+            or None
+        )
+        screening_refresh = typer.confirm(
+            "Refresh: force a new scan even if today's selection exists?", default=False
+        )
+        screening_settings = {
+            "auto_screening_enabled": True,
+            "screening_provider": screening_provider,
+            "screening_model": screening_model,
+            "screening_backend_url": screening_url,
+            "screening_refresh": screening_refresh,
+        }
+        # Fail fast on an incomplete Screening role (no silent inheritance).
+        probe = {"llm_provider": selected_llm_provider, **screening_settings}
+        try:
+            resolve_screening_config(probe)
+        except ValueError as exc:
+            raise typer.BadParameter(f"Invalid screening configuration: {exc}")
+
     checkpoint_enabled = select_checkpoint_enabled()
     output_language = get_output_language()
 
@@ -544,6 +589,7 @@ def get_user_selections():
         "backend_url": backend_url,
         "checkpoint_enabled": checkpoint_enabled,
         "output_language": output_language,
+        **screening_settings,
         "google_thinking_level": google_thinking_level,
         "anthropic_effort": anthropic_effort,
         "shallow_thinker": selected_shallow_thinker,
@@ -790,11 +836,80 @@ def run_analysis():
         "decision_provider",
         "decision_model",
         "decision_backend_url",
+        "auto_screening_enabled",
+        "screening_provider",
+        "screening_model",
+        "screening_backend_url",
     ):
-        if selections.get(role_key):
+        if selections.get(role_key) is not None:
             config[role_key] = selections[role_key]
     config["trading_mode"] = "investment"
 
+    # Phase C: auto-screening mode runs the real pipeline (scan or
+    # same-day cache, fresh holdings union) and analyzes the whole deep
+    # set serially. A screening stop ends the run with zero analysis.
+    if config.get("auto_screening_enabled"):
+        from tradingagents.screening.pipeline import prepare_screening_round
+
+        plan = prepare_screening_round(config, refresh=bool(selections.get("screening_refresh")))
+        if plan.stopped:
+            console.print(
+                f"[bold red]Screening stopped — {plan.stop_reason_text()}[/bold red]. "
+                "No analysis was run; retry the selection explicitly."
+            )
+            return
+        _display_screening_plan(plan)
+        tickers = plan.deep_analysis_set
+    else:
+        tickers = [selections["ticker"]]
+
+    for ticker in tickers:
+        console.rule(f"[bold]Analyzing {ticker}")
+        _run_cli_analysis_for_ticker(selections, config, ticker)
+
+
+def _display_screening_plan(plan):
+    """Print the Top20 selection, reasons and round composition."""
+    from rich.table import Table
+
+    console.print(
+        f"[bold green]Screening selection[/bold green] trading date "
+        f"{plan.selection_date} (as_of {plan.as_of}, "
+        f"{'cached' if plan.cached else 'fresh scan'})"
+    )
+    table = Table(title="Top20 (research priority)")
+    table.add_column("Rank", justify="right")
+    table.add_column("Symbol")
+    table.add_column("Score", justify="right")
+    table.add_column("Reason")
+    for entry in plan.top20:
+        table.add_row(
+            str(entry.get("rank")),
+            str(entry.get("symbol")),
+            f"{float(entry.get('screening_score') or 0):.1f}",
+            str(entry.get("short_reason", ""))[:120],
+        )
+    console.print(table)
+    if plan.overlap_holdings:
+        console.print(f"Top20 ∩ holdings: {', '.join(plan.overlap_holdings)}")
+    if plan.extra_holdings:
+        console.print(f"Held review (not in Top20): {', '.join(plan.extra_holdings)}")
+    for blocked in plan.blocked_holdings:
+        console.print(
+            f"[yellow]Blocked held review: {blocked['symbol']} — {blocked['reason']}[/yellow]"
+        )
+    if plan.other_asset_holdings:
+        console.print(
+            "Other-asset holdings (existing management path): "
+            + ", ".join(h["symbol"] for h in plan.other_asset_holdings)
+        )
+    if plan.mode == "held_review":
+        console.print(
+            "[yellow]Non-trading day: held-risk review only — no scan, no new entries.[/yellow]"
+        )
+
+def _run_cli_analysis_for_ticker(selections, config, ticker):
+    """Run the existing single-ticker CLI analysis flow for one symbol."""
     # Initialize the graph
     graph = TradingAgentsGraph(
         [analyst.value for analyst in selections["analysts"]], config=config, debug=True
@@ -843,15 +958,15 @@ def run_analysis():
 
         # Initialize state and get graph args
         init_agent_state = graph.propagator.create_initial_state(
-            selections["ticker"], selections["analysis_date"]
+            ticker, selections["analysis_date"]
         )
-        graph._resolve_memory_log_outcomes(selections["ticker"], selections["analysis_date"])
-        args = graph._graph_args_for_run(selections["ticker"], selections["analysis_date"])
+        graph._resolve_memory_log_outcomes(ticker, selections["analysis_date"])
+        args = graph._graph_args_for_run(ticker, selections["analysis_date"])
         compiled_graph, checkpointer_ctx = graph._graph_for_run(
-            selections["ticker"], selections["analysis_date"]
+            ticker, selections["analysis_date"]
         )
         run_logger.start_run(
-            symbol=selections["ticker"],
+            symbol=ticker,
             trade_date=str(selections["analysis_date"]),
             config=config,
             metadata={"debug": True, "source": "cli_stream"},
@@ -860,7 +975,7 @@ def run_analysis():
         run_logger.log_state_snapshot(
             stage="initial_state",
             snapshot=init_agent_state,
-            symbol=selections["ticker"],
+            symbol=ticker,
         )
 
         # Stream the analysis
@@ -1116,16 +1231,16 @@ def run_analysis():
                 final_state["final_trade_decision"]
             )
             graph.curr_state = final_state
-            graph.ticker = selections["ticker"]
+            graph.ticker = ticker
             graph._log_state(selections["analysis_date"], final_state)
             run_logger.finish_run(
-                symbol=selections["ticker"],
+                symbol=ticker,
                 status="completed",
                 final_state=final_state,
                 final_signal=decision,
             )
             graph.memory_log.store_decision(
-                ticker=selections["ticker"],
+                ticker=ticker,
                 trade_date=selections["analysis_date"],
                 final_trade_decision=final_state["final_trade_decision"],
                 trading_mode=final_state.get("trading_mode", config.get("trading_mode", "investment")),
@@ -1133,7 +1248,7 @@ def run_analysis():
             if config.get("checkpoint_enabled", False):
                 clear_checkpoint(
                     config["data_cache_dir"],
-                    selections["ticker"],
+                    ticker,
                     selections["analysis_date"],
                 )
             run_started = False
@@ -1143,7 +1258,7 @@ def run_analysis():
             # run audit trail with role/model/attempts detail).
             if run_started:
                 run_logger.finish_run(
-                    symbol=selections["ticker"],
+                    symbol=ticker,
                     status="stopped",
                     final_state=trace[-1] if trace else None,
                     error_message=str(e),
@@ -1154,7 +1269,7 @@ def run_analysis():
         except Exception as e:
             if run_started:
                 run_logger.finish_run(
-                    symbol=selections["ticker"],
+                    symbol=ticker,
                     status="failed",
                     final_state=trace[-1] if trace else None,
                     error_message=str(e),

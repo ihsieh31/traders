@@ -667,6 +667,85 @@ def _model_setup():
                 ],
                 className="config-roles-section",
             ),
+            html.Div(
+                [
+                    html.Small(
+                        "Phase C auto screening: when enabled, one full-market "
+                        "scan per US trading day produces a validated Top20; "
+                        "later rounds reuse the same-day selection. The "
+                        "Screening provider/model are required and never "
+                        "inherit Analysis settings. Leave disabled to use "
+                        "your manual watchlist.",
+                        className="config-hint",
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                dbc.Switch(
+                                    id="auto-screening-enabled",
+                                    label="Enable full-market auto screening (Top20)",
+                                    value=False,
+                                    className="config-switch",
+                                ),
+                                className="config-toggle-tile",
+                            ),
+                            html.Div(
+                                dbc.Button(
+                                    [
+                                        html.I(className="fa-solid fa-rotate me-2"),
+                                        "Refresh screening",
+                                    ],
+                                    id="screening-refresh-btn",
+                                    color="outline-secondary",
+                                    size="sm",
+                                ),
+                                className="config-toggle-tile",
+                            ),
+                        ],
+                        className="config-two-column",
+                    ),
+                    html.Div(
+                        [
+                            _field(
+                                "Screening provider",
+                                dbc.Input(
+                                    id="screening-provider",
+                                    type="text",
+                                    placeholder="e.g. openai (required when enabled)",
+                                    value="",
+                                    className="config-input",
+                                ),
+                                "magnifying-glass-chart",
+                            ),
+                            _field(
+                                "Screening model",
+                                dbc.Input(
+                                    id="screening-model",
+                                    type="text",
+                                    placeholder="e.g. gpt-5.4-nano (required when enabled)",
+                                    value="",
+                                    className="config-input",
+                                ),
+                                "brain",
+                            ),
+                        ],
+                        className="config-two-column",
+                    ),
+                    _field(
+                        "Screening endpoint override",
+                        dbc.Input(
+                            id="screening-backend-url",
+                            type="text",
+                            placeholder="Optional OpenAI-compatible endpoint",
+                            value="",
+                            className="config-input",
+                        ),
+                        "server",
+                    ),
+                    html.Div(id="screening-status", className="config-status-slot"),
+                ],
+                className="config-roles-section",
+            ),
         ],
         className="config-section-body",
     )

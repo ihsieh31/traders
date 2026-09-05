@@ -50,6 +50,19 @@ class AppState:
         # operator explicitly restarts the analysis.
         self.provider_stop_reason = None
 
+        # Phase C auto-screening round state (display + refresh request).
+        self.screening_enabled = False
+        self.screening_status_text = ""
+        self.screening_selection_date = None
+        self.screening_as_of = None
+        self.screening_top20 = []
+        self.screening_extra_holdings = []
+        self.screening_blocked_holdings = []
+        self.screening_other_asset_holdings = []
+        self.screening_cached = False
+        self.screening_stop_reason = None
+        self.screening_refresh_requested = False
+
         self.refresh_interval = 1.0  # seconds
         self.analysis_complete = False
         self.analysis_results = None
@@ -298,6 +311,10 @@ class AppState:
         self.session_start_time = None
         # An explicit operator start clears any prior provider stop.
         self.provider_stop_reason = None
+        # An explicit operator start also clears any prior screening stop
+        # (a requested manual refresh is consumed by the next round).
+        self.screening_stop_reason = None
+        self.screening_refresh_requested = False
 
     def get_tool_calls_for_display(self, agent_filter=None, symbol_filter=None):
         """Get tool calls in a consistent format for UI display, optionally filtered by agent type and symbol"""

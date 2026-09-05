@@ -41,6 +41,87 @@ def _halt_scheduling_for_provider_stop() -> None:
     print(f"[SCHEDULER] Halting auto dispatch: {reason}")
 
 
+def _screening_stopped() -> bool:
+    """True when the Phase C screening stage stopped the current round."""
+    return bool(getattr(app_state, "screening_stop_reason", None))
+
+
+def _halt_scheduling_for_screening_stop() -> None:
+    """Phase C: a screening-stage failure stops the whole scheduling round
+    (and the schedule) with zero downstream analysis — no fallback to an
+    earlier selection, no next symbol, no next round."""
+    reason = getattr(app_state, "screening_stop_reason", None)
+    if not reason:
+        return
+    app_state.stop_loop = True
+    app_state.stop_market_hour = True
+    app_state.analysis_queue = []
+    print(f"[SCHEDULER] Halting auto dispatch (screening): {reason}")
+
+
+def _run_screening_round(provider_settings: dict):
+    """Prepare one Phase C auto-screening round via the real pipeline.
+
+    Returns the RoundPlan; never raises for screening failures (the plan
+    carries the stop reason). Consumes a pending manual-refresh request,
+    which is an explicit new scan — on failure the old selection stays
+    invalidated and the round stops.
+    """
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.screening.pipeline import prepare_screening_round
+
+    pipeline_config = dict(DEFAULT_CONFIG)
+    pipeline_config.update(provider_settings)
+    refresh = bool(app_state.screening_refresh_requested)
+    app_state.screening_refresh_requested = False
+    return prepare_screening_round(pipeline_config, refresh=refresh)
+
+
+def _apply_screening_plan(plan) -> list:
+    """Record a successful plan in app_state and return the round symbols."""
+    app_state.screening_selection_date = plan.selection_date
+    app_state.screening_as_of = plan.as_of
+    app_state.screening_top20 = list(plan.top20)
+    app_state.screening_extra_holdings = list(plan.extra_holdings)
+    app_state.screening_blocked_holdings = list(plan.blocked_holdings)
+    app_state.screening_other_asset_holdings = list(plan.other_asset_holdings)
+    app_state.screening_cached = bool(plan.cached)
+    app_state.screening_stop_reason = None
+    app_state.screening_status_text = (
+        f"selection {plan.selection_date} (as_of {plan.as_of}, "
+        f"{'cached' if plan.cached else 'fresh scan'})"
+    )
+
+    symbols = list(plan.deep_analysis_set)
+    for symbol in symbols:
+        if symbol not in app_state.symbol_states:
+            app_state.init_symbol_state(symbol)
+    print(
+        f"[SCREENING] Round symbols ({len(symbols)}): {', '.join(symbols)} | "
+        f"entry_allowed={plan.entry_allowed} | blocked_holdings="
+        f"{[b['symbol'] for b in plan.blocked_holdings]} | other_assets="
+        f"{[h['symbol'] for h in plan.other_asset_holdings]}"
+    )
+    return symbols
+
+
+def _prepare_auto_round_symbols(provider_settings: dict):
+    """Run the screening pipeline for one round; halt scheduling on stop.
+
+    Returns ``None`` when the round must not proceed (screening stop — the
+    scheduler has been halted), otherwise the ordered symbol list for this
+    round (Top20 by rank plus analyzable extra holdings; possibly empty on
+    a non-trading day with no holdings).
+    """
+    plan = _run_screening_round(provider_settings)
+    if plan.stopped:
+        app_state.screening_stop_reason = plan.stop_reason_text()
+        app_state.screening_status_text = f"stopped: {plan.stop_reason_text()}"
+        _halt_scheduling_for_screening_stop()
+        return None
+    return _apply_screening_plan(plan)
+
+
 def _llm_group_style(enabled):
     return {} if enabled else {"display": "none"}
 
@@ -214,6 +295,21 @@ def _collect_role_settings(
     }
 
 
+def _collect_screening_settings(
+    auto_screening_enabled,
+    screening_provider,
+    screening_model,
+    screening_backend_url,
+):
+    """Phase C screening role overrides: empty values stay unset."""
+    return {
+        "auto_screening_enabled": bool(auto_screening_enabled),
+        "screening_provider": _clean(screening_provider),
+        "screening_model": _clean(screening_model),
+        "screening_backend_url": _clean(screening_backend_url),
+    }
+
+
 def register_control_callbacks(app):
     """Register all control and configuration callbacks"""
 
@@ -355,6 +451,94 @@ def register_control_callbacks(app):
             tone=tone,
             icon="fa-user-shield",
         )
+
+    @app.callback(
+        Output("screening-status", "children"),
+        [Input("refresh-interval", "n_intervals")],
+    )
+    def update_screening_status(_n_intervals):
+        """Live Top20 / selection-date / stop-reason panel (Phase C)."""
+        from tradingagents.default_config import DEFAULT_CONFIG
+        from tradingagents.screening.selection_store import (
+            SelectionStore,
+            default_selection_cache_path,
+        )
+
+        config = dict(DEFAULT_CONFIG)
+        try:
+            from tradingagents.dataflows.config import get_config
+
+            config.update(get_config() or {})
+        except Exception:
+            pass
+
+        header = "Auto screening"
+        if not app_state.screening_enabled:
+            body = "Disabled — manual watchlist mode."
+            tone, icon = "neutral", "fa-list-check"
+        else:
+            tone, icon = "info", "fa-filter"
+            body = app_state.screening_status_text or "No round prepared yet."
+
+        top20 = app_state.screening_top20 or []
+        items = []
+        if app_state.screening_enabled:
+            items.append(f"selection date: {app_state.screening_selection_date or '—'}")
+            items.append(f"as_of: {app_state.screening_as_of or '—'}")
+            items.append(f"source: {'cached' if app_state.screening_cached else 'fresh scan'}")
+            if top20:
+                preview = ", ".join(
+                    f"{entry.get('rank')}. {entry.get('symbol')}" for entry in top20[:5]
+                )
+                items.append(f"Top20 ({len(top20)}): {preview} …")
+            if app_state.screening_extra_holdings:
+                items.append(
+                    "held review: " + ", ".join(app_state.screening_extra_holdings)
+                )
+            if app_state.screening_blocked_holdings:
+                items.append(
+                    "blocked: "
+                    + ", ".join(
+                        f"{b['symbol']} ({b['reason']})" for b in app_state.screening_blocked_holdings
+                    )
+                )
+            if app_state.screening_other_asset_holdings:
+                items.append(
+                    "other assets (existing path): "
+                    + ", ".join(
+                        f"{h['symbol']}" for h in app_state.screening_other_asset_holdings
+                    )
+                )
+            items.append(f"entries allowed: {'yes' if not app_state.screening_stop_reason else 'no'}")
+
+        if app_state.screening_stop_reason:
+            tone = "danger"
+            body = f"Screening stopped: {app_state.screening_stop_reason}"
+
+        # Secret-free cache health line.
+        try:
+            store = SelectionStore(default_selection_cache_path(config))
+            cached = store.load_raw() is not None
+        except Exception:
+            cached = False
+        if app_state.screening_enabled:
+            items.append(f"cache file present: {'yes' if cached else 'no'}")
+
+        return _status_panel(header, body, items or None, tone=tone, icon=icon)
+
+    @app.callback(
+        Output("screening-refresh-btn", "disabled"),
+        [Input("screening-refresh-btn", "n_clicks")],
+        prevent_initial_call=True,
+    )
+    def request_screening_refresh(n_clicks):
+        """Queue an explicit new scan for the next round (never a fallback)."""
+        if not n_clicks:
+            return False
+        app_state.screening_refresh_requested = True
+        print("[SCREENING] Manual refresh requested: next round will rescan; "
+              "the current selection is invalidated first")
+        return False
 
     @app.callback(
         [
@@ -849,7 +1033,11 @@ def register_control_callbacks(app):
          State("analysis-backend-url", "value"),
          State("decision-provider", "value"),
          State("decision-model", "value"),
-         State("decision-backend-url", "value")]
+         State("decision-backend-url", "value"),
+         State("auto-screening-enabled", "value"),
+         State("screening-provider", "value"),
+         State("screening-model", "value"),
+         State("screening-backend-url", "value")]
     )
     def on_control_button_click(n_clicks, button_children, tickers, analysts_market, analysts_social, analysts_news,
                                analysts_fundamentals, analysts_macro, research_depth,
@@ -863,7 +1051,9 @@ def register_control_callbacks(app):
                                allow_shorts, loop_enabled, loop_interval, trade_enabled, trade_amount,
                                market_hour_enabled, market_hours_input,
                                analysis_provider, analysis_model, analysis_backend_url,
-                               decision_provider, decision_model, decision_backend_url):
+                               decision_provider, decision_model, decision_backend_url,
+                               auto_screening_enabled, screening_provider, screening_model,
+                               screening_backend_url):
         """Handle control button clicks"""
         # Detect which property triggered this callback
         triggered_prop = None
@@ -956,6 +1146,9 @@ def register_control_callbacks(app):
 
         provider_metadata = get_provider_ui_metadata(llm_provider)
         backend_url = (backend_url or "").strip() if provider_metadata.get("backend_visible") else ""
+        screening_settings = _collect_screening_settings(
+            auto_screening_enabled, screening_provider, screening_model, screening_backend_url
+        )
         provider_settings = {
             "google_thinking_level": google_thinking_level or None,
             "anthropic_effort": anthropic_effort or None,
@@ -967,6 +1160,7 @@ def register_control_callbacks(app):
                 decision_model,
                 decision_backend_url,
             ),
+            **screening_settings,
         }
 
         # Validate role configuration before starting a run so an invalid
@@ -979,6 +1173,23 @@ def register_control_callbacks(app):
             )
         except ValueError as exc:
             return f"Invalid LLM role configuration: {exc}", {}, 1, 1, 1, 1
+
+        # Phase C: validate the Screening role up front — auto mode with
+        # missing provider/model/key must fail here, never silently inherit
+        # the Analysis configuration.
+        if screening_settings.get("auto_screening_enabled"):
+            from tradingagents.screening.llm import resolve_screening_config
+
+            try:
+                resolve_screening_config(
+                    {"llm_provider": llm_provider or "openai", **provider_settings}
+                )
+            except ValueError as exc:
+                return f"Invalid screening configuration: {exc}", {}, 1, 1, 1, 1
+            app_state.screening_enabled = True
+            app_state.screening_stop_reason = None
+        else:
+            app_state.screening_enabled = False
 
         # Set loop configuration
         app_state.loop_interval_minutes = loop_interval if loop_interval and loop_interval > 0 else 60
@@ -995,6 +1206,10 @@ def register_control_callbacks(app):
                 return f"Invalid market hours: {error_msg}", {}, 1, 1, 1, 1
 
         num_symbols = len(symbols)
+
+        # Phase C: whether this run uses the screening pipeline for its
+        # symbol selection (derives the round symbols per round).
+        auto_screening_on = bool(provider_settings.get("auto_screening_enabled"))
 
         # Initialize symbol states IMMEDIATELY so pagination works right away
         for symbol in symbols:
@@ -1074,12 +1289,21 @@ def register_control_callbacks(app):
                     # Reset states for new analysis
                     app_state.reset_for_loop()
 
+                    # Phase C: auto-screening mode derives this round's
+                    # symbols from the pipeline (scan-or-cache Top20 plus
+                    # fresh holdings); a screening stop halts the schedule.
+                    round_symbols = symbols
+                    if auto_screening_on:
+                        round_symbols = _prepare_auto_round_symbols(provider_settings)
+                        if round_symbols is None:
+                            break
+
                     # Initialize symbol states
-                    for symbol in symbols:
+                    for symbol in round_symbols:
                         app_state.init_symbol_state(symbol)
 
                     # Add symbols to queue and run analysis
-                    app_state.add_symbols_to_queue(symbols)
+                    app_state.add_symbols_to_queue(round_symbols)
 
                     while app_state.analysis_queue and not app_state.stop_market_hour:
                         symbol = app_state.get_next_symbol()
@@ -1109,6 +1333,8 @@ def register_control_callbacks(app):
                         break
 
                     if _provider_stopped():
+                        break
+                    if _screening_stopped():
                         break
 
                     if not app_state.stop_market_hour:
@@ -1142,8 +1368,16 @@ def register_control_callbacks(app):
                 while not app_state.stop_loop:
                     print(f"[LOOP] Starting iteration {loop_iteration}")
 
+                    # Phase C: auto-screening mode derives this round's
+                    # symbols from the pipeline; a screening stop halts.
+                    round_symbols = symbols
+                    if auto_screening_on:
+                        round_symbols = _prepare_auto_round_symbols(provider_settings)
+                        if round_symbols is None:
+                            break
+
                     # States already initialized above, just add to queue
-                    app_state.add_symbols_to_queue(symbols)
+                    app_state.add_symbols_to_queue(round_symbols)
 
                     # Run analysis for all symbols
                     while app_state.analysis_queue and not app_state.stop_loop:
@@ -1167,6 +1401,8 @@ def register_control_callbacks(app):
 
                     if app_state.stop_loop:
                         break
+                    if _screening_stopped():
+                        break
 
                     print(f"[LOOP] Iteration {loop_iteration} completed. Waiting {app_state.loop_interval_minutes} minutes...")
 
@@ -1185,24 +1421,28 @@ def register_control_callbacks(app):
                 print("[LOOP] Loop stopped")
             else:
                 # Single run mode (original behavior) - use current date
-                # States already initialized above, just add to queue
-                app_state.add_symbols_to_queue(symbols)
+                # Phase C: auto-screening mode derives the round symbols.
+                round_symbols = symbols
+                if auto_screening_on:
+                    round_symbols = _prepare_auto_round_symbols(provider_settings)
+                if round_symbols:
+                    app_state.add_symbols_to_queue(round_symbols)
 
-                while app_state.analysis_queue:
-                    symbol = app_state.get_next_symbol()
-                    if symbol:
-                        print(f"[SINGLE] Analyzing {symbol} with current market data...")
-                        start_analysis(
-                            symbol,
-                            analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                            research_depth, allow_shorts, quick_llm, deep_llm,
-                            quick_llm_params, deep_llm_params,
-                            llm_provider=llm_provider,
-                            backend_url=backend_url,
-                            output_language=output_language,
-                            checkpoint_enabled=checkpoint_enabled,
-                            provider_settings=provider_settings,
-                        )
+                    while app_state.analysis_queue:
+                        symbol = app_state.get_next_symbol()
+                        if symbol:
+                            print(f"[SINGLE] Analyzing {symbol} with current market data...")
+                            start_analysis(
+                                symbol,
+                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
+                                research_depth, allow_shorts, quick_llm, deep_llm,
+                                quick_llm_params, deep_llm_params,
+                                llm_provider=llm_provider,
+                                backend_url=backend_url,
+                                output_language=output_language,
+                                checkpoint_enabled=checkpoint_enabled,
+                                provider_settings=provider_settings,
+                            )
 
             app_state.analysis_running = False
 

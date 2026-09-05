@@ -218,4 +218,34 @@ DEFAULT_CONFIG = {
     # Small manual symbol -> sector mapping for the watchlist/positions.
     # Example: {"NVDA": "Technology", "JPM": "Financials"}
     "sector_mapping": {},
+    # ---- Phase C full-market screening (Top20) ----
+    # Master switch: False keeps the manual watchlist mode untouched (no
+    # Screening client is ever built). True requires the three screening
+    # keys below and enables the daily full-market scan + Top20 selection.
+    "auto_screening_enabled": False,
+    # Third fixed LLM role. Required (no silent inheritance from Analysis /
+    # llm_provider) whenever auto_screening_enabled is true; may use the
+    # same vendor with independently configured values.
+    "screening_provider": None,
+    "screening_model": None,
+    "screening_backend_url": None,
+    # Deterministic eligibility/ranking constants (research baseline; not
+    # UI switches). 61 complete daily bars are required for the 60-session
+    # return; the as_of session comes from the shared trading calendar.
+    "screening_min_price": 5.0,
+    "screening_min_adv20_usd": 20_000_000.0,
+    "screening_required_bars": 61,
+    "screening_top_k": 40,
+    "screening_select_n": 20,
+    "screening_max_per_sector": 5,
+    # Single explicit adjustment policy for every bars request of a scan.
+    "screening_bar_adjustment": "split",
+    # Bounded batch size for multi-symbol daily bars requests (the service
+    # cap is 100 symbols per request; a lower configured value wins).
+    "screening_bars_batch_size": 100,
+    # Override for the selection cache file; None = <data_cache_dir>/screening_selection.json
+    "screening_selection_cache_path": None,
+    # Test hook only: force the as_of session (ISO date) instead of the
+    # calendar-derived most recent completed session.
+    "screening_as_of_override": None,
 }

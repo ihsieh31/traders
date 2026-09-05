@@ -26,6 +26,7 @@ class PromptTemplateTests(unittest.TestCase):
         "managers",
         "researchers",
         "risk",
+        "screening",
         "shared",
         "trader",
         "trading_modes",
