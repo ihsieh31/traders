@@ -17,11 +17,16 @@ from tradingagents.risk.exposure import (
     outstanding_increasing_notional,
 )
 
-_NOW = datetime.now(timezone.utc)
+def _now():
+    # Fresh at call time: authority.py enforces real snapshot (30s) and
+    # quote (15s) TTLs, so import-time timestamps go stale mid-suite on a
+    # slow run and the fail-closed freshness gate rejects the fake broker
+    # facts. Fixtures must stamp facts as of when the test actually runs.
+    return datetime.now(timezone.utc)
 
 
 def _fresh_quote(symbol="AAPL", price=100.0):
-    return BrokerQuote(symbol.replace("/", ""), price - 0.1, price + 0.1, _NOW)
+    return BrokerQuote(symbol.replace("/", ""), price - 0.1, price + 0.1, _now())
 
 
 def _snapshot(positions=None, orders=None, *, equity=100000.0, cash=80000.0,
@@ -29,7 +34,7 @@ def _snapshot(positions=None, orders=None, *, equity=100000.0, cash=80000.0,
     positions = tuple(positions or ())
     orders = tuple(orders or ())
     return BrokerSnapshot(
-        observed_at=_NOW,
+        observed_at=_now(),
         version="v-caps",
         account_id=account_id,
         equity=equity,
@@ -56,7 +61,7 @@ def _order(symbol, side, *, qty=10, notional=None, status="new", client_id="ta-x
         qty=qty,
         filled_qty=0.0,
         filled_avg_price=None,
-        updated_at=_NOW,
+        updated_at=_now(),
         notional=notional,
     )
 
@@ -317,7 +322,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 notional=get("notional"),
                 filled_qty="0",
                 filled_avg_price=None,
-                updated_at=_NOW,
+                updated_at=_now(),
             )
             # Record the live order so post-order reconciliation sees it.
             state["orders"].append(order)
