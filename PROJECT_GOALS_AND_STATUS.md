@@ -305,14 +305,9 @@ Phase A 只 gate execution 必要資料：account、positions、orders、fills �
 
 ## 9. 提示詞與執行順序
 
-P1＝Phase A（A.1/A.2）；P2＝Phase B；P3＝Phase C。P1四份舊提示詞已依使用者要求刪除，歷史內容保留於Git；A0–A6完成紀錄與本文件安全規則保留。
+P1＝Phase A（A.1/A.2）；P2＝Phase B；P3＝Phase C。P1四份、P2/P3四份舊提示詞均已依使用者要求刪除（P2/P3 於 2026-09-05 兩階段 Accepted 後移除），歷史內容保留於Git；A0–A6完成紀錄與本文件安全規則保留。
 
-1. [P2實作](PHASE_B_IMPLEMENTATION_PROMPT.md)：原資料品質範圍＋雙Provider／retry／持股context。
-2. [P2獨立驗收](PHASE_B_ACCEPTANCE_PROMPT.md)：read-only，全部mandatory項目通過才Accepted。
-3. [P3實作](PHASE_C_IMPLEMENTATION_PROMPT.md)：P2 Accepted後，完整Universe→Top40→第三Provider Top20→持股聯集。
-4. [P3獨立驗收](PHASE_C_ACCEPTANCE_PROMPT.md)：read-only，含public-entry與cache/scheduler失敗路徑。
-
-Implementation只能回報Implemented/pending acceptance；只有新的獨立acceptance task能給Accepted。驗收不得修檔；修復後重新fresh acceptance。提示詞完成不表示P2/P3已實作，也不授權外部provider或broker calls。
+執行順序（歷史紀錄）：P2實作→P2獨立驗收→P3實作→P3獨立驗收；每階段實作只能回報Implemented/pending acceptance，只有新的獨立acceptance task能給Accepted。驗收不得修檔；修復後重新fresh acceptance。提示詞完成不表示階段已實作，也不授權外部provider或broker calls。
 
 ## 10. Phase A 驗收矩陣
 
