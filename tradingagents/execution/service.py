@@ -330,6 +330,61 @@ def _build_market_request(symbol: str, side: str, notional, quantity, client_ord
         return payload
 
 
+def _get_execution_config() -> dict:
+    try:
+        from tradingagents.dataflows.config import get_config
+
+        return get_config() or {}
+    except Exception:
+        return {}
+
+
+def _evaluate_opening_caps(
+    *,
+    symbol: str,
+    specs: list[dict[str, Any]],
+    snapshot: Any,
+    quote: Any,
+    intent_dict: dict[str, Any],
+):
+    """Run the Phase B deterministic exposure evaluator for opening legs.
+
+    A verified close leg in the same intent (close-then-open flip) credits
+    its freed market value so only the increasing part is clipped.
+    Quantity-based legs are valued with the execution quote.
+    """
+    from tradingagents.risk.exposure import evaluate_opening_exposure
+
+    config = _get_execution_config()
+    quote_price = float(quote.price) if quote is not None else None
+    position = snapshot.position(symbol)
+    planned_close_reduction = 0.0
+    proposed_notional = 0.0
+    for spec in specs:
+        if spec.get("role") != "open":
+            continue
+        if spec.get("notional") is not None:
+            proposed_notional += float(spec["notional"])
+        elif spec.get("quantity") is not None and quote_price:
+            proposed_notional += float(spec["quantity"]) * quote_price
+    for spec in specs:
+        if spec.get("role") == "close" and position is not None:
+            quantity = spec.get("quantity")
+            if quantity is not None and abs(float(quantity)) >= abs(position.qty) - 1e-9:
+                planned_close_reduction += abs(float(position.market_value))
+    return evaluate_opening_exposure(
+        symbol=symbol,
+        proposed_notional=proposed_notional,
+        snapshot=snapshot,
+        quote_price=quote_price,
+        symbol_cap_pct=float(config.get("max_symbol_concentration_pct", 25.0) or 0),
+        sector_cap_pct=config.get("max_sector_exposure_pct", 30.0),
+        gross_cap_pct=config.get("portfolio_max_gross_exposure_pct", 100.0),
+        sector_mapping=dict(config.get("sector_mapping") or {}),
+        planned_close_reduction=planned_close_reduction,
+    )
+
+
 class ExecutionService:
     """Unique production execution entry (paper-only)."""
 
@@ -343,10 +398,43 @@ class ExecutionService:
         self._store = ExecutionStore(self.db_path)
         self._broker_factory = broker_factory or self._default_broker_factory
         self._quote_factory = quote_factory or capture_quote
+        self._quarantine_gate: Any = None
 
     @property
     def store(self) -> ExecutionStore:
         return self._store
+
+    def quarantine_gate(self):
+        """Lazily built Phase B corporate-action gate (persisted ledger)."""
+        if self._quarantine_gate is None:
+            from tradingagents.risk.corporate_actions import build_quarantine_gate
+
+            self._quarantine_gate = build_quarantine_gate(_get_execution_config())
+        return self._quarantine_gate
+
+    def _quarantine_rejection(self, symbol: str) -> Optional[dict]:
+        """Fail-closed corporate-action gate for exposure-adding orders.
+
+        A missing/unbuildable gate is itself a failure for opening orders:
+        the quarantine state would be unprovable, so no new risk is taken.
+        """
+        normalized = (symbol or "").upper()
+        try:
+            gate = self.quarantine_gate()
+        except Exception as exc:
+            return {
+                "error": f"corporate-action quarantine state unavailable ({exc}); "
+                "refusing to add exposure",
+            }
+        if gate is None:
+            return {
+                "error": "corporate-action quarantine state unavailable; "
+                "refusing to add exposure",
+            }
+        reason = gate.check(normalized)
+        if reason:
+            return {"error": reason}
+        return None
 
     @staticmethod
     def _default_broker_factory():
@@ -390,6 +478,20 @@ class ExecutionService:
                 risk_params=risk_params,
                 current_position=current_position,
             )
+        # Phase B corporate-action quarantine: a quarantined symbol takes no
+        # new exposure (zero broker calls). Verified reducing exits keep the
+        # Phase A path and are checked below under the account lock.
+        if any(spec.get("role") == "open" for spec in specs):
+            quarantine = self._quarantine_rejection(intent_dict["symbol"])
+            if quarantine:
+                return {
+                    "success": False,
+                    "fail_closed": True,
+                    "quarantined": True,
+                    "broker_attempted": False,
+                    "broker_calls": 0,
+                    **quarantine,
+                }
         # Cheap deterministic blocks (kill switch / per-order cap) need no
         # broker identity call. Account-dependent checks run again below with
         # the authoritative snapshot.
@@ -433,20 +535,10 @@ class ExecutionService:
                     )
                 position = snapshot.position(intent_dict["symbol"])
                 target = str(intent_dict.get("target_position") or "").upper()
-                if opening and not closing_specs and position is not None and (
-                    (position.qty > 0 and target == "LONG")
-                    or (position.qty < 0 and target == "SHORT")
-                ):
-                    return {
-                        "success": True,
-                        "hold": True,
-                        "broker_attempted": False,
-                        "broker_calls": 0,
-                        "snapshot_version": snapshot.version,
-                        "account_execution_state": reconciliation.state,
-                        "orders": [],
-                        "reason": "broker already holds the requested target position",
-                    }
+                # Phase B note: the Phase A "already holds the target
+                # position" shortcut was removed — an opening order on a held
+                # symbol is an exposure increase governed by the deterministic
+                # caps (clipped to headroom) instead of an implicit HOLD.
                 quote = (
                     validate_quote(self._quote_factory(intent_dict["symbol"]), intent_dict["symbol"])
                     if opening else None
@@ -690,6 +782,64 @@ class ExecutionService:
                     spec["quantity"] = abs(verified.qty)
                     spec["notional"] = None
                     spec["side"] = "sell" if verified.qty > 0 else "buy"
+
+        # Phase B deterministic exposure caps: clip the increasing leg of
+        # every exposure-adding order (fresh opens AND increases of an
+        # existing position) to the single canonical symbol cap, the sector
+        # cap, the gross cap and cash — with outstanding open orders counted
+        # against headroom. Verified reducing exits never pass through here.
+        exposure_check_info: Optional[dict] = None
+        adds_exposure = target_position_open is not None
+        if adds_exposure and _snapshot is not None and any(
+            spec.get("role") == "open" for spec in specs
+        ):
+            cap_result = _evaluate_opening_caps(
+                symbol=symbol,
+                specs=specs,
+                snapshot=_snapshot,
+                quote=_quote,
+                intent_dict=intent_dict,
+            )
+            if not cap_result.approved:
+                return {
+                    "success": False,
+                    "fail_closed": True,
+                    "broker_attempted": False,
+                    "broker_calls": 0,
+                    "error": f"Exposure cap rejected the order: {cap_result.reason}",
+                    "trade_intent": intent_dict,
+                    "exposure_check": cap_result.to_dict(),
+                    "intent_warnings": warnings,
+                }
+            approved_total = cap_result.notional
+            opening_specs = [s for s in specs if s.get("role") == "open"]
+            # Normalize quantity-based opening legs to a notional value with
+            # the execution quote so the approved total applies uniformly.
+            quote_price = float(_quote.price) if _quote is not None else None
+            for open_spec in opening_specs:
+                if open_spec.get("notional") is None and open_spec.get("quantity") and quote_price:
+                    open_spec["notional"] = float(open_spec["quantity"]) * quote_price
+            leg_totals = [
+                float(s.get("notional") or 0.0) for s in opening_specs
+            ]
+            total_proposed = sum(leg_totals)
+            if total_proposed > 0 and approved_total < total_proposed:
+                scale = approved_total / total_proposed
+                for open_spec in opening_specs:
+                    if open_spec.get("notional") is None:
+                        continue
+                    original = float(open_spec["notional"])
+                    clipped_leg = round(original * scale, 2)
+                    if clipped_leg < original:
+                        warnings.append(
+                            f"Opening notional clipped from ${original:,.2f} to "
+                            f"${clipped_leg:,.2f} by deterministic exposure caps."
+                        )
+                        open_spec["notional"] = clipped_leg
+                        if open_spec.get("quantity") and quote_price:
+                            open_spec["quantity"] = None  # notional governs now
+            exposure_check_info = cap_result.to_dict()
+
         # Attach protective legs to the opening leg only (closes carry nothing).
         if protective_prices:
             for s in specs:
@@ -906,6 +1056,8 @@ class ExecutionService:
             )
             if first_block.get("error"):
                 out["error"] = first_block["error"]
+        if exposure_check_info is not None:
+            out["exposure_check"] = exposure_check_info
         if any((r.get("status") or "") == "UNKNOWN" for r in results):
             out["has_unknown"] = True
         if warnings:
@@ -1056,20 +1208,63 @@ class ExecutionService:
             position
             and ((position.qty > 0 and side == "sell") or (position.qty < 0 and side == "buy"))
         )
+        # Phase B: recovery resubmits recompute every gate from the fresh
+        # snapshot — quarantine and exposure caps included. Headroom is never
+        # reused from the original submit; when the caps allow less than the
+        # original size, the resubmit is clipped to the allowed notional.
+        effective_notional = local.get("notional")
+        effective_quantity = local.get("quantity")
+        if not risk_reducing:
+            quarantine = self._quarantine_rejection(local["symbol"])
+            if quarantine:
+                self._store.transition_order(local["order_id"], "CANCELED")
+                raise BrokerAuthorityError(
+                    f"recovery resubmit blocked for {local['symbol']}: {quarantine['error']}"
+                )
+            try:
+                cap_result = _evaluate_opening_caps(
+                    symbol=local["symbol"],
+                    specs=[
+                        {
+                            "role": "open",
+                            "notional": local.get("notional"),
+                            "quantity": local.get("quantity"),
+                        }
+                    ],
+                    snapshot=snapshot,
+                    quote=quote,
+                    intent_dict={"symbol": local["symbol"]},
+                )
+            except Exception as exc:
+                raise BrokerAuthorityError(
+                    f"recovery exposure cap evaluation failed: {exc}"
+                ) from exc
+            if not cap_result.approved:
+                self._store.transition_order(local["order_id"], "CANCELED")
+                raise BrokerAuthorityError(
+                    f"recovery resubmit rejected by exposure caps: {cap_result.reason}"
+                )
+            if effective_quantity is not None and effective_notional is None and quote.price:
+                effective_notional = float(effective_quantity) * quote.price
+                effective_quantity = None
+            if (
+                effective_notional is not None
+                and float(effective_notional) > cap_result.notional
+            ):
+                effective_notional = cap_result.notional
         intent = self._store.get_intent_for_order(local["order_id"])
-        target = str((intent or {}).get("target_position") or "").upper()
-        if not risk_reducing and position and (
-            (position.qty > 0 and target == "LONG")
-            or (position.qty < 0 and target == "SHORT")
-        ):
-            raise BrokerAuthorityError(
-                f"recovery target already exists at broker: {local['client_order_id']}"
-            )
+        # Phase B note: the Phase A "recovery target already exists" block is
+        # superseded — an increase onto an existing same-side position is
+        # allowed and clipped by the recomputed exposure caps above.
         try:
             from tradingagents.safety import get_safety_guard
 
             guard = get_safety_guard()
-            amount = float(local.get("notional") or (float(local.get("quantity") or 0) * quote.price))
+            amount = float(
+                effective_notional
+                if effective_notional is not None
+                else (float(effective_quantity or 0) * quote.price)
+            )
             verdict = guard.check_order(
                 local["symbol"],
                 amount,
@@ -1086,6 +1281,17 @@ class ExecutionService:
         if not ok:
             raise BrokerAuthorityError(
                 f"recovery state conflict: {local['client_order_id']}"
+            )
+        # Rebuild the request with the effective (cap-clipped) size before
+        # the POST; the durable client_order_id is unchanged.
+        request = _build_market_request(
+            local["symbol"], local["side"], effective_notional,
+            effective_quantity, local["client_order_id"],
+        )
+        if request is None:
+            self._store.transition_order(current["order_id"], "REJECTED")
+            raise BrokerAuthorityError(
+                f"recovery order has no valid size: {local['client_order_id']}"
             )
         try:
             response = broker.submit_order(request)
@@ -1159,20 +1365,42 @@ class ExecutionService:
 
     def account_status(self) -> dict[str, Any]:
         """Return the last durable CLEAN/PAUSED status for operator displays."""
+        result: dict[str, Any]
         try:
             broker = self._broker_factory()
             snapshot = capture_broker_snapshot(broker)
             state = self._store.get_account_state(snapshot.account_id)
         except Exception as exc:
-            return {"state": "PAUSED", "reasons": [str(exc)]}
+            result = {"state": "PAUSED", "reasons": [str(exc)]}
+            self._attach_quarantine_status(result)
+            return result
         if state is None:
-            return {"state": "PAUSED", "reasons": ["startup reconciliation has not run"]}
-        return {
+            # Surface quarantines even before the first reconciliation ran:
+            # the operator must see why a symbol will refuse new exposure.
+            result = {"state": "PAUSED", "reasons": ["startup reconciliation has not run"]}
+            self._attach_quarantine_status(result)
+            return result
+        result = {
             "state": state["state"],
             "reasons": json.loads(state["reasons_json"]),
             "snapshot_version": state["snapshot_version"],
             "updated_at": state["updated_at"],
         }
+        self._attach_quarantine_status(result)
+        return result
+
+    def _attach_quarantine_status(self, result: dict[str, Any]) -> None:
+        """Surface active corporate-action quarantines on the operator path."""
+        try:
+            gate = self.quarantine_gate()
+            if gate is not None:
+                active = gate.store.all_active()
+                if active:
+                    result["quarantined_symbols"] = {
+                        record["symbol"]: record["reason"] for record in active
+                    }
+        except Exception:
+            pass
 
     def _submit_one(
         self, *, order_row: dict[str, Any], spec: dict[str, Any], symbol: str,

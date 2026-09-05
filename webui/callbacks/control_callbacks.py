@@ -22,6 +22,25 @@ from tradingagents.openai_model_registry import (
 )
 
 
+def _provider_stopped() -> bool:
+    """True when an LLM provider failure stopped the current run.
+
+    Phase B: scheduler loops must halt and require an explicit operator
+    restart instead of silently dispatching the next symbol or round.
+    """
+    return bool(getattr(app_state, "provider_stop_reason", None))
+
+
+def _halt_scheduling_for_provider_stop() -> None:
+    reason = getattr(app_state, "provider_stop_reason", None)
+    if not reason:
+        return
+    app_state.stop_loop = True
+    app_state.stop_market_hour = True
+    app_state.analysis_queue = []
+    print(f"[SCHEDULER] Halting auto dispatch: {reason}")
+
+
 def _llm_group_style(enabled):
     return {} if enabled else {"display": "none"}
 
@@ -171,6 +190,30 @@ def _collect_llm_params(
     )
 
 
+def _collect_role_settings(
+    analysis_provider,
+    analysis_model,
+    analysis_backend_url,
+    decision_provider,
+    decision_model,
+    decision_backend_url,
+):
+    """Phase B role overrides: empty values stay unset (legacy behavior)."""
+
+    def _clean(value):
+        text = str(value or "").strip()
+        return text or None
+
+    return {
+        "analysis_provider": _clean(analysis_provider),
+        "analysis_model": _clean(analysis_model),
+        "analysis_backend_url": _clean(analysis_backend_url),
+        "decision_provider": _clean(decision_provider),
+        "decision_model": _clean(decision_model),
+        "decision_backend_url": _clean(decision_backend_url),
+    }
+
+
 def register_control_callbacks(app):
     """Register all control and configuration callbacks"""
 
@@ -264,6 +307,54 @@ def register_control_callbacks(app):
 
     register_llm_param_callback("quick")
     register_llm_param_callback("deep")
+
+    @app.callback(
+        Output("llm-roles-info", "children"),
+        [
+            Input("analysis-provider", "value"),
+            Input("analysis-model", "value"),
+            Input("analysis-backend-url", "value"),
+            Input("decision-provider", "value"),
+            Input("decision-model", "value"),
+            Input("decision-backend-url", "value"),
+            Input("llm-provider", "value"),
+        ],
+    )
+    def update_llm_roles_info(
+        analysis_provider,
+        analysis_model,
+        analysis_backend_url,
+        decision_provider,
+        decision_model,
+        decision_backend_url,
+        llm_provider,
+    ):
+        """Show the resolved Analysis/Decision roles (secret-free)."""
+        from tradingagents.llm_clients.roles import describe_roles, resolve_role_config
+
+        roles = _collect_role_settings(
+            analysis_provider,
+            analysis_model,
+            analysis_backend_url,
+            decision_provider,
+            decision_model,
+            decision_backend_url,
+        )
+        probe = {"llm_provider": llm_provider or "openai", "backend_url": None, **roles}
+        try:
+            resolved = resolve_role_config(probe)
+            summary = describe_roles(resolved)
+            tone = "info" if resolved["mode"] == "roles" else "neutral"
+        except ValueError as exc:
+            summary = f"Invalid role configuration: {exc}"
+            tone = "danger"
+        return _status_panel(
+            "LLM roles",
+            summary,
+            ["Decision = Risk Manager only"],
+            tone=tone,
+            icon="fa-user-shield",
+        )
 
     @app.callback(
         [
@@ -752,7 +843,13 @@ def register_control_callbacks(app):
          State("trade-after-analyze", "value"),
          State("trade-dollar-amount", "value"),
          State("market-hour-enabled", "value"),
-         State("market-hours-input", "value")]
+         State("market-hours-input", "value"),
+         State("analysis-provider", "value"),
+         State("analysis-model", "value"),
+         State("analysis-backend-url", "value"),
+         State("decision-provider", "value"),
+         State("decision-model", "value"),
+         State("decision-backend-url", "value")]
     )
     def on_control_button_click(n_clicks, button_children, tickers, analysts_market, analysts_social, analysts_news,
                                analysts_fundamentals, analysts_macro, research_depth,
@@ -764,7 +861,9 @@ def register_control_callbacks(app):
                                deep_reasoning_effort, deep_verbosity, deep_summary, deep_temperature,
                                deep_top_p, deep_max_output_tokens, deep_store, deep_parallel_tool_calls,
                                allow_shorts, loop_enabled, loop_interval, trade_enabled, trade_amount,
-                               market_hour_enabled, market_hours_input):
+                               market_hour_enabled, market_hours_input,
+                               analysis_provider, analysis_model, analysis_backend_url,
+                               decision_provider, decision_model, decision_backend_url):
         """Handle control button clicks"""
         # Detect which property triggered this callback
         triggered_prop = None
@@ -860,7 +959,26 @@ def register_control_callbacks(app):
         provider_settings = {
             "google_thinking_level": google_thinking_level or None,
             "anthropic_effort": anthropic_effort or None,
+            **_collect_role_settings(
+                analysis_provider,
+                analysis_model,
+                analysis_backend_url,
+                decision_provider,
+                decision_model,
+                decision_backend_url,
+            ),
         }
+
+        # Validate role configuration before starting a run so an invalid
+        # combination fails at the UI instead of at graph construction.
+        from tradingagents.llm_clients.roles import resolve_role_config
+
+        try:
+            resolve_role_config(
+                {"llm_provider": llm_provider or "openai", **provider_settings}
+            )
+        except ValueError as exc:
+            return f"Invalid LLM role configuration: {exc}", {}, 1, 1, 1, 1
 
         # Set loop configuration
         app_state.loop_interval_minutes = loop_interval if loop_interval and loop_interval > 0 else 60
@@ -981,6 +1099,17 @@ def register_control_callbacks(app):
 
                             if app_state.stop_market_hour:
                                 break
+                            if _provider_stopped():
+                                # Provider failure: stop this round and the
+                                # whole schedule until an operator restarts.
+                                _halt_scheduling_for_provider_stop()
+                                break
+
+                    if app_state.stop_market_hour:
+                        break
+
+                    if _provider_stopped():
+                        break
 
                     if not app_state.stop_market_hour:
                         print(f"[MARKET_HOUR] Analysis completed for {next_hour}:00. Waiting for next execution time.")
@@ -1032,6 +1161,9 @@ def register_control_callbacks(app):
                                 checkpoint_enabled=checkpoint_enabled,
                                 provider_settings=provider_settings,
                             )
+                            if _provider_stopped():
+                                _halt_scheduling_for_provider_stop()
+                                break
 
                     if app_state.stop_loop:
                         break

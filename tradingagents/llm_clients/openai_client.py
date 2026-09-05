@@ -100,9 +100,13 @@ class OpenAIClient(BaseLLMClient):
         else:
             llm_kwargs["api_key"] = self.kwargs.get("api_key") or "ollama"
 
-        for key in ("timeout", "max_retries", "reasoning_effort", "callbacks", "http_client", "http_async_client"):
+        for key in ("timeout", "callbacks", "http_client", "http_async_client"):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+        # Phase B: SDK-level retries are pinned to 0. The single bounded
+        # retry owner is tradingagents.llm_clients.retry.RetryingLLM; an
+        # overlapping SDK layer would break the exact request cap.
+        llm_kwargs["max_retries"] = 0
 
         chat_cls = DeepSeekChatOpenAI if self.provider == "deepseek" else NormalizedChatOpenAI
         return chat_cls(**llm_kwargs)

@@ -1,6 +1,6 @@
 # Traders：專案目標、執行計劃與目前狀況
 
-版本：2.1
+版本：2.4
 
 最後更新：2026-09-05
 
@@ -18,9 +18,9 @@ Phase A 完成後，系統必須能在單機、單 Alpaca Paper 帳戶上長時�
 
 ## 2. 現階段範圍
 
-### Active：Phase A — 安全可靠的 Paper execution
+### Completed：P1／Phase A — 安全可靠的 Paper execution
 
-Phase A 是目前唯一實作範圍，包含原計劃中真正必要的 P0＋P1：
+Phase A 已完成以下原計劃中真正必要的 P0＋P1 範圍；P2/P3 僅完成規劃，可依各階段 acceptance 前置開始；observation 留待長期無人值守 Paper 自動交易前完成：
 
 1. Paper-only hard lock。
 2. Strict `TradeIntent`，交易邊界 fail closed。
@@ -35,25 +35,31 @@ Phase A 是目前唯一實作範圍，包含原計劃中真正必要的 P0＋P1�
 
 Phase A 完成且取得真實 Alpaca Paper E2E 證據後，才可開始長期 Paper run。
 
-### Deferred：Phase B — 策略品質
+### Accepted：P2／Phase B — 策略與資料品質（2026-09-05 fresh re-acceptance）
 
-Phase B 不阻擋 Phase A 完成：
+原範圍全部保留：SEC filing／company IR primary sources、split／ticker change／delisting／non-tradable quarantine、sector exposure constraints，以及驗證調整既有 correlation、regime、memory/reflection（不重寫）。
 
-- SEC filing 與 company IR primary sources。
-- Corporate-action quarantine：split、ticker change、delisting、non-tradable。
-- Sector exposure constraints。
-- 驗證並調整既有 correlation、regime、memory/reflection；不重寫。
+加入 Analysis／Decision 兩角色 provider/model/endpoint 分離、LLM最多3次retry（共4次request）與耗盡停止、Trader與Risk Manager的fresh broker持股context，以及沿用既有symbol concentration cap的headroom裁切。仍用人工watchlist；observation 不阻擋離線驗收。
 
-### Deferred：Phase C — 自動選股
+實作要點（2026-09-05，離線mock，無外部call）：
+- B1：`tradingagents/llm_clients/roles.py` 六個role key解析（legacy保留、跨provider缺model為config error、role-specific key env、UI/CLI設定與顯示）。
+- B2：`tradingagents/llm_clients/retry.py` 單一retry owner（SDK層固定0；openai/anthropic/google/azure四family transport計數證明4次上限、401立即停）；ProviderFailure向上傳播、parallel coordinators取消未開始工作、run log `stopped`、scheduler停止自動dispatch。
+- B3：`tradingagents/execution/context.py` 共用strict持股context（Trader取得、Decision重取並驗證同一account；unknown/NaN/timeout一律stop不當flat）；`tradingagents/risk/exposure.py` symbol/sector/gross/cash headroom裁切含outstanding orders；flip只裁增加部分；recovery resubmit重新計算cap。
+- B4：`tradingagents/dataflows/sec_ir.py`（官方CIK映射、submissions API、per-type freshness、bounded transport）接入fundamentals toolkit；`tradingagents/risk/corporate_actions.py` 持久quarantine（restart保留、operator+CLEAN才能解除、無TTL）；sector cap在提供sector_mapping後啟用，unknown拒增。
+- B5：correlation/vol sizing hook（`adjust_new_position_notional`）接入auto-trade路徑（原先無caller）；regime scaling、memory/reflection既有測試與caller保留；Kelly維持關閉。
 
-最後才做：
+驗收結論（2026-09-05 fresh read-only 獨立驗收，remediation 後重跑）：B01–B24 全數 Pass；完整離線 suite `462 passed, 170 subtests passed`、`compileall` 與 `git diff --check` 綠；real-graph 與 execution 公開入口共 12 項 PoC 全過（記錄 LLM 請求數、下游節點數、intent rows、broker mutation 計數）；F1–F4 remediation 逐項複驗通過；外部 call=0；驗收前後 source diff hash 一致。驗收記錄兩項非阻擋 Minor（roles 模式 `llm_request_timeout_seconds` 未套用、改由 provider SDK 預設 per-request timeout 承擔——已於 env.sample／ARCHITECTURE 註明；`llm_retry_backoff_max_seconds` 為死設定 key）與一項行為觀察（flip 增加腿被 Phase A session guard 以 pre-close 持倉值保守拒絕，fail-closed、零超額風險），均不違反矩陣。
+
+### Planned：P3／Phase C — 自動選股
 
 ```text
-Universe -> liquidity/eligibility filter -> deterministic ranking
-         -> top-N candidates -> existing multi-agent analysis
+ACTIVE tradable US equities → 完整daily bars與eligibility
+→ deterministic Top40 → Screening Provider structured Top20
+→ Top20 UNION fresh current_positions
+→ Analysis Provider → Decision Provider → 既有Phase A execution
 ```
 
-Phase A、B 一律先用人工 watchlist。這能避免在 execution 尚未可靠前，同時引入整個市場的資料與資本競爭複雜度。
+Screening／Analysis／Decision各自可設定provider、model、endpoint與credential。Top20只定義新機會；額外持股用於HOLD／verified reducing exit。每天一份有效selection，人工refresh失敗即停止，不能回退舊名單。實作與验收細節見第11節與四份提示詞。
 
 ## 3. 不做的事情
 
@@ -171,7 +177,7 @@ WebUI、CLI、scheduler、liquidation 與 protective orders 必須進入同一 e
 ### 7.2 Strict execution boundary
 
 - Analyst、Research Manager 與 Trader 仍可 free-text fallback。
-- Risk Manager structured bind、invoke、validation、timeout、429 或 provider failure，一律 `INVALID/NO_TRADE`。
+- Phase A 既有行為：Risk Manager structured bind、invoke、validation、timeout、429 或 provider failure，一律阻止交易。P2 精確區分：成功回覆但 schema/bind/validation 不合法仍 `INVALID/NO_TRADE`；provider 存取失敗依 LLM policy 後整輪 `STOPPED`，不以正常 NO_TRADE 隱藏故障。兩者都不能建立可執行 intent。
 - 不從 free text、Markdown 或 legacy signal 猜 `BUY/SELL/LONG/SHORT`。
 - 只有 schema-valid `TradeIntent` 能建立 `execution_intent`。
 
@@ -262,16 +268,16 @@ Phase A 只 gate execution 必要資料：account、positions、orders、fills �
 
 規則：一次只做一個 Gate。每個 Gate 要有 focused regression、完整離線 suite 與乾淨工作樹；mock evidence 與真實 Alpaca Paper evidence 分開報告。A6 已於 fresh acceptance 通過；長期無人值守前仍需一段穩定 Paper observation。
 
-## 9. Phase A 提示詞執行順序
+## 9. 提示詞與執行順序
 
-工程量按依賴切成兩組，不允許跳步或由執行者自行選 Gate：
+P1＝Phase A（A.1/A.2）；P2＝Phase B；P3＝Phase C。P1四份舊提示詞已依使用者要求刪除，歷史內容保留於Git；A0–A6完成紀錄與本文件安全規則保留。
 
-1. [Phase A.1 實作](PHASE_A1_IMPLEMENTATION_PROMPT.md)：A1–A3，約 45%。
-2. [Phase A.1 fresh read-only 驗收](PHASE_A1_ACCEPTANCE_PROMPT.md)。
-3. [Phase A.2 實作](PHASE_A2_IMPLEMENTATION_PROMPT.md)：A4–A6，約 55%；前提是 A.1 已 Accepted。
-4. [Phase A.2 fresh read-only 驗收](PHASE_A2_ACCEPTANCE_PROMPT.md)：Phase A 最終 Gate。
+1. [P2實作](PHASE_B_IMPLEMENTATION_PROMPT.md)：原資料品質範圍＋雙Provider／retry／持股context。
+2. [P2獨立驗收](PHASE_B_ACCEPTANCE_PROMPT.md)：read-only，全部mandatory項目通過才Accepted。
+3. [P3實作](PHASE_C_IMPLEMENTATION_PROMPT.md)：P2 Accepted後，完整Universe→Top40→第三Provider Top20→持股聯集。
+4. [P3獨立驗收](PHASE_C_ACCEPTANCE_PROMPT.md)：read-only，含public-entry與cache/scheduler失敗路徑。
 
-Implementation 只能回報 Implemented/pending acceptance；只有獨立 acceptance task 能給 Accepted。任何驗收中發生的修復都必須另開 remediation task，修復後再做 fresh acceptance。
+Implementation只能回報Implemented/pending acceptance；只有新的獨立acceptance task能給Accepted。驗收不得修檔；修復後重新fresh acceptance。提示詞完成不表示P2/P3已實作，也不授權外部provider或broker calls。
 
 ## 10. Phase A 驗收矩陣
 
@@ -280,7 +286,7 @@ Implementation 只能回報 Implemented/pending acceptance；只有獨立 accept
 | 情境 | 預期結果 |
 |---|---|
 | `ALPACA_USE_PAPER=False` 或非 paper endpoint | startup failed；零 broker call |
-| Risk Manager schema/timeout/429/provider failure | `NO_TRADE`；零 order/close call |
+| Risk Manager schema/timeout/429/provider failure | Phase A 為 `NO_TRADE`；P2 access failure 改為可辨識 `STOPPED`；均零 order/close call |
 | 同一 `decision_id` 觸發兩次 | 回傳同一 intent；只產生一組 logical orders |
 | DB commit 前 crash | 無 broker order |
 | DB commit 後、submit 前 crash | restart 從 `PENDING` 恢復 |
@@ -293,17 +299,39 @@ Implementation 只能回報 Implemented/pending acceptance；只有獨立 accept
 | 兩個 executor 同時啟動 | 只有 lock owner 可執行 |
 | verified risk-reducing exit | 依明確 policy 執行並立即 reconcile |
 
-## 11. Phase B 與 C 的進入條件
+## 11. P2／P3詳細計劃與進入條件
 
-### Phase B
+### P2／Phase B
 
-只有 A6 通過並完成一段穩定 Paper observation 後開始。每項功能各自證明能改善資料品質或風險控制；沒有證據就不擴建。
+A6 通過後即可實作；Paper observation 不屬於 P2／P3 實作與離線驗收的前置條件，啟用長期無人值守 Paper 自動交易前才須完成。每項提供直接功能或風控fixture證據，不宣稱提高收益。
 
-Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → quarantine → 禁止新增曝險 → reconcile → alert。SEC/IR 只保留 `source`、`url`、`published_at`、`retrieved_at`，不建立 evidence platform。
+| 工作項 | 修改範圍與做法 | 完成證據 |
+|---|---|---|
+| B1 固定角色 | 重用factory；Analysis全研究節點共用一model，Risk Manager獨立Decision；保留legacy quick/deep；逐角色解析key/URL/kwargs，接CLI/UI | fake role注入、legacy/cross-provider config、secret隔離 |
+| B2 Retry/stop | `llm_max_retries=3`共4次HTTP；SDK單層有界retry；transient重試、permanent立即停、schema失敗NO_TRADE；所有catch與scheduler傳播stop | 四adapter transport計數、structured/tool路徑、parallel故障零下游dispatch |
+| B3 持股與上限 | Trader取fresh snapshot，Decision重新取，execution自己再驗；quantity/value/entry/P&L/weight/equity/cash/buying power/gross%；沿用`max_symbol_concentration_pct`，扣持股與pending headroom | 18%+5%在20%cap僅容許2%；unknown/stale不能當flat；verified exit保留 |
+| B4 資料／sector | SEC/官方IR最小接入與source/url/published/retrieved；corporate-action持久quarantine、reconcile、alert；sector cap與unknown拒增風險 | dataflow fixture、事件/restart/解除測試、sector headroom整合 |
+| B5 原模組驗證 | correlation/regime/memory/reflection沿用，只修有證據缺口；Kelly仍關閉 | focused與完整離線suite、實際caller證據 |
 
-### Phase C
+新role只需固定設定，不建立router。沒有新role設定就保持legacy quick/deep；明確跨provider卻缺model為config error。Provider耗盡後停止本輪及自動dispatch，需明確重啟，不fallback或用舊checkpoint結果。非Risk內容fallback不能吞provider存取錯誤。Broker GET/POST policy與LLM retry獨立。
 
-只有人工 watchlist 已穩定運作且使用者確認需要全市場自動選股時開始。第一版只用 Alpaca tradability、最低流動性與少量 deterministic 指標產生 top-N；不做 ML ranking、portfolio optimizer 或 point-in-time research platform。
+持股只直接注入Trader與Decision，不給前端Analysts/Research/Screening。沿用既有25%單股預設，不新增同義`max_single_position_pct`；sector cap規劃預設30%，均非收益建議。unknown sector/facts無法證明headroom時拒絕新增曝險；verified reducing exit仍依Phase A。保留SEC/IR缺漏及corporate-action feed覆蓋限制，不宣稱已建全市場自動事件平台。
+
+### P3／Phase C
+
+前提是 P2 fresh Accepted；不要求先有人工 watchlist 長期穩定運作或 Paper observation 證據。使用者已要求自動選股；本次僅完成計劃，不跳過前置直接執行。
+
+| 工作項 | 修改範圍與做法 | 完成證據 |
+|---|---|---|
+| C1 Universe與第三角色 | Alpaca完整ACTIVE US_EQUITY/tradable清單、batch bars；獨立screening provider/model/URL/key，沿B2 retry | 完整分頁fixture、手動模式零Screening、三角色隔離 |
+| C2 Eligibility/Top40 | close>=5、adv20>=20M、61完整bars支持60D return、最近完整session、quarantine排除；固定rank公式 | 獨立手算、threshold/tie/missing/stale/holiday tests |
+| C3 Top20 | Top40 compact features一次structured rerank；exact20、unique/input-only、rank/score/reason；sector資料完整時最多5/sector | schema/sector反例零下游，不修補、不fallback |
+| C4 持股/cache/scheduler | Top20聯集fresh持股；額外持股只減風險；每日selection cache、explicit refresh；任一provider失敗stop | 20+5−2=23、held-only entry拒絕、refresh失败不能沿用、雙執行者 |
+| C5 端到端與文件 | 沿現有graph/dispatch/UI，無新scheduler/DB/optimizer | mock全鏈路、P1/P2回歸、完整離線suite |
+
+確定性score固定為 `100*(0.20*p_adv20 + 0.25*p_r20 + 0.25*p_r60 + 0.15*(1-p_vol20) + 0.15*p_volume_ratio)`；percentile採ascending average rank、`(rank-1)/(n-1)`，n=1為0.5；同分按symbol。vol20為20個simple daily returns的sample std乘sqrt(252)；volume_ratio為5日/20日平均量。這些係數是本次將討論具體化的baseline，不是既有程式或已驗證策略績效。
+
+20–39合格候選全部交Screening，少於20整輪停止；成功必須exact20。Sector資料完整且容量不足20也停止；資料不完整則明示不做selection diversity，但P2交易sector cap不放寬。每天一次scan，cache只接受本交易日/相同config與已驗證內容；人工refresh失敗使舊selection失效。日期、公式、schema、配置與每條驗收方法以對應implementation prompt為完整契約。
 
 ## 12. 目前狀況
 
@@ -316,7 +344,8 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 - [x] Python 3.12 隔離環境：`298 passed, 158 subtests passed`（21.38 秒）；4 warnings 均來自第三方套件。
 - [x] tracked secrets 與大於 50 MB 檔案檢查未發現候選項目。
 - [x] 計劃重整為 Phase A/B/C；durable outbox、fail-closed matrix、兩層 idempotency 與 retry policy 已明文化。
-- [x] Phase A 已拆成兩份 implementation 與兩份 fresh read-only acceptance prompts。
+- [x] Phase A 曾拆成四份提示詞並完成實作／驗收；2026-09-05依使用者要求刪除舊提示詞，歷史可由Git查回。
+- [x] 2026-09-05完成P2/P3更新計劃與四份詳細implementation/independent acceptance prompts（文件完成，程式未開始）。
 - [x] Phase A.1 實作（A1–A3，約 45%）：paper-only hard lock、strict TradeIntent、唯一 execution entry、三表 SQLite durable outbox、兩層 idempotency、order state machine 與最小 UNKNOWN lookup/adopt — Accepted（fresh read-only acceptance 通過：`321 passed, 158 subtests passed`，對抗 PoC 9/9，mock only，無外部 call）。
 - [x] Phase A.2 A4/A5 實作：immutable `BrokerSnapshot`、固定 GET/POST policy、startup/post-order/periodic reconciliation、durable `CLEAN`/`PAUSED` reasons、UTC freshness gate、account-scoped OS lock 與 verified risk-reducing exit — Accepted（fresh read-only acceptance 2026-09-04）。
 - [x] Phase A.2 驗收後 remediation（A4/A5 code review findings）：P2 liquidate 預設 decision_id 改為 per-call（重複平倉不再被靜默 dedup；重複/併發安全仍由 `_verified_reducing_exit` 的 broker 驗證把關）、P3 統一 broker status mapper 至 authority（刪除 service 重複實作，未知狀態維持 fail-safe ACCEPTED）、P3 `_submit_one` 外層 except 的 `broker_calls` 提前初始化並如實回報 POST 計數。補 4 項 regression tests；完整離線 suite `347 passed, 158 subtests passed`。修復內容已納入 2026-09-04 fresh acceptance 範圍。
@@ -325,9 +354,13 @@ Corporate action 只做：偵測 split/ticker change/delisting/non-tradable → 
 
 ### 尚未完成
 
-- [ ] 長期 Paper observation（小 notional、人工 watchlist）尚未開始。
-- [ ] Phase B、Phase C；目前明確延後。
+- [ ] 長期 Paper observation（小 notional、人工 watchlist）尚未開始；不阻擋 P2/P3 實作與離線驗收，啟用長期無人值守 Paper 自動交易前須完成。
+- [x] P2／Phase B實作（2026-09-05）：B1–B5全部實作完成，離線suite `457 passed, 170 subtests passed`、`compileall` 與 `git diff --check` 通過；**Implemented — pending independent acceptance**。
+- [x] P2／Phase B獨立驗收（2026-09-05）：**Not Accepted — code/test defect**。B01–B24 中 B01/B06/B07/B24 Fail。Critical finding F1：`RetryingLLM`/`RetryingRunnable` 非 LangChain `Runnable`，五個 analyst 的 `prompt | llm.bind_tools(tools)` chain 建構即 `TypeError`（零 LLM 請求），per-analyst catch 吞成空 report 後 run 照常完成；另有 F2（env.sample 六個死 role env key）、F3（quarantine gate 記憶體快取不見他處 release）、F4（首次 reconcile 前 `account_status` 不顯示 quarantine）。完整矩陣證據見 2026-09-05 驗收報告。
+- [x] P2／Phase B驗收後 remediation（2026-09-05，最小修復）：F1 `retry.py` 兩個 wrapper 改繼承 `langchain_core.runnables.Runnable`（新增 LCEL 組合與真實 market analyst 節點回歸測試）；F3 `QuarantineStore` 讀寫前 `reload()`（跨實例 release/quarantine 立即生效，回歸測試）；F4 `account_status()` 兩條 return 路徑都附 `quarantined_symbols`（回歸測試）；F2 env.sample 修正為「role 設定走 UI/CLI config，env 僅 role-specific API key」。修復後 focused Phase B suites 全綠。**Remediated — pending fresh acceptance**（B01/B06/B07/B24 需重驗）。
+- [x] P2／Phase B fresh re-acceptance（2026-09-05）：**Accepted**。B01–B24 全 Pass；完整離線 suite `462 passed, 170 subtests passed`、`compileall` 與 `git diff --check` 綠；real-graph／execution 公開入口 PoC 12 項全過（LLM 請求數／下游節點數／intent rows／broker mutation 計數）、外部 call=0；F1–F4 remediation 逐項複驗通過；驗收前後 source diff hash 一致。兩項非阻擋 Minor 已記錄並處理（roles 模式 timeout 改註明由 SDK 預設承擔；`llm_retry_backoff_max_seconds` 死鍵留待一般維修）。
+- [ ] P3／Phase C實作與獨立驗收：規劃已更新；P2 已 Accepted，待新獨立task開始實作。
 
 ## 13. 下一個具體行動
 
-Phase A（A0–A6）已全部通過 fresh acceptance 並完成真實 Alpaca Paper E2E。下一步：把 A2 revision 提交至 `main`，然後開始長期 Paper observation——先以小 notional、人工 watchlist 觀察 startup recovery、`PAUSED` 行為與 reconciliation 紀律；Phase B 依第 11 節條件（A6 通過＋一段穩定 observation）另行啟動。
+P1（A0–A6）完成紀錄保留。P2（Phase B）2026-09-05 fresh read-only 獨立驗收 **Accepted**（B01–B24 全 Pass；完整離線 suite `462 passed, 170 subtests passed`；real-graph 與 execution 公開入口 PoC 12 項全過；外部 call=0；F1–F4 remediation 複驗通過）。下一步交**新的獨立task**開始 P3 實作。Paper observation 不阻擋 P3 實作或離線驗收，啟用長期無人值守 Paper 自動交易前仍須完成；Paper run 需另行明確授權。

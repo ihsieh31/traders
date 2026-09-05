@@ -192,22 +192,26 @@ class StrictRiskBoundaryTests(unittest.TestCase):
     def _run_node(self, llm, structured_llm, config):
         from tradingagents.agents.managers.risk_manager import create_risk_manager
 
+        # Phase B replaced the AlpacaUtils prompt helpers with the shared
+        # capture_position_context formatter; patch the same boundary.
         with patch(
-            "tradingagents.agents.managers.risk_manager.AlpacaUtils.get_current_position_state",
-            return_value="NEUTRAL",
-        ), patch(
-            "tradingagents.agents.managers.risk_manager.AlpacaUtils.get_positions_data",
-            return_value=[],
-        ), patch(
-            "tradingagents.agents.managers.risk_manager.AlpacaUtils.get_account_info",
-            return_value={"buying_power": 100000.0, "cash": 100000.0,
-                          "daily_change_dollars": 0.0, "daily_change_percent": 0.0},
-        ), patch(
+            "tradingagents.agents.managers.risk_manager.capture_position_context"
+        ) as capture, patch(
             "tradingagents.agents.managers.risk_manager.TradingMemoryLog"
         ) as log_cls, patch(
             "tradingagents.agents.managers.risk_manager.bind_structured",
             return_value=structured_llm,
         ):
+            from types import SimpleNamespace
+
+            capture.return_value = SimpleNamespace(
+                symbol="NVDA", observed_at_iso="2026-01-02T00:00:00+00:00",
+                account_id="paper-1", equity=100000.0, cash=100000.0,
+                buying_power=100000.0, gross_exposure=0.0, gross_exposure_pct=0.0,
+                qty=0.0, side="FLAT", market_value=None, avg_entry_price=None,
+                unrealized_pl=None, unrealized_pl_pct=None,
+                position_weight_pct=None, current_price=None,
+            )
             log_cls.return_value.get_past_context.return_value = ""
             node = create_risk_manager(llm, self._memory(), config=config)
             return node(self._risk_state())

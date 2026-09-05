@@ -99,6 +99,13 @@ class BrokerPosition:
     symbol: str
     qty: float
     market_value: float
+    # Optional context fields (Phase B). They come from the same broker
+    # response in the same capture call; None means the broker did not
+    # supply the value, never "zero". Prompt rendering shows such fields as
+    # unavailable instead of fabricating numbers.
+    avg_entry_price: Optional[float] = None
+    unrealized_pl: Optional[float] = None
+    current_price: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +119,7 @@ class BrokerOrder:
     filled_qty: float
     filled_avg_price: Optional[float]
     updated_at: datetime
+    notional: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -240,7 +248,23 @@ def capture_broker_snapshot(
         market_value = _number(
             _value(raw, "market_value"), field=f"{symbol} market value"
         )
-        positions.append(BrokerPosition(symbol, qty, market_value))
+
+        def _optional(name: str) -> Optional[float]:
+            value = _value(raw, name)
+            if value is None:
+                return None
+            return _number(value, field=f"{symbol} {name}")
+
+        positions.append(
+            BrokerPosition(
+                symbol,
+                qty,
+                market_value,
+                avg_entry_price=_optional("avg_entry_price"),
+                unrealized_pl=_optional("unrealized_pl"),
+                current_price=_optional("current_price"),
+            )
+        )
 
     request = _orders_request()
     raw_orders = get_with_retry(lambda: broker.get_orders(request), sleep=sleep)
@@ -272,7 +296,12 @@ def capture_broker_snapshot(
             else None
         )
         order = BrokerOrder(
-            broker_id, client_id, symbol, side, status, qty, filled_qty, price, stamp
+            broker_id, client_id, symbol, side, status, qty, filled_qty, price, stamp,
+            notional=(
+                _number(_value(raw, "notional"), field=f"{client_id} notional", minimum=0)
+                if _value(raw, "notional") is not None
+                else None
+            ),
         )
         orders.append(order)
         if filled_qty > 0:

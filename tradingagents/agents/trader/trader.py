@@ -15,7 +15,11 @@ from ..utils.report_context import (
     build_debate_digest,
 )
 from ..utils.structured import bind_structured, invoke_structured_or_freetext
-from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.execution.context import (
+    capture_position_context,
+    render_account_context,
+    render_position_context,
+)
 from tradingagents.prompts import render_prompt
 
 # Import prompt capture utility
@@ -34,54 +38,21 @@ def create_trader(llm, memory, config=None):
     def trader_node(state, name):
         company_name = state["company_of_interest"]
         investment_plan = state["investment_plan"]
-        
-        # Determine current position from live Alpaca account (fallback to state)
-        current_position = AlpacaUtils.get_current_position_state(company_name)
-        # Persist into state so downstream agents see an accurate picture
+
+        # Phase B: the trader starts from one fresh authoritative broker
+        # snapshot (same capture the execution layer uses). Any capture
+        # failure (timeout, missing account, bad numbers, stale timestamp)
+        # raises BrokerAuthorityError and stops the run — a failed read must
+        # never be presented to the model as "no position".
+        context = capture_position_context(company_name)
+        position_stats_desc = render_position_context(context)
+        account_status_desc = render_account_context(context)
+
+        current_position = context.side if context.side != "FLAT" else "NEUTRAL"
+        # Persist into state so downstream agents see an accurate picture and
+        # the Risk Manager can verify it re-read the SAME account.
         state["current_position"] = current_position
-
-        # ---------------------------------------------------------
-        # NEW: Pull richer live account & position metrics from Alpaca
-        # ---------------------------------------------------------
-        positions_data = AlpacaUtils.get_positions_data()
-        account_info = AlpacaUtils.get_account_info()
-
-        # Build a user-friendly summary for the specific symbol the agent cares about
-        position_stats_desc = ""
-        symbol_key = company_name.upper().replace("/", "")
-        for pos in positions_data:
-            if pos["Symbol"].upper() == symbol_key:
-                qty = pos["Qty"]
-                avg_entry = pos["Avg Entry"]
-                today_pl_dollars = pos["Today's P/L ($)"]
-                today_pl_percent = pos["Today's P/L (%)"]
-                total_pl_dollars = pos["Total P/L ($)"]
-                total_pl_percent = pos["Total P/L (%)"]
-
-                position_stats_desc = (
-                    f"Position Details for {company_name}:\n"
-                    f"- Quantity: {qty}\n"
-                    f"- Average Entry Price: {avg_entry}\n"
-                    f"- Today's P/L: {today_pl_dollars} ({today_pl_percent})\n"
-                    f"- Total P/L: {total_pl_dollars} ({total_pl_percent})"
-                )
-                break
-        if not position_stats_desc:
-            position_stats_desc = "No open position details available for this symbol."
-
-        buying_power = account_info.get("buying_power", 0.0)
-        cash = account_info.get("cash", 0.0)
-        daily_change_dollars = account_info.get("daily_change_dollars", 0.0)
-        daily_change_percent = account_info.get("daily_change_percent", 0.0)
-        account_status_desc = (
-            "Account Status:\n"
-            f"- Buying Power: ${buying_power:,.2f}\n"
-            f"- Cash: ${cash:,.2f}\n"
-            f"- Daily Change: ${daily_change_dollars:,.2f} ({daily_change_percent:.2f}%)"
-        )
-        # ---------------------------------------------------------
-        # END NEW BLOCK
-        # ---------------------------------------------------------
+        state["broker_account_id"] = context.account_id
 
         # Human-readable description for the prompt
         open_pos_desc = (

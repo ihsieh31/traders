@@ -37,9 +37,15 @@ class GoogleClient(BaseLLMClient):
             else:
                 # Gemini 2.5 uses a thinking budget rather than thinking_level.
                 llm_kwargs["thinking_budget"] = -1 if thinking_level == "high" else 0
-        for key in ("timeout", "max_retries", "callbacks", "http_client", "http_async_client"):
+        for key in ("timeout", "callbacks", "http_client", "http_async_client"):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+        # Phase B: langchain-google-genai's max_retries means *total
+        # attempts* (tenacity stop_after_attempt) and also retries permanent
+        # GoogleAPIError subclasses, so it cannot own our policy. Pin it to
+        # 0 (verified: exactly one attempt) and let the single owner
+        # tradingagents.llm_clients.retry.RetryingLLM bound everything.
+        llm_kwargs["max_retries"] = 0
         return NormalizedChatGoogleGenerativeAI(**llm_kwargs)
 
     def validate_model(self) -> bool:

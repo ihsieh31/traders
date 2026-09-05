@@ -6,12 +6,28 @@ import time
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.run_logger import get_run_audit_logger
 from tradingagents.execution import ExecutionService
 from tradingagents.agents.schemas import trade_intent_action
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
 from webui.utils.state import app_state
 from webui.utils.charts import create_chart
+
+
+def mark_provider_stop(ticker: str, exc: ProviderFailure) -> None:
+    """Record a run-stopping provider failure for the scheduler loops.
+
+    Auto dispatch (loop / market-hour modes) must halt for this round and
+    only resume after an explicit operator restart; downstream symbols and
+    the next scheduled round are cancelled by checking this flag.
+    """
+    app_state.provider_stop_reason = (
+        f"LLM provider failure while analyzing {ticker}: {exc} "
+        "(auto dispatch stopped; restart analysis to resume)"
+    )
+    app_state.analysis_queue = []
+    print(f"[SCHEDULER] {app_state.provider_stop_reason}")
 
 
 def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
@@ -86,6 +102,28 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
                     )
             except Exception as exc:
                 print(f"[TRADE] Regime sizing unavailable for {ticker}: {exc}")
+
+            # Phase B: wire the portfolio intelligence layer (correlation
+            # penalty, inverse-vol sizing, gross cap) into the auto-trade
+            # path. It only shrinks NEW long exposure; failures keep the
+            # amount untouched.
+            try:
+                from tradingagents.dataflows.config import get_config
+                from tradingagents.portfolio import (
+                    PortfolioLimitsConfig,
+                    adjust_new_position_notional,
+                    gather_portfolio_state_via_alpaca,
+                )
+
+                trade_amount = adjust_new_position_notional(
+                    ticker,
+                    recommended_action,
+                    trade_amount,
+                    gather_state=gather_portfolio_state_via_alpaca,
+                    config=PortfolioLimitsConfig.from_config(get_config() or {}),
+                )
+            except Exception as exc:
+                print(f"[TRADE] Portfolio sizing unavailable for {ticker}: {exc}")
 
         # Single execution entry (Phase A.1 strict boundary): a missing or
         # schema-invalid TradeIntent is fail-closed with zero broker calls.
@@ -374,6 +412,24 @@ def run_analysis(
         # Final UI update to show completion
         app_state.needs_ui_update = True
 
+    except ProviderFailure as exc:
+        # Phase B: the whole run stops on provider exhaustion — no partial
+        # state reuse, no execution, and the scheduler must not dispatch the
+        # next symbol or the next round.
+        print(f"Analysis stopped for {ticker}: {exc}")
+        import traceback
+        traceback.print_exc()
+        if run_started:
+            run_logger.finish_run(
+                symbol=ticker,
+                status="stopped",
+                final_state=final_state,
+                error_message=str(exc),
+            )
+            run_started = False
+        mark_provider_stop(ticker, exc)
+        if progress is not None:
+            progress(1.0)
     except Exception as e:
         print(f"Analysis error: {e}")
         import traceback
@@ -487,6 +543,12 @@ def start_analysis(
         provider_settings=provider_settings,
         progress=progress,
     )
+
+    # A provider failure stops the whole scheduling round; surface it to the
+    # operator instead of the routine completion message.
+    stop_reason = getattr(app_state, "provider_stop_reason", None)
+    if stop_reason:
+        return stop_reason
 
     # Update the status message with more details
     trading_mode = "Trading Mode (LONG/NEUTRAL/SHORT)" if allow_shorts else "Investment Mode (BUY/HOLD/SELL)"

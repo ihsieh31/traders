@@ -15,6 +15,7 @@ from tradingagents.agents.analysts.macro_analyst import create_macro_analyst
 from tradingagents.agents.utils.agent_states import AgentState
 from tradingagents.agents.utils.agent_utils import Toolkit
 from tradingagents.agents.utils.report_context import create_report_context_node
+from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.run_logger import get_run_audit_logger
 
 from .conditional_logic import ConditionalLogic
@@ -36,10 +37,18 @@ class GraphSetup:
         risk_manager_memory,
         conditional_logic: ConditionalLogic,
         config: Dict[str, Any] = None,
+        decision_llm=None,
     ):
-        """Initialize with required components."""
+        """Initialize with required components.
+
+        ``decision_llm`` is the optional Phase B Decision role injection
+        point: when set, only the Risk Manager uses it while every research
+        node stays on the Analysis clients. When None (legacy configs) the
+        Risk Manager keeps using ``deep_thinking_llm``.
+        """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
+        self.decision_llm = decision_llm
         self.toolkit = toolkit
         self.tool_nodes = tool_nodes
         self.bull_memory = bull_memory
@@ -274,17 +283,25 @@ class GraphSetup:
                                     print(f"[PARALLEL] Real-time update: {analyst_type} report ({len(report_content)} chars) stored for {ticker}")
                     
                     return analyst_type, final_state
-                    
+
+                except ProviderFailure as e:
+                    # Phase B: a provider access failure must stop the whole
+                    # round. Re-raise so the coordinator aborts remaining
+                    # analysts and no downstream node is dispatched; the
+                    # legacy empty-report fallback must not swallow it.
+                    print(f"[PARALLEL] {analyst_type} analyst provider failure: {e}")
+                    raise
+
                 except Exception as e:
                     print(f"[PARALLEL] Error in {analyst_type} analyst: {e}")
                     import traceback
                     traceback.print_exc()
-                    
+
                     # Update UI status to error (completed with issues)
                     if ui_available:
                         analyst_name = f"{analyst_type.capitalize()} Analyst"
                         app_state.update_agent_status(analyst_name, "completed")
-                    
+
                     return analyst_type, analyst_state
             
             # Execute all analysts in parallel with staggered starts
@@ -310,6 +327,13 @@ class GraphSetup:
                         result_analyst_type, result_state = future.result()
                         completed_results[result_analyst_type] = result_state
                         print(f"[PARALLEL] {result_analyst_type} analyst completed successfully")
+                    except ProviderFailure:
+                        # Cancel work that has not started yet (in-flight
+                        # threads finish under their bounded timeouts and
+                        # their results are discarded) and stop the round.
+                        for pending in future_to_analyst:
+                            pending.cancel()
+                        raise
                     except Exception as e:
                         print(f"[PARALLEL] {analyst_type} analyst failed: {e}")
                         completed_results[analyst_type] = state  # Use original state as fallback
@@ -403,6 +427,9 @@ class GraphSetup:
                     if ui_available:
                         app_state.update_agent_status(analyst_name, "completed")
                     return analyst_name, result_state
+                except ProviderFailure as e:
+                    print(f"[RISK_PARALLEL] {analyst_name} provider failure: {e}")
+                    raise
                 except Exception as e:
                     print(f"[RISK_PARALLEL] Error in {analyst_name}: {e}")
                     if ui_available:
@@ -434,6 +461,10 @@ class GraphSetup:
                         result_name, result_state = future.result()
                         completed_results[result_name] = result_state
                         print(f"[RISK_PARALLEL] {result_name} completed")
+                    except ProviderFailure:
+                        for pending in futures:
+                            pending.cancel()
+                        raise
                     except Exception as e:
                         print(f"[RISK_PARALLEL] {analyst_name} failed: {e}")
                         completed_results[analyst_name] = copy.deepcopy(state)
@@ -599,7 +630,9 @@ class GraphSetup:
         risk_manager_node = self._wrap_node_with_run_logging(
             "Risk Judge",
             create_risk_manager(
-                self.deep_thinking_llm, self.risk_manager_memory, self.config
+                self.decision_llm or self.deep_thinking_llm,
+                self.risk_manager_memory,
+                self.config,
             ),
         )
         parallel_risk_round_one_mode = self.config.get("parallel_risk_first_round", True)

@@ -815,6 +815,30 @@ class Toolkit:
     @staticmethod
     @tool
     @timing_wrapper("FUNDAMENTALS")
+    def get_sec_ir_source(
+        ticker: Annotated[str, "ticker symbol of the company"],
+        curr_date: Annotated[
+            str,
+            "current date you are trading at, yyyy-mm-dd",
+        ],
+    ):
+        """
+        Retrieve the latest official SEC filings (10-K/10-Q/8-K) and the
+        configured company IR page with honest source/date metadata.
+        Args:
+            ticker (str): ticker symbol of the company
+            curr_date (str): current date you are trading at, yyyy-mm-dd
+        Returns:
+            str: primary-source report with published/retrieved timestamps,
+            freshness status, and explicit unavailability markers. Missing
+            sources are labeled, never guessed, and never treated as LLM
+            provider failures.
+        """
+        return interface.get_sec_ir_primary_source(ticker, curr_date)
+
+    @staticmethod
+    @tool
+    @timing_wrapper("FUNDAMENTALS")
     def get_finnhub_company_insider_sentiment(
         ticker: Annotated[str, "ticker symbol for the company"],
         curr_date: Annotated[

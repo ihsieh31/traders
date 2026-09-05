@@ -10,6 +10,8 @@ import yfinance as yf
 from langgraph.prebuilt import ToolNode
 
 from tradingagents.llm_clients import create_llm_client
+from tradingagents.llm_clients.retry import ProviderFailure, RetryingLLM, validate_llm_max_retries
+from tradingagents.llm_clients.roles import describe_roles, resolve_role_config
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.agents.utils.memory import FinancialSituationMemory, TradingMemoryLog
@@ -111,27 +113,74 @@ class TradingAgentsGraph:
         if self.callbacks:
             base_llm_kwargs["callbacks"] = self.callbacks
 
-        deep_client = create_llm_client(
-            provider=provider,
-            model=deep_think_model,
-            base_url=backend_url,
-            api_key=get_llm_api_key(provider),
-            model_role="deep",
-            **base_llm_kwargs,
-            **deep_think_kwargs,
-        )
-        quick_client = create_llm_client(
-            provider=provider,
-            model=quick_think_model,
-            base_url=backend_url,
-            api_key=get_llm_api_key(provider),
-            model_role="quick",
-            **base_llm_kwargs,
-            **quick_think_kwargs,
-        )
+        # Phase B: bounded LLM retry policy (integer 0-3, validated at
+        # startup) and the Analysis/Decision role split. With no role keys
+        # set the legacy quick/deep behavior is preserved exactly.
+        try:
+            llm_max_retries = validate_llm_max_retries(
+                self.config.get("llm_max_retries", 3)
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid LLM retry configuration: {exc}") from exc
+        timeout_seconds = self.config.get("llm_request_timeout_seconds", 120.0)
+        base_llm_kwargs.setdefault("timeout", timeout_seconds)
 
-        self.deep_thinking_llm = deep_client.get_llm()
-        self.quick_thinking_llm = quick_client.get_llm()
+        self.role_resolution = resolve_role_config(self.config)
+        self.llm_max_retries = llm_max_retries
+
+        if self.role_resolution["mode"] == "roles":
+            analysis_spec = self.role_resolution["analysis"]
+            decision_spec = self.role_resolution["decision"]
+            print(f"[LLM CONFIG] Roles: {describe_roles(self.role_resolution)}")
+            print(
+                f"[LLM CONFIG] Retry: max {llm_max_retries} retries "
+                f"(<= {1 + llm_max_retries} requests per invocation)"
+            )
+            analysis_client = self._build_role_client(analysis_spec, self.role_resolution["analysis_api_key"])
+            decision_client = self._build_role_client(decision_spec, self.role_resolution["decision_api_key"])
+            self.deep_thinking_llm = analysis_client
+            self.quick_thinking_llm = analysis_client
+            self.decision_llm = decision_client
+        else:
+            deep_client = create_llm_client(
+                provider=provider,
+                model=deep_think_model,
+                base_url=backend_url,
+                api_key=get_llm_api_key(provider),
+                model_role="deep",
+                **base_llm_kwargs,
+                **deep_think_kwargs,
+            )
+            quick_client = create_llm_client(
+                provider=provider,
+                model=quick_think_model,
+                base_url=backend_url,
+                api_key=get_llm_api_key(provider),
+                model_role="quick",
+                **base_llm_kwargs,
+                **quick_think_kwargs,
+            )
+
+            self.deep_thinking_llm = deep_client.get_llm()
+            self.quick_thinking_llm = quick_client.get_llm()
+            self.decision_llm = None
+            # Phase B: wrap both legacy clients with the single bounded
+            # retry owner (role label is legacy because the deep client is
+            # shared between research nodes and the Risk Manager).
+            self.deep_thinking_llm = RetryingLLM(
+                self.deep_thinking_llm,
+                role="legacy-deep",
+                provider=provider,
+                model=deep_think_model,
+                max_retries=llm_max_retries,
+            )
+            self.quick_thinking_llm = RetryingLLM(
+                self.quick_thinking_llm,
+                role="legacy-quick",
+                provider=provider,
+                model=quick_think_model,
+                max_retries=llm_max_retries,
+            )
         
         self.toolkit = Toolkit(config=self.config)
 
@@ -163,6 +212,7 @@ class TradingAgentsGraph:
             self.risk_manager_memory,
             self.conditional_logic,
             self.config,
+            decision_llm=self.decision_llm,
         )
 
         self.propagator = Propagator(max_recur_limit=self.config.get("max_recur_limit", 200))
@@ -178,6 +228,37 @@ class TradingAgentsGraph:
         self.workflow = self.graph_setup.setup_graph(selected_analysts)
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
+
+    def _build_role_client(self, spec, api_key: str):
+        """Build one role client (Analysis or Decision) with isolated
+        provider/model/endpoint/credential and the bounded retry owner."""
+        provider = spec.provider
+        provider_kwargs = self._get_provider_kwargs(provider)
+        if self.callbacks:
+            provider_kwargs["callbacks"] = self.callbacks
+        params = normalize_model_params(
+            spec.model,
+            self.config.get("deep_llm_params"),
+            role="deep",
+        )
+        # Per-role kwargs: explicit model params win over the provider-level
+        # switches so OpenAI reasoning never leaks into Google/Anthropic.
+        merged_kwargs = {**provider_kwargs, **params}
+        client = create_llm_client(
+            provider=provider,
+            model=spec.model,
+            base_url=spec.backend_url,
+            api_key=api_key,
+            model_role="deep",
+            **merged_kwargs,
+        )
+        return RetryingLLM(
+            client.get_llm(),
+            role=spec.role,
+            provider=provider,
+            model=spec.model,
+            max_retries=self.llm_max_retries,
+        )
 
     def _get_provider_kwargs(self, provider: str) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
@@ -390,6 +471,9 @@ class TradingAgentsGraph:
                     # online tools
                     self.toolkit.get_fundamentals_openai,
                     self.toolkit.get_defillama_fundamentals,
+                    # primary sources (Phase B): official SEC filings and
+                    # configured company IR pages with honest date metadata
+                    self.toolkit.get_sec_ir_source,
                     # direct data tools
                     self.toolkit.get_finnhub_company_insider_sentiment,
                     self.toolkit.get_finnhub_company_insider_transactions,
@@ -449,6 +533,22 @@ class TradingAgentsGraph:
             else:
                 # Standard mode without tracing
                 final_state = graph.invoke(init_agent_state, **args)
+        except ProviderFailure as exc:
+            # Phase B: a provider access failure stops the whole run. Record
+            # the identifiable failure (role/provider/model/attempts/category,
+            # sanitized) and mark the run stopped so operators see why.
+            run_logger.log_event(
+                event_type="provider_failure",
+                symbol=company_name,
+                payload={"run_stopped": True, **exc.to_dict()},
+            )
+            run_logger.finish_run(
+                symbol=company_name,
+                status="stopped",
+                error_message=str(exc),
+            )
+            print(f"[RUN STOPPED] {company_name}: {exc}")
+            raise
         except Exception as e:
             run_logger.finish_run(
                 symbol=company_name,

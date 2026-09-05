@@ -19,6 +19,7 @@ from rich.align import Align
 from rich.rule import Rule
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
@@ -479,6 +480,58 @@ def get_user_selections():
     selected_deep_thinker = select_deep_thinking_agent(selected_llm_provider)
     google_thinking_level = ask_gemini_thinking_config() if selected_llm_provider == "google" else ""
     anthropic_effort = ask_anthropic_effort() if selected_llm_provider == "anthropic" else ""
+
+    # Step 5b: Optional Phase B fixed roles (Analysis / Decision)
+    console.print(
+        create_question_box(
+            "Step 5b: LLM Roles (optional)",
+            "Configure Analysis/Decision role overrides? (Analysis serves all "
+            "research nodes; Decision serves only the Risk Manager)",
+            "no",
+        )
+    )
+    role_settings = {}
+    if typer.confirm("Configure role overrides?", default=False):
+        from tradingagents.llm_clients.roles import SUPPORTED_PROVIDERS
+
+        def _ask_role(role_label):
+            provider = typer.prompt(
+                f"{role_label} provider (empty = inherit)",
+                default="",
+                show_default=False,
+            ).strip()
+            model = typer.prompt(
+                f"{role_label} model (empty = inherit)", default="", show_default=False
+            ).strip()
+            url = typer.prompt(
+                f"{role_label} endpoint override (empty = inherit)",
+                default="",
+                show_default=False,
+            ).strip()
+            if provider and provider not in SUPPORTED_PROVIDERS:
+                raise typer.BadParameter(
+                    f"Unsupported provider {provider!r} "
+                    f"(supported: {', '.join(SUPPORTED_PROVIDERS)})"
+                )
+            return provider, model, url
+
+        analysis_provider, analysis_model, analysis_url = _ask_role("Analysis")
+        decision_provider, decision_model, decision_url = _ask_role("Decision")
+        role_settings = {
+            "analysis_provider": analysis_provider or None,
+            "analysis_model": analysis_model or None,
+            "analysis_backend_url": analysis_url or None,
+            "decision_provider": decision_provider or None,
+            "decision_model": decision_model or None,
+            "decision_backend_url": decision_url or None,
+        }
+        # Fail fast on invalid combinations (e.g. cross-provider without model).
+        from tradingagents.llm_clients.roles import resolve_role_config
+
+        resolve_role_config(
+            {"llm_provider": selected_llm_provider, "backend_url": backend_url or None, **role_settings}
+        )
+
     checkpoint_enabled = select_checkpoint_enabled()
     output_language = get_output_language()
 
@@ -495,6 +548,7 @@ def get_user_selections():
         "anthropic_effort": anthropic_effort,
         "shallow_thinker": selected_shallow_thinker,
         "deep_thinker": selected_deep_thinker,
+        **role_settings,
     }
 
 
@@ -729,6 +783,16 @@ def run_analysis():
         config["google_thinking_level"] = selections["google_thinking_level"]
     if selections.get("anthropic_effort"):
         config["anthropic_effort"] = selections["anthropic_effort"]
+    for role_key in (
+        "analysis_provider",
+        "analysis_model",
+        "analysis_backend_url",
+        "decision_provider",
+        "decision_model",
+        "decision_backend_url",
+    ):
+        if selections.get(role_key):
+            config[role_key] = selections[role_key]
     config["trading_mode"] = "investment"
 
     # Initialize the graph
@@ -1073,6 +1137,20 @@ def run_analysis():
                     selections["analysis_date"],
                 )
             run_started = False
+        except ProviderFailure as e:
+            # Phase B: provider access failure stops the run; make it visible
+            # in the CLI as a distinct stopped state (already logged by the
+            # run audit trail with role/model/attempts detail).
+            if run_started:
+                run_logger.finish_run(
+                    symbol=selections["ticker"],
+                    status="stopped",
+                    final_state=trace[-1] if trace else None,
+                    error_message=str(e),
+                )
+                run_started = False
+            console.print(f"[bold red]Run stopped — provider failure:[/bold red] {e}")
+            raise
         except Exception as e:
             if run_started:
                 run_logger.finish_run(

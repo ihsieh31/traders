@@ -1801,3 +1801,54 @@ def get_yield_curve_analysis(
     """
     
     return get_treasury_yield_curve(curr_date)
+
+
+def get_sec_ir_primary_source(
+    ticker: Annotated[str, "ticker symbol of the company"],
+    curr_date: Annotated[str, "current date in yyyy-mm-dd format"],
+) -> str:
+    """
+    Retrieve the latest official SEC filings (10-K/10-Q/8-K) and the
+    configured company IR page with honest source/date metadata.
+
+    Args:
+        ticker (str): ticker symbol of the company
+        curr_date (str): current date you are trading at, yyyy-mm-dd
+    Returns:
+        str: a report of the primary sources with published/retrieved
+        timestamps, freshness status, and explicit unavailability markers.
+        Supplemental to the regular market/news data flow, never a
+        replacement, and never retried as if it were an LLM provider error.
+    """
+    from .sec_ir import default_client_from_config, render_sec_ir_report
+    from .sec_ir import SecIrClient, SecIrError  # noqa: F401 (re-export parity)
+
+    client = default_client_from_config(get_config())
+    if client is None:
+        return (
+            f"Primary source check for {ticker}: SEC/IR ingestion is disabled "
+            "by configuration (sec_ir_enabled=False). Regular market/news "
+            "data applies; no primary-source evidence is available."
+        )
+    try:
+        records = client.latest_filings(ticker, forms=("10-K", "10-Q", "8-K"))
+    except SecIrError as exc:
+        records = []
+        mapping_error = str(exc)
+    else:
+        mapping_error = None
+    try:
+        records.append(client.ir_page(ticker))
+    except SecIrError as exc:
+        from .sec_ir import SourceRecord
+
+        records.append(
+            SourceRecord(
+                kind="ir_page", symbol=ticker, source="Company IR", url="",
+                published_at=None, retrieved_at="",
+                error=f"IR page check failed: {exc}",
+            )
+        )
+    if mapping_error and not records:
+        return f"Primary source check for {ticker}: {mapping_error}"
+    return render_sec_ir_report(ticker, records)

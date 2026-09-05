@@ -30,6 +30,13 @@ DEFAULT_SETTINGS = {
     "deep_llm_custom_model": "",
     "google_thinking_level": "",
     "anthropic_effort": "",
+    # Phase B fixed roles (empty = legacy quick/deep behavior)
+    "analysis_provider": "",
+    "analysis_model": "",
+    "analysis_backend_url": "",
+    "decision_provider": "",
+    "decision_model": "",
+    "decision_backend_url": "",
 }
 
 # Default API keys structure (empty by default, loaded from localStorage or .env)

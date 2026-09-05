@@ -44,7 +44,12 @@ class AppState:
         self.trade_enabled = False
         self.trade_amount = 1000
         self.trade_occurred = False
-        
+
+        # Phase B: set when an LLM provider failure stops a run. Auto
+        # dispatch (loop/market-hour) checks this and halts until the
+        # operator explicitly restarts the analysis.
+        self.provider_stop_reason = None
+
         self.refresh_interval = 1.0  # seconds
         self.analysis_complete = False
         self.analysis_results = None
@@ -291,6 +296,8 @@ class AppState:
         # Reset session tracking
         self.current_session_id = None
         self.session_start_time = None
+        # An explicit operator start clears any prior provider stop.
+        self.provider_stop_reason = None
 
     def get_tool_calls_for_display(self, agent_filter=None, symbol_filter=None):
         """Get tool calls in a consistent format for UI display, optionally filtered by agent type and symbol"""

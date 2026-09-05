@@ -44,6 +44,12 @@ AlpacaTradingAgent introduces powerful new capabilities specifically designed fo
 - **Provider-Specific Controls**: Preserves GPT reasoning controls, Gemini thinking level, Claude effort, custom model IDs, and Azure deployment names
 - **Local Compatibility**: `OPENAI_USE_LOCAL` and `OPENAI_BASE_URL` continue to route core LLM calls to a local OpenAI-compatible backend
 
+### 🔀 **Fixed Analysis / Decision Roles and Bounded LLM Retries (Phase B)**
+- **Two Fixed Roles**: With any `analysis_*` / `decision_*` config key set, one Analysis provider/model serves every research node (five analysts, bull/bear, research manager, trader, risk debators) while the Risk Manager alone uses the Decision provider/model. With no role keys set, the legacy quick/deep split is preserved untouched
+- **Per-Role Isolation**: Provider, model, endpoint and credential resolve per role (role-specific env overrides such as `DECISION_OPENAI_API_KEY`); a cross-provider Decision without an explicit model is a startup config error; explicit role providers are never rewritten by the local-OpenAI switch; secrets never enter the UI store or logs
+- **Bounded Retries**: `llm_max_retries` (integer 0-3) gives first try + at most N retries = at most N+1 requests per logical invocation, covering plain, structured-output and tool-bound paths through one retry owner; transient failures (timeout/connection/429/5xx) retry with capped backoff, permanent failures (401/403/invalid) stop immediately
+- **Run-Stop Semantics**: A provider access failure stops the whole run (marked `stopped` in the run log with role/provider/model/attempts), never degrades into a normal `NO_TRADE`, and halts auto dispatch for the round until an operator restarts; Risk Manager schema/bind/validation failures still emit the Phase A strict `INVALID/NO_TRADE` with zero broker calls
+
 ### 🧾 **Structured Decisions, Memory, and Resume**
 - **Executable Final Action**: Final decisions preserve `BUY/HOLD/SELL` or `LONG/NEUTRAL/SHORT` for Alpaca execution
 - **Advisory Ratings**: Upstream-style ratings are treated as metadata only and never directly trigger Alpaca orders
@@ -297,8 +303,31 @@ Phase A.2 passed fresh independent acceptance (2026-09-04): full offline suite
 `347 passed, 158 subtests passed`, adversarial PoC 12/12, and a real Alpaca
 Paper E2E on a disposable paper account (submit → broker fill → adopt →
 reconcile `CLEAN` → verified close → account flat, no open orders). A stable
-observation period on small notional is still recommended before treating the
+observation period on small notional is required before treating the
 build as ready for a long unattended run.
+
+**P2 / P3 status**
+
+P1 corresponds to Phase A, P2 to Phase B, and P3 to Phase C. The completed
+P1 prompt files have been retired; their history remains in Git.
+P2 (SEC/IR primary sources, corporate-action quarantine, sector caps,
+Analysis/Decision roles, bounded LLM retries with run-stop, fresh holdings
+context and deterministic exposure caps) is **implemented — pending
+independent acceptance**. Follow [the updated roadmap](PROJECT_GOALS_AND_STATUS.md) and these prompts in order:
+
+1. [P2 implementation](PHASE_B_IMPLEMENTATION_PROMPT.md): original SEC/IR,
+   corporate-action and sector work, Analysis/Decision providers, bounded LLM
+   retries, and fresh holdings context plus concentration headroom.
+2. [P2 independent acceptance](PHASE_B_ACCEPTANCE_PROMPT.md).
+3. [P3 implementation](PHASE_C_IMPLEMENTATION_PROMPT.md): full equity universe,
+   deterministic Top40, independent Screening Top20, holdings union and daily cache.
+4. [P3 independent acceptance](PHASE_C_ACCEPTANCE_PROMPT.md).
+
+Paper observation does not block P2/P3 implementation or offline acceptance.
+It remains required before enabling long-running unattended Paper auto-trading.
+P2 still requires fresh independent acceptance; P3 still requires independent
+P2 acceptance. P3 remains a planning document — no screening/universe code
+exists yet.
 
 **LLM and Runtime Controls**
 - Select OpenAI, local OpenAI-compatible, Google, Anthropic, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, or Azure OpenAI

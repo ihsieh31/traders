@@ -53,6 +53,7 @@ class GPT5ChatModel(BaseChatModel):
     max_output_tokens: Optional[int] = None
     store: bool = False
     parallel_tool_calls: bool = True
+    timeout: Optional[float] = None  # bounded per-request timeout
     
     # Internal client - not a pydantic field
     _client: Optional[OpenAI] = None
@@ -61,13 +62,17 @@ class GPT5ChatModel(BaseChatModel):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Initialize the OpenAI client
+        # Initialize the OpenAI client. SDK-level retries are pinned to 0:
+        # the single bounded retry owner is tradingagents.llm_clients.retry.
         client_kwargs = {}
         if self.api_key:
             client_kwargs["api_key"] = self.api_key
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
-        self._client = OpenAI(**client_kwargs) if client_kwargs else OpenAI()
+        if self.timeout:
+            client_kwargs["timeout"] = self.timeout
+        client_kwargs["max_retries"] = 0
+        self._client = OpenAI(**client_kwargs) if client_kwargs else OpenAI(max_retries=0)
     
     @property
     def _llm_type(self) -> str:
@@ -493,7 +498,9 @@ class GPT5ChatModel(BaseChatModel):
             return ChatResult(generations=[generation])
             
         except Exception as e:
-            # Return error as content
+            # Phase B: provider failures must propagate so the single retry
+            # owner can classify them and the run stops instead of turning a
+            # transport error into normal-looking message content.
             error_message = f"Error calling GPT-5 API: {str(e)}"
             print(f"[GPT5] {error_message}")
             latency_seconds = 0.0
@@ -508,9 +515,7 @@ class GPT5ChatModel(BaseChatModel):
                 usage={},
                 error_message=error_message,
             )
-            ai_message = AIMessage(content=error_message)
-            generation = ChatGeneration(message=ai_message)
-            return ChatResult(generations=[generation])
+            raise
     
     def bind_tools(self, tools: List[Any], **kwargs) -> "GPT5ChatModel":
         """Bind tools to the model for function calling."""
@@ -592,6 +597,8 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
             "parallel_tool_calls",
         ):
             kwargs.pop(unsupported, None)
+        # Phase B: SDK retries pinned to 0; single retry owner owns the cap.
+        kwargs["max_retries"] = 0
         chat_kwargs = {"model": model_name, **kwargs}
         if api_key is not None:
             chat_kwargs["openai_api_key"] = api_key

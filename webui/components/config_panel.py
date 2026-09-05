@@ -578,6 +578,95 @@ def _model_setup():
                 ],
                 className="model-grid",
             ),
+            html.Div(id="llm-roles-info", className="config-status-slot"),
+            html.Div(
+                [
+                    html.Small(
+                        "Optional fixed roles (Phase B): set Analysis and/or "
+                        "Decision overrides. Leave everything empty to keep "
+                        "the quick/deep providers above. Decision defaults to "
+                        "the resolved Analysis role.",
+                        className="config-hint",
+                    ),
+                    html.Div(
+                        [
+                            _field(
+                                "Analysis provider",
+                                dbc.Input(
+                                    id="analysis-provider",
+                                    type="text",
+                                    placeholder="e.g. google (optional)",
+                                    value="",
+                                    className="config-input",
+                                ),
+                                "magnifying-glass-chart",
+                            ),
+                            _field(
+                                "Analysis model",
+                                dbc.Input(
+                                    id="analysis-model",
+                                    type="text",
+                                    placeholder="e.g. gemini-2.5-flash (optional)",
+                                    value="",
+                                    className="config-input",
+                                ),
+                                "brain",
+                            ),
+                        ],
+                        className="config-two-column",
+                    ),
+                    _field(
+                        "Analysis endpoint override",
+                        dbc.Input(
+                            id="analysis-backend-url",
+                            type="text",
+                            placeholder="Optional OpenAI-compatible endpoint",
+                            value="",
+                            className="config-input",
+                        ),
+                        "server",
+                    ),
+                    html.Div(
+                        [
+                            _field(
+                                "Decision provider",
+                                dbc.Input(
+                                    id="decision-provider",
+                                    type="text",
+                                    placeholder="e.g. anthropic (optional)",
+                                    value="",
+                                    className="config-input",
+                                ),
+                                "scale-balanced",
+                            ),
+                            _field(
+                                "Decision model",
+                                dbc.Input(
+                                    id="decision-model",
+                                    type="text",
+                                    placeholder="e.g. claude-sonnet-4-6 (optional)",
+                                    value="",
+                                    className="config-input",
+                                ),
+                                "gavel",
+                            ),
+                        ],
+                        className="config-two-column",
+                    ),
+                    _field(
+                        "Decision endpoint override",
+                        dbc.Input(
+                            id="decision-backend-url",
+                            type="text",
+                            placeholder="Optional OpenAI-compatible endpoint",
+                            value="",
+                            className="config-input",
+                        ),
+                        "server",
+                    ),
+                ],
+                className="config-roles-section",
+            ),
         ],
         className="config-section-body",
     )

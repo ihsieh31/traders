@@ -41,6 +41,12 @@ def register_storage_callbacks(app):
             Input("deep-llm-custom-model", "value"),
             Input("google-thinking-level", "value"),
             Input("anthropic-effort", "value"),
+            Input("analysis-provider", "value"),
+            Input("analysis-model", "value"),
+            Input("analysis-backend-url", "value"),
+            Input("decision-provider", "value"),
+            Input("decision-model", "value"),
+            Input("decision-backend-url", "value"),
         ],
         [
             State("settings-store", "data"),
@@ -56,6 +62,8 @@ def register_storage_callbacks(app):
                      llm_provider, backend_url, output_language, checkpoint_enabled,
                      quick_llm, deep_llm, quick_llm_custom_model, deep_llm_custom_model,
                      google_thinking_level, anthropic_effort,
+                     analysis_provider, analysis_model, analysis_backend_url,
+                     decision_provider, decision_model, decision_backend_url,
                      current_settings, loop_enabled, market_hour_enabled):
         """Save settings to localStorage store"""
         
@@ -88,6 +96,15 @@ def register_storage_callbacks(app):
             "deep_llm_custom_model": deep_llm_custom_model or "",
             "google_thinking_level": google_thinking_level or "",
             "anthropic_effort": anthropic_effort or "",
+            # Phase B role overrides: persisted as plain settings only —
+            # provider/model/endpoint never hold secrets, and role API keys
+            # live in environment variables, never in the UI store.
+            "analysis_provider": analysis_provider or "",
+            "analysis_model": analysis_model or "",
+            "analysis_backend_url": analysis_backend_url or "",
+            "decision_provider": decision_provider or "",
+            "decision_model": decision_model or "",
+            "decision_backend_url": decision_backend_url or "",
         }
         
         # Check if settings actually changed to prevent circular updates

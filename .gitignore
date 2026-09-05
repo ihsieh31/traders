@@ -8,4 +8,5 @@ eval_data/
 *.egg-info/
 .env
 data/
-.opencode/
+.opencode/.venv-p2/
+.venv-p2/

@@ -5,6 +5,8 @@ from typing import Any, Callable, Optional, TypeVar
 
 from pydantic import BaseModel
 
+from tradingagents.llm_clients.retry import ProviderFailure
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -16,7 +18,8 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Optional[Any]
     except Exception as exc:
         # Any bind failure (not only missing-method errors) must surface as
         # None so the strict Risk path emits INVALID/NO_TRADE instead of
-        # raising outside the fail-closed boundary.
+        # raising outside the fail-closed boundary. Binding makes no HTTP
+        # request, so this cannot mask a provider access failure.
         logger.warning("%s structured output unavailable; using free text (%s)", agent_name, exc)
         return None
 
@@ -31,6 +34,10 @@ def invoke_structured_or_freetext(
     if structured_llm is not None:
         try:
             return render(structured_llm.invoke(prompt))
+        except ProviderFailure:
+            # Phase B: a provider access failure must stop the run. Falling
+            # back here would issue another request and bypass the retry cap.
+            raise
         except Exception as exc:
             logger.warning("%s structured output failed; retrying as free text (%s)", agent_name, exc)
 
@@ -50,6 +57,10 @@ def invoke_structured_object_or_freetext(
         try:
             structured_value = structured_llm.invoke(prompt)
             return render(structured_value), structured_value
+        except ProviderFailure:
+            # Phase B: provider access failures propagate (stop the run);
+            # only schema/bind problems fall back to free text.
+            raise
         except Exception as exc:
             logger.warning("%s structured output failed; retrying as free text (%s)", agent_name, exc)
 
@@ -66,19 +77,26 @@ def invoke_risk_structured_strict(
     *,
     schema: Optional[type[T]] = None,
 ) -> tuple[Optional[str], Optional[T], Optional[str]]:
-    """Strict Risk Manager boundary: structured success or explicit INVALID.
+    """Strict Risk Manager boundary with Phase B failure separation.
 
-    Never falls back to free text. Any bind/invoke/validation/timeout/
-    provider/empty/illegal failure returns (None, None, reason) so the
-    caller must emit INVALID/NO_TRADE with zero broker calls. Analyst,
-    Research Manager and Trader keep the free-text fallback; only risk uses
-    this strict path.
+    Two distinct failure classes:
+
+    - **Provider access failure** (transport/timeout/429/5xx exhausted or a
+      permanent 401/403/invalid request): raises :class:`ProviderFailure`
+      so the whole run stops. It must never be reported as a normal
+      NO_TRADE and must never reuse a checkpoint's stale decision.
+    - **Successful response but schema/bind/validation/empty output**: the
+      Phase A behavior stands — return (None, None, reason) so the caller
+      emits INVALID/NO_TRADE with zero broker calls. No repair request, no
+      free-text guessing.
     """
     if structured_llm is None:
         logger.warning("%s structured bind unavailable; emitting NO_TRADE", agent_name)
         return None, None, "structured_bind_failed"
     try:
         structured_value = structured_llm.invoke(prompt)
+    except ProviderFailure:
+        raise
     except Exception as exc:
         logger.warning("%s structured invoke failed; emitting NO_TRADE (%s)", agent_name, exc)
         return None, None, f"structured_invoke_failed: {exc}"

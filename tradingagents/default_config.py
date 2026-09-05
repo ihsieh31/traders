@@ -53,6 +53,24 @@ DEFAULT_CONFIG = {
         "store": False,
         "parallel_tool_calls": True,
     },
+    # Phase B role split: a fixed Analysis provider/model serves every
+    # research node (analysts, bull/bear, research manager, trader, risk
+    # debators) while the Risk Manager alone uses the Decision role. All six
+    # keys are empty by default = legacy quick/deep behavior is preserved.
+    "analysis_provider": None,
+    "analysis_model": None,
+    "analysis_backend_url": None,
+    "decision_provider": None,
+    "decision_model": None,
+    "decision_backend_url": None,
+    # Phase B LLM retry policy: first try + at most N retries = at most N+1
+    # actual requests per logical LLM invocation. Integer 0-3 only; anything
+    # else fails at startup. 0 disables retries entirely.
+    "llm_max_retries": int(os.getenv("LLM_MAX_RETRIES", "3")),
+    "llm_request_timeout_seconds": float(
+        os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "120.0")
+    ),
+    "llm_retry_backoff_max_seconds": 4.0,  # exponential backoff cap
     "quick_llm_params": {
         "reasoning_effort": "low",
         "text_verbosity": "low",
@@ -176,4 +194,28 @@ DEFAULT_CONFIG = {
     # an explicit False fails closed in get_alpaca_trading_client().
     "alpaca_use_paper": "True",
     "coindesk_api_key": None,
+    # ---- Phase B data quality and sector constraints ----
+    # SEC/IR primary sources supplement (never replace) the existing market
+    # and news fallbacks. No scraping framework; stdlib HTTP with bounded
+    # timeout/response size, official-host checks, SEC User-Agent, throttle.
+    "sec_ir_enabled": True,
+    "sec_ir_user_agent": None,  # SEC policy requires a contact UA; env SEC_IR_USER_AGENT overrides
+    "sec_ir_freshness_days": {"10-K": 500, "10-Q": 130, "8-K": 30, "ir": 14},
+    # Explicit company IR publication pages. Missing entry => reported as
+    # missing; never guessed. Example: {"AAPL": "https://investor.apple.com/"}
+    "company_ir_pages": {},
+    # Manual corporate-action quarantine input (split, ticker change,
+    # delisting, non-tradable). There is no automatic event feed in Phase B;
+    # coverage is limited to explicitly reported events. Example:
+    # [{"symbol": "TSLA", "reason": "split", "ratio": "3:1",
+    #   "effective_at": "2026-09-10T00:00:00+00:00", "source": "operator"}]
+    "corporate_action_events": [],
+    # Sector exposure cap (% of equity). The VALUE defaults to 30%; the cap
+    # becomes ACTIVE when the operator provides a sector_mapping below (a
+    # cap without any mapping could never be proven). Once active, any
+    # holding or candidate with an unknown sector refuses new risk.
+    "max_sector_exposure_pct": 30.0,
+    # Small manual symbol -> sector mapping for the watchlist/positions.
+    # Example: {"NVDA": "Technology", "JPM": "Financials"}
+    "sector_mapping": {},
 }

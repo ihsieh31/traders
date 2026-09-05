@@ -44,9 +44,13 @@ advisory.
 | `tradingagents/graph/` | LangGraph orchestration. `trading_graph.py` builds the graph and owns the LLM clients, memories, and reflection; `setup.py` wires nodes; `conditional_logic.py` controls debate rounds; `propagation.py` creates initial state; `signal_processing.py` extracts the final signal; `checkpointer.py` optional SQLite resume. |
 | `tradingagents/agents/` | The agents themselves: `analysts/` (market, social, news, fundamentals, macro), `researchers/` (bull/bear), `managers/`, `trader/`, `risk_mgmt/`, plus `utils/` (agent states, memory, trading modes) and `schemas.py` (typed `TradeIntent`). |
 | `tradingagents/dataflows/` | Every external data source behind one interface: `alpaca_utils.py` (bars, quotes, account, orders, execution), Finnhub, Google News, Reddit, FRED macro, crypto sources, with a yfinance fallback for supported failures. `config.py` holds runtime config + API keys. |
-| `tradingagents/llm_clients/` | Provider adapters (OpenAI, Anthropic, Google, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, Azure, local endpoints) behind `create_llm_client`. |
+| `tradingagents/llm_clients/` | Provider adapters (OpenAI, Anthropic, Google, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, Azure, local endpoints) behind `create_llm_client`. `roles.py` resolves the fixed Analysis/Decision roles; `retry.py` is the single bounded retry owner (`ProviderFailure` + exact request caps). |
 | `tradingagents/prompts/` | All agent prompts as editable text templates (`TRADINGAGENTS_PROMPT_DIR` overrides). |
-| `tradingagents/run_logger.py` | Append-only audit trail: every prompt, tool call, LLM call (with token usage), state snapshot, and final state per run under `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/`. |
+| `tradingagents/run_logger.py` | Append-only audit trail: every prompt, tool call, LLM call (with token usage), state snapshot, and final state per run under `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/`. Provider failures add a `provider_failure` event and a `stopped` run status. |
+| `tradingagents/risk/exposure.py` | Phase B deterministic exposure evaluator: clips opening notionals to the canonical symbol cap, sector cap, gross cap and cash, counting outstanding increasing orders. |
+| `tradingagents/risk/corporate_actions.py` | Persisted corporate-action quarantine (split/ticker change/delisting/non-tradable): fail-closed gate for new exposure, operator+CLEAN release, no TTL. |
+| `tradingagents/dataflows/sec_ir.py` | Official SEC filings (submissions API) and configured company IR pages with honest published/retrieved metadata and per-type freshness. |
+| `tradingagents/execution/context.py` | Shared Trader/Decision position context rendered from the strict `capture_broker_snapshot` path. |
 | `tradingagents/default_config.py` | Single source of defaults; everything is overridable per run. |
 | `webui/` | Dash interface: `layout.py` composes panels from `components/`, `callbacks/` register interaction handlers, `utils/state.py` is the shared app state. Entry: `python run_webui_dash.py`. |
 | `cli/` | Terminal interface: `python -m cli.main`. |
@@ -126,6 +130,16 @@ maximum quantity, no conflicting close order exists, and the paper/safety/lock
 gates pass. Explicit close market orders carry the durable `client_order_id`;
 POST validation/rejection is terminal and POST timeout becomes `UNKNOWN`.
 
+Phase B adds three deterministic gates for exposure-adding orders (verified
+reducing exits keep the Phase A path): the corporate-action quarantine, the
+exposure-cap evaluator (symbol/sector/gross/cash headroom including
+outstanding increasing orders), and — on the recovery path — the same
+quarantine and cap checks recomputed from the fresh snapshot, so a recovered
+resubmit is clipped to currently provable headroom instead of reusing the
+original size. An opening order on an already-held symbol is an exposure
+increase governed by these caps (the Phase A implicit-HOLD shortcut was
+removed per the Phase B contract).
+
 ## Configuration
 
 `tradingagents/default_config.py` is the single source of truth; the WebUI
@@ -133,6 +147,17 @@ and CLI pass overrides per run, and API keys come from `.env` /
 environment (see `env.sample`). This build is paper-only: the trading client
 is hard-locked to `paper=True`, `ALPACA_USE_PAPER=False` fails closed, and
 only the explicit paper endpoint is allowed.
+
+Phase B additions: `analysis_provider/model/backend_url` and
+`decision_provider/model/backend_url` (all empty = legacy quick/deep),
+`llm_max_retries` (0-3, validated at startup), `llm_request_timeout_seconds`
+(applied to the legacy quick/deep clients; in roles mode the Analysis/Decision
+clients use their provider SDK's default per-request timeout — retry count and
+backoff caps still bound every request in both modes),
+`sec_ir_*` and `company_ir_pages` for primary sources,
+`corporate_action_events` for the manual quarantine feed, and
+`max_sector_exposure_pct` + `sector_mapping` (the sector cap is active once a
+mapping exists; unknown sectors then refuse new risk).
 
 ## Testing conventions
 

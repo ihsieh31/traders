@@ -22,9 +22,12 @@ class AnthropicClient(BaseLLMClient):
         if not api_key:
             raise ValueError("Provider 'anthropic' requires ANTHROPIC_API_KEY.")
         llm_kwargs["api_key"] = api_key
-        for key in ("timeout", "max_retries", "max_tokens", "callbacks", "http_client", "http_async_client", "effort"):
+        for key in ("timeout", "max_tokens", "callbacks", "http_client", "http_async_client", "effort"):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+        # Phase B: SDK-level retries pinned to 0; single retry owner is
+        # tradingagents.llm_clients.retry.RetryingLLM.
+        llm_kwargs["max_retries"] = 0
         return NormalizedChatAnthropic(**llm_kwargs)
 
     def validate_model(self) -> bool:

@@ -424,7 +424,10 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertFalse(result["risk_sizing"]["applied"])
         request = broker.submit_order.call_args[0][0]
-        self.assertEqual(float(request.notional), 50_000)
+        # Phase B deterministic exposure cap: the configured 50k opening
+        # notional is clipped to the 25% symbol cap on the 100k equity
+        # account (fail-open sizing still executes; the cap still binds).
+        self.assertEqual(float(request.notional), 25_000)
         self.assertTrue(
             any("risk sizing" in w.lower() for w in result["intent_warnings"])
         )
@@ -492,8 +495,12 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         snapshot.assert_not_called()
-        self.assertTrue(result["hold"])
-        broker.submit_order.assert_not_called()
+        # Phase B: an opening order on an already-held symbol is an exposure
+        # increase governed by the deterministic caps — no implicit HOLD, and
+        # the risk-sizing engine is not consulted for same-target increases.
+        self.assertFalse(result.get("hold", False))
+        self.assertEqual(broker.submit_order.call_count, 1)
+        self.assertNotIn("risk_sizing", result)
 
     def test_default_call_without_risk_params_preserves_legacy_behavior(self):
         import tempfile

@@ -16,7 +16,11 @@ from ..utils.report_context import (
     build_debate_digest,
 )
 from ..utils.structured import bind_structured, invoke_risk_structured_strict
-from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.execution.context import (
+    capture_position_context,
+    render_account_context,
+    render_position_context,
+)
 from tradingagents.prompts import render_prompt
 
 # Import prompt capture utility
@@ -43,52 +47,24 @@ def create_risk_manager(llm, memory, config=None):
         # Get trading mode from config
         allow_shorts = config.get("allow_shorts", False) if config else False
 
-        # Determine live position from Alpaca
-        current_position = AlpacaUtils.get_current_position_state(company_name)
-        state["current_position"] = current_position
-
-        # ---------------------------------------------------------
-        # NEW: Fetch richer live account & position metrics from Alpaca
-        # ---------------------------------------------------------
-        positions_data = AlpacaUtils.get_positions_data()
-        account_info = AlpacaUtils.get_account_info()
-
-        # Build summary for specific symbol
-        position_stats_desc = ""
-        symbol_key = company_name.upper().replace("/", "")
-        for pos in positions_data:
-            if pos["Symbol"].upper() == symbol_key:
-                qty = pos["Qty"]
-                avg_entry = pos["Avg Entry"]
-                today_pl_dollars = pos["Today's P/L ($)"]
-                today_pl_percent = pos["Today's P/L (%)"]
-                total_pl_dollars = pos["Total P/L ($)"]
-                total_pl_percent = pos["Total P/L (%)"]
-
-                position_stats_desc = (
-                    f"Position Details for {company_name}:\n"
-                    f"- Quantity: {qty}\n"
-                    f"- Average Entry Price: {avg_entry}\n"
-                    f"- Today's P/L: {today_pl_dollars} ({today_pl_percent})\n"
-                    f"- Total P/L: {total_pl_dollars} ({total_pl_percent})"
-                )
-                break
-        if not position_stats_desc:
-            position_stats_desc = "No open position details available for this symbol."
-
-        buying_power = account_info.get("buying_power", 0.0)
-        cash = account_info.get("cash", 0.0)
-        daily_change_dollars = account_info.get("daily_change_dollars", 0.0)
-        daily_change_percent = account_info.get("daily_change_percent", 0.0)
-        account_status_desc = (
-            "Account Status:\n"
-            f"- Buying Power: ${buying_power:,.2f}\n"
-            f"- Cash: ${cash:,.2f}\n"
-            f"- Daily Change: ${daily_change_dollars:,.2f} ({daily_change_percent:.2f}%)"
+        # Phase B: the Decision node re-captures a fresh authoritative
+        # snapshot at its own start — holdings may have changed during the
+        # debate. The capture is bound to the account the Trader observed:
+        # an account switch between the two prompts stops the run. Capture
+        # failures raise BrokerAuthorityError; unknown holdings are never
+        # presented as flat. This prompt snapshot never bypasses the
+        # executor's pre-submit revalidation, which takes its own
+        # authoritative snapshot inside the lock.
+        expected_account = state.get("broker_account_id")
+        context = capture_position_context(
+            company_name, expected_account_id=expected_account
         )
-        # ---------------------------------------------------------
-        # END NEW BLOCK
-        # ---------------------------------------------------------
+        position_stats_desc = render_position_context(context)
+        account_status_desc = render_account_context(context)
+
+        current_position = context.side if context.side != "FLAT" else "NEUTRAL"
+        state["current_position"] = current_position
+        state["broker_account_id"] = context.account_id
 
         open_pos_desc = (
             f"We currently have an open {current_position} position in {company_name}."
