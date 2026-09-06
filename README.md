@@ -1,447 +1,272 @@
-# AlpacaTradingAgent: Enhanced Multi-Agent Alpaca Trading Framework
+# Traders：安全可靠執行的多代理 Alpaca Paper 交易框架
 
-> 🚀 **AlpacaTradingAgent** - An independent enhanced version built upon the original TradingAgents framework, specifically designed for Alpaca users who want to test or use AI agents to trade on their Alpaca accounts.
+> **Traders**（本機目錄 `tradingAlpaca`，公開 repo [ihsieh31/traders](https://github.com/ihsieh31/traders)）是一個以 LLM 多代理進行市場分析、並以「安全可靠的自動執行」為核心目標的交易框架。本專案保留 [AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) 的研究與策略系統，重做了最後一哩路：`TradeIntent → Alpaca Paper → broker 真實狀態`。
 >
-> This project is an independent upgrade inspired by the original [TradingAgents](https://github.com/TauricResearch/TradingAgents) framework by Tauric Research, extending it with real-time Alpaca integration, crypto support, automated trading capabilities, and an enhanced web interface.
-> 
-> **Disclaimer**: This project is provided solely for educational and research purposes. It is not financial, investment, or trading advice. Trading involves risk, and users should conduct their own due diligence before making any trading decisions.
+> **Paper-only**：交易客户端被寫死鎖定在 Alpaca Paper API（`paper=True`），整個程式不存在任何 live 下單路徑；設定 `ALPACA_USE_PAPER=False` 或指到非 paper endpoint 一律啟動失敗、零 broker 呼叫。
+>
+> **免責聲明**：本專案僅供教育與研究用途，不構成任何金融、投資或交易建議。交易有風險，任何交易決策請自行審慎評估。
 
-<div align="center">
+快速上手請看 [QUICKSTART.md](QUICKSTART.md)；管線內部細節請看 [ARCHITECTURE.md](ARCHITECTURE.md)；目標、安全規則與完整驗收紀錄請看 [PROJECT_GOALS_AND_STATUS.md](PROJECT_GOALS_AND_STATUS.md)。
 
-🚀 [Enhanced Features](#enhanced-features) | ⚡ [Installation & Setup](#installation-and-setup) | 📦 [Package Usage](#alpacatradingagent-package) | 🌐 [Web Interface](#web-ui-usage) | 📖 [Complete Guide](#complete-guide) | 🤝 [Contributing](#contributing) | 📄 [Citation](#citation)
+---
 
-⏱️ New here? **[QUICKSTART.md](QUICKSTART.md)** — first analysis in ~5 minutes · 🏗️ **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the pipeline works inside
+## 一、專案內容
 
-</div>
+### 1.1 它是什麼
 
-## Enhanced Features
+一支由 LangGraph 驅動的多代理交易系統：五個分析師 + 多空辯論 + 交易員 + 風險團隊共同產出結構化交易決策，再經過一道嚴格的執行層，把決策變成 Alpaca Paper 帳戶上的真實訂單。設計原則是 **fail-closed（出錯即停止，絕不猜測、絕不盲目重送）**——遇到重啟、重複 callback、部分成交、broker timeout、資料過期或本機與 broker 狀態不一致時，系統停止新增風險，而不是繼續交易。
 
-AlpacaTradingAgent introduces powerful new capabilities specifically designed for Alpaca users:
+### 1.2 多代理分析流程
 
-### 🔄 **Real-Time Alpaca Integration (Paper-Only)**
-- **Paper Trading Only**: Direct integration with the Alpaca Paper API for simulated execution; live trading is disabled
-- **No Live Trading Path**: The trading client is hard-locked to `paper=True`; live endpoints fail closed
-- **Margin Trading**: Full support for margin accounts, including short selling capabilities
-- **Portfolio Management**: Real-time portfolio tracking, position monitoring, and order management
-
-### 📈 **Dual Asset Support: Stocks & Crypto**
-- **Multi-Asset Analysis**: Analyze both traditional stocks and cryptocurrencies in a single session
-- **Crypto Format**: Use proper crypto format (e.g., `BTC/USD`, `ETH/USD`) for cryptocurrency analysis
-- **Mixed Portfolios**: Support for mixed symbol inputs like `"NVDA, ETH/USD, AAPL"` for diversified analysis
-- **Dedicated Data Sources**: CoinDesk/CryptoCompare-compatible crypto news and DeFi Llama for fundamental crypto data
-
-### 🤖 **Enhanced Multi-Agent System (5 Agents)**
-- **Market Analyst**: Evaluates overall market conditions and trends
-- **Social Sentiment Analyst**: Analyzes social media sentiment and public opinion
-- **News Analyst**: Monitors and interprets financial news and events
-- **Fundamental Analyst**: Assesses company financials and intrinsic value
-- **Macro Analyst**: Analyzes macroeconomic indicators and Federal Reserve data
-- **Parallel Execution**: All 5 analysts run simultaneously for faster analysis with configurable delays to prevent API overload
-
-### 🧠 **Multi-Provider LLM Runtime**
-- **Current OpenAI Catalog**: Supports GPT-5.6 Sol/Terra/Luna, GPT-5.5, and GPT-5.4; cost-safe defaults remain `gpt-5.4-nano` and `gpt-5.4-mini`
-- **Provider Choice**: Supports OpenAI, local OpenAI-compatible endpoints, Google Gemini, Anthropic Claude, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, and Azure OpenAI
-- **Provider-Specific Controls**: Preserves GPT reasoning controls, Gemini thinking level, Claude effort, custom model IDs, and Azure deployment names
-- **Local Compatibility**: `OPENAI_USE_LOCAL` and `OPENAI_BASE_URL` continue to route core LLM calls to a local OpenAI-compatible backend
-
-### 🔀 **Fixed Analysis / Decision Roles and Bounded LLM Retries (Phase B)**
-- **Two Fixed Roles**: With any `analysis_*` / `decision_*` config key set, one Analysis provider/model serves every research node (five analysts, bull/bear, research manager, trader, risk debators) while the Risk Manager alone uses the Decision provider/model. With no role keys set, the legacy quick/deep split is preserved untouched
-- **Per-Role Isolation**: Provider, model, endpoint and credential resolve per role (role-specific env overrides such as `DECISION_OPENAI_API_KEY`); a cross-provider Decision without an explicit model is a startup config error; explicit role providers are never rewritten by the local-OpenAI switch; secrets never enter the UI store or logs
-- **Bounded Retries**: `llm_max_retries` (integer 0-3) gives first try + at most N retries = at most N+1 requests per logical invocation, covering plain, structured-output and tool-bound paths through one retry owner; transient failures (timeout/connection/429/5xx) retry with capped backoff, permanent failures (401/403/invalid) stop immediately
-- **Run-Stop Semantics**: A provider access failure stops the whole run (marked `stopped` in the run log with role/provider/model/attempts), never degrades into a normal `NO_TRADE`, and halts auto dispatch for the round until an operator restarts; Risk Manager schema/bind/validation failures still emit the Phase A strict `INVALID/NO_TRADE` with zero broker calls
-
-### 🌍 **Full-Market Auto Screening and the Daily Top20 (Phase C)**
-- **Third Fixed LLM Role (Screening)**: With `auto_screening_enabled` on, an independently configured `screening_provider` / `screening_model` / `screening_backend_url` ranks candidates — required values, never inherited from the Analysis/global settings, credential via `SCREENING_<PROVIDER>_API_KEY`; with screening off, no Screening client is ever built and the manual watchlist mode is untouched
-- **Deterministic Eligibility & Top40**: One full-market scan per US trading day pulls every ACTIVE tradable US_EQUITY asset (paginated; no search-limit or fallback lists), validates 61 complete daily bars against the shared NY calendar (no unclosed same-day bar, no missing sessions, no forward-fill, one explicit adjustment policy), then applies the fixed gates (close ≥ $5, 20-day mean dollar volume ≥ $20M) and the cross-sectional percentile formula (adv20/r20/r60/inverse-vol20/volume_ratio → 0-100 score) with symbol tie-breaks; fewer than 20 eligible candidates stops the round (`INSUFFICIENT_CANDIDATES`)
-- **Strict Top20 Contract**: The Screening role sees only the compact factor table (never holdings, cash, or news) and must return exactly 20 entries with unique ranks 1-20, input-member symbols, finite 0-100 scores and factor-grounded reasons; sector diversity (max 5 per sector) applies only when the P2 sector mapping covers every candidate (`INSUFFICIENT_SECTOR_CAPACITY` otherwise, explicit `sector_diversity_applied=false` degradation when metadata is missing); invalid outputs fail the round with no repair request
-- **Top20 ∪ Holdings**: Each round re-fetches fresh broker positions and analyzes `Top20 ∪ holdings` once per symbol; quarantined/non-tradable holdings get an explicit blocked-review reason instead of fabricated quotes; crypto and other asset classes keep their existing management path; only today's validated Top20 members may open new exposure — enforced inside the single execution entry (the Phase C entry gate), so direct callers and checkpoint resumes cannot bypass it, while verified reducing exits keep the Phase A path
-- **Daily Selection Cache**: One small JSON file (atomic replace, stdlib flock for concurrent first scans) stores trading date, as_of, role/model, config fingerprint, Top40 features and the validated Top20 — no credentials; next-day, corrupted, future-dated or configuration-changed caches are treated as absent; a manual refresh is an explicit new scan that invalidates the old list first, so a failed refresh can never fall back; any screening-stage or provider failure stops the whole round and the scheduler (no downstream analysis, zero new mutations)
-
-### 🧾 **Structured Decisions, Memory, and Resume**
-- **Executable Final Action**: Final decisions preserve `BUY/HOLD/SELL` or `LONG/NEUTRAL/SHORT` for Alpaca execution
-- **Advisory Ratings**: Upstream-style ratings are treated as metadata only and never directly trigger Alpaca orders
-- **Structured Output Fallback**: Research Manager, Trader, and Risk Manager use structured schemas where supported and gracefully retry as free text otherwise
-- **Persistent Decision Log**: Completed decisions are written to a markdown memory log and later resolved with realized returns and reflections
-- **Checkpoint Resume**: Optional per-symbol SQLite checkpoints allow failed LangGraph runs to resume while successful runs clean up automatically
-- **Safe Paths**: Report, cache, checkpoint, and log paths use safe ticker components, including crypto symbols like `BTC/USD -> BTC_USD`
-
-### ⚡ **Automated Trading & Scheduling**
-- **Market Hours Trading**: Automatic execution during market hours
-- **Scheduled Analysis**: Configurable recurring analysis every N hours
-- **Auto-Execution**: Optional automatic trade execution based on agent recommendations
-- **Smart Scheduling**: Respects market hours for different asset classes
-- **Fail-Closed Recovery**: Auto-trading starts only after durable orders are recovered and the Alpaca Paper account reconciles `CLEAN`
-
-### 🌐 **Advanced Web Interface**
-- **Multi-Symbol Dashboard**: Analyze and trade multiple symbols simultaneously
-- **Progress Tracking**: Real-time progress table showing analysis status for each symbol
-- **Interactive Charts**: Live Alpaca data integration with technical indicators
-- **Tabbed Reports**: Organized analysis reports with easy navigation
-- **Chat-Style Debates**: Visualize agent debates as conversation threads
-- **Position Management**: View current positions, recent orders, and liquidate positions directly from UI
-- **Model Configuration**: Choose provider, model, provider-specific parameters, output language, and checkpoint resume from the UI
-
-## Complete Guide
-
-For an in-depth, step-by-step walkthrough of using the AlpacaTradingAgent web UI for automated trading, check out the complete guide on Dev.to:
-
-* **[Complete Guide: Using AlpacaTradingAgent Web UI for Automated Trading](https://dev.to/aarontrng/complete-guide-using-alpacatradingagent-web-ui-for-automated-trading-3k78)**
-
-## AlpacaTradingAgent Framework
-
-AlpacaTradingAgent is a multi-agent trading framework that mirrors the dynamics of real-world trading firms. By deploying specialized LLM-powered agents working collaboratively, the platform evaluates market conditions across multiple asset classes and executes informed trading decisions through the Alpaca API.
-
-<p align="center">
-  <img src="assets\schema.png" style="width: 100%; height: auto;">
-</p>
-
-> AlpacaTradingAgent framework is designed for research and educational purposes. Trading performance may vary based on many factors, including the chosen backbone language models, model temperature, trading periods, the quality of data, and other non-deterministic factors. [It is not intended as financial, investment, or trading advice.](https://tauric.ai/disclaimer/)
-
-Our enhanced framework decomposes complex trading tasks into specialized roles while providing real-time market connectivity and execution capabilities.
-
-### Enhanced Analyst Team (5 Agents)
-- **Market Analyst**: Evaluates overall market conditions, sector trends, and market sentiment indicators
-- **Social Sentiment Analyst**: Analyzes Reddit, OpenAI web-search sentiment, and public market narratives
-- **News Analyst**: Monitors financial news, earnings announcements, and global events that impact markets
-- **Fundamental Analyst**: Evaluates company financials, earnings reports, and intrinsic value calculations
-- **Macro Analyst**: Analyzes Federal Reserve data, economic indicators, and macroeconomic trends using FRED API
-
-### Researcher Team
-- Comprises both bullish and bearish researchers who critically assess the insights provided by the Analyst Team. Through structured debates, they balance potential gains against inherent risks, now with enhanced support for both equity and crypto markets.
-
-### Trader Agent
-- Composes reports from analysts and researchers to make informed trading decisions. Determines timing, magnitude, and direction (long/short) of trades with direct execution through Alpaca API.
-
-### Risk Management and Portfolio Manager
-- Continuously evaluates portfolio risk across stocks and crypto assets. Monitors margin requirements, position sizes, and overall portfolio exposure. Provides real-time risk assessment and position management through the Alpaca integration.
-
-## Installation and Setup
-
-### Installation
-
-Clone AlpacaTradingAgent:
-```bash
-git clone https://github.com/huygiatrng/AlpacaTradingAgent.git
-cd AlpacaTradingAgent
+```
+WebUI / CLI
+  → Market / Social / News / Fundamentals / Macro 五分析師（可平行執行）
+  → Bull / Bear 研究員辯論 → Research Manager
+  → Trader → Risky / Safe / Neutral 風險辯論 → Risk Manager
+  → 結構化 TradeIntent（BUY/HOLD/SELL 或 LONG/NEUTRAL/SHORT）
+  → 倉位 sizing + 安全護欄
+  → 單一執行入口 → Alpaca Paper 下單
 ```
 
-Install dependencies:
+- **資產支援**：美股與加密貨幣（加密貨幣使用 `BTC/USD`、`ETH/USD` 斜線格式），可混合輸入如 `NVDA, ETH/USD, AAPL`。
+- **LLM 多提供者**：OpenAI、本地 OpenAI 相容端點（LM Studio / Ollama / vLLM）、Google Gemini、Anthropic Claude、xAI、MiniMax、DeepSeek、Qwen、GLM、OpenRouter、Azure OpenAI；保留 GPT reasoning 控制、Gemini thinking level、Claude effort 等提供者專屬參數。
+- **記憶與反思**：完成的決策寫入 markdown 記憶檔，之後以已實現報酬回結；失敗的 LangGraph run 可用 SQLite checkpoint 斷點續跑。
+- **周邊完整**：WebUI 儀表板（多標的進度表、互動圖表、聊天式辯論、持倉管理）、CLI、回測、每日報告、Telegram/webhook 告警、chaos 測試與 CI。
+
+### 1.3 執行與風控架構（本專案的核心重做）
+
+所有下單都必須經過**單一執行入口** `ExecutionService.execute`，其他模組不得直接呼叫 broker API。執行層包含：
+
+- **兩層冪等**：分析層 `decision_id` 唯一（同一份分析只會建立一次執行 intent）＋ broker 層 deterministic `client_order_id` 唯一（重啟後沿用原 ID，不產生新邏輯訂單）。
+- **Durable outbox**：stdlib SQLite 三張表（`execution_intents` / `orders` / `fills`），先在同一個 transaction 內 commit intent 與 PENDING 訂單、commit 成功後才送單。三個 crash 點（commit 前／commit 後送單前／送單後回寫前）都有明確恢復語義，最後一種以 `client_order_id` 向 broker 查找後 adopt。
+- **訂單狀態機**：`PENDING → SUBMITTING → ACCEPTED → PARTIAL → FILLED`，含 `UNKNOWN`（timeout 下不明結果）的 bounded lookup 恢復；`UNKNOWN` 未解決前帳戶保持 `PAUSED`。
+- **固定 broker retry 政策**：唯讀 GET 最多 3 次短退避後 fail-closed；POST 被拒不重試；POST timeout 先標 `UNKNOWN` 再查詢，不直接重送。
+- **BrokerSnapshot 唯一權威**：account、positions、orders、fills、cash 一律以即時快照為準，本機 ledger、memory、checkpoint 都不能覆寫 broker 事實。只有 reconciliation `CLEAN` 才能新增風險；持倉不符、重複 ID、未解決部分成交等一律 `PAUSED`。
+- **新鮮度 gate 與單一執行鎖**：account/position/order/quote 有 TTL；以 Alpaca account ID 為 key 的 OS 層執行鎖，第二個 process 拿不到鎖立即退出。
+- **降風險平倉例外**：已驗證的減持 exit 在 broker 即時確認持倉後仍可執行。
+
+### 1.4 LLM 固定角色與有界重試
+
+- **Analysis / Decision 兩角色分離**：設定任一 `analysis_*` / `decision_*` key 後，Analysis provider/model 服務所有研究節點（五分析師、多空、research manager、trader、風險辯論），Decision 只服務 Risk Manager。每個角色獨立解析 provider/model/endpoint/credential（如 `DECISION_OPENAI_API_KEY`），跨 provider 缺 model 為啟動期錯誤，機密不進 UI store 與 log。
+- **有界重試**：`llm_max_retries`（0–3）＝每個邏輯呼叫最多 N+1 次請求；暫時性錯誤（timeout/連線/429/5xx）封頂退避重試，永久性錯誤（401/403）立即停。provider 存取失敗整輪標記 `STOPPED` 並停止自動排程，絕不偽裝成正常 `NO_TRADE`。
+- **選配 Analysis failover**：設定 `analysis_fallback_provider/model` 後，Primary 暫時性失敗可在共享重試預算內轉試 Fallback（不回彈、永久錯誤不 failover），切換記錄無機密 audit 事件。
+
+### 1.5 全市場自動選股（Screening → Top20）
+
+開啟 `auto_screening_enabled` 後，每個美股交易日：
+
+```
+Alpaca 全量 ACTIVE tradable US_EQUITY（分頁，無 fallback 名單）
+  → 61 根完整日 K 驗證（NY 交易日曆、無前補、單一 adjustment 政策）
+  → 確定性門檻：close ≥ $5、20 日均額 ≥ $20M
+  → 跨截面百分位公式（adv20/r20/r60/反波動/volume_ratio）→ Top40
+  → 獨立 Screening LLM 角色 → 嚴格 schema 驗證的 Top20
+  → Top20 ∪ 現有持股（每輪重取）→ 深度分析
+  → 只有當日已驗證 Top20 成員可開新倉（entry gate 內嵌於執行入口）
+```
+
+- Screening 角色只看 compact 因子表（看不到持倉、現金與新聞），必須回傳恰 20 筆、rank 1–20 連續唯一、輸出成員、有限 0–100 分數、基於因子的理由；任何不合法輸出整輪停止，零修補請求、零下游。
+- 每日選股結果存於小型 JSON cache（原子寫入、flock 防雙執行者、SHA-256 自雜湊完整性密封）；隔日/損毀/未來時間戳/設定變更的 cache 視同不存在。人工 refresh 失敗先刪 cache、絕不回退舊名單。
+- 交易日曆以 Alpaca 官方 `get_calendar` 為權威；bars 固定 SIP feed、無 IEX fallback。
+
+### 1.6 30 天無人值守 Paper 觀察（Phase D）
+
+單一指令：
+
 ```bash
+python -m cli.main long-run
+```
+
+- 30 個日曆天、僅美股交易日（權威 Alpaca 日曆；early close 於收盤前 30 分鐘執行）；首次執行互動補齊設定、唯讀 preflight，並要求一次明確的 Paper-test 授權才進入 `RUNNING`。
+- Crash/重啟後重跑同一指令即恢復原觀察窗口，不重複下單、每個 session 至多執行一次；process 離線期間錯過的 session 記為 `MISSED_PROCESS_DOWN`，絕不以過期分析或補單回填。
+- 硬性安全/provider 失敗會停止觀察並產出部分報告（最終報告：`~/.tradingagents/long_run/runs/<run_id>/final_report.{md,json}`）。
+
+### 1.7 目錄導覽
+
+```
+tradingagents/
+  agents/            分析師、研究員、trader、risk 節點與結構化 schema
+  dataflows/         Alpaca/Finnhub/FRED/Reddit/SEC-IR/加密貨幣等資料源、市場日曆
+  graph/             LangGraph trading graph
+  llm_clients/       多提供者客戶端、固定角色（roles）、有界重試（retry）
+  execution/         單一執行入口、durable outbox、broker authority、auto-trade 準備
+  screening/         全市場 universe、指標公式、Top20 LLM 契約、cache、entry gate
+  risk/              exposure headroom、corporate-action quarantine
+  portfolio/         相關性、regime、倉位上限
+  long_run.py        Phase D 30 天觀察編排
+  prompts/templates/ 模型提示詞（可外部覆寫 TRADINGAGENTS_PROMPT_DIR）
+webui/               Dash WebUI；cli/ 互動式 CLI
+tests/               離線確定性測試套件（無網路、無真實金鑰）
+```
+
+---
+
+## 二、當前成果
+
+開發採 **Gate 制 + 每次 fresh read-only 獨立驗收**（驗收不得修檔；修復後重新 fresh acceptance），每階段都有離線確定性測試、對抗 PoC 與真實 Paper E2E 證據分開報告。
+
+| 階段 | 內容 | 狀態 |
+|---|---|---|
+| Phase A（P1） | 安全可靠的 Paper 執行：paper-only hard lock、strict TradeIntent、兩層冪等、durable outbox、訂單狀態機與 UNKNOWN 恢復、BrokerSnapshot 權威、三段 reconciliation、新鮮度 gate、單一執行鎖 | **Accepted**（2026-09-04） |
+| Phase B（P2） | 策略與資料品質：SEC filing/公司 IR 第一手來源、corporate-action 隔離（quarantine）、sector 曝險上限、Analysis/Decision 雙角色、LLM 有界重試與 run-stop、Trader/Risk Manager 的 fresh broker 持股 context、exposure headroom 裁切 | **Accepted**（2026-09-05，B01–B24 全 Pass） |
+| Phase C（P3） | 全市場自動選股：ACTIVE US_EQUITY 全量 universe、確定性 Top40、獨立 Screening 角色與嚴格 Top20 契約、Top20 ∪ 持股深度分析、每日 selection cache（含完整性密封）、fail-closed entry gate、權威交易日曆與 SIP feed | **Accepted**（2026-09-05，C01–C23 全 Pass；F1、M1 修復後複驗通過） |
+| Phase D | 30 天無人值守 Paper 觀察編排（`long-run`） | 已實作、離線測試全綠（尚未列入已驗收紀錄） |
+
+**執行驗證證據**：Phase A.2 曾於一次性真實 Alpaca Paper 帳戶完成完整 E2E——paper endpoint 驗證 → durable commit → 真實送單 → broker 成交 → 本地 adopt 同一 broker_order_id → reconcile `CLEAN` → 已驗證平倉 → 帳戶 flat、零 open orders。
+
+**離線測試現況**（2026-09-06，含工作樹中 Phase D 變更）：
+
+```bash
+python -m pytest tests/
+# 645 passed, 177 subtests passed
+```
+
+套件完全離線確定性（無網路、無真實金鑰），乾淨 clone 即可通過。
+
+**尚未完成 / 已知限制**：
+
+- 長期 Paper observation（小 notional）尚未開始；啟用長期無人值守 Paper 自動交易前必須完成，且需使用者另行明確授權——已驗收的 build 不會自行啟用交易。
+- 離線驗收只證明 mock 鏈路與 fail-closed 語義；真實 Alpaca universe/bars 資料品質、真實 Screening vendor 輸出品質尚未驗證。
+- 少量非阻擋維修項（死設定鍵 `llm_retry_backoff_max_seconds`、`ScreeningDeps.llm_factory` 死欄位等）留待一般維修。
+
+---
+
+## 三、安裝與配置
+
+### 3.1 環境需求
+
+- Python **≥ 3.10**（建議 3.12；本專案以 3.12 venv 驗證）
+- 一組免費的 [Alpaca](https://alpaca.markets) Paper API 金鑰
+- 一個 LLM 提供者的 API 金鑰
+
+### 3.2 安裝
+
+```bash
+git clone https://github.com/ihsieh31/traders.git
+cd traders
+python -m venv .venv
+# Windows: .venv\Scripts\activate   macOS/Linux:
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Required APIs Configuration
+### 3.3 配置 API 金鑰
 
-For full functionality including real-time trading, you'll need to set up the following API keys:
-
-1. **Copy the sample environment file**:
-   ```bash
-   cp env.sample .env
-   ```
-
-2. **Edit the `.env` file** with your API keys:
-
-#### Essential APIs
-- **Alpaca API Keys** (Required for paper trading):
-  - Sign up at [Alpaca Markets](https://app.alpaca.markets/signup)
-  - Get your Paper API key and secret from the dashboard
-  - Keep `ALPACA_USE_PAPER=True` (paper-only; `False` fails closed, no live path exists)
-
-- **OpenAI API Key** (Default LLM provider and OpenAI web-search tools):
-  - Sign up at [OpenAI Platform](https://platform.openai.com/api-keys)
-  - Default models are `gpt-5.4-nano` and `gpt-5.4-mini`
-
-#### LLM Provider APIs
-Set `LLM_PROVIDER` in `.env`, the CLI, or the WebUI. Supported providers include:
-- **OpenAI**: `OPENAI_API_KEY`
-- **Local OpenAI-compatible**: `OPENAI_USE_LOCAL=true`, `OPENAI_BASE_URL`, optional `OPENAI_API_KEY`
-- **Google Gemini**: `GOOGLE_API_KEY`
-- **Anthropic Claude**: `ANTHROPIC_API_KEY`
-- **xAI Grok**: `XAI_API_KEY`
-- **MiniMax**: `MINIMAX_API_KEY` (defaults to `https://api.minimax.io/v1`)
-- **DeepSeek**: `DEEPSEEK_API_KEY`
-- **Qwen/DashScope**: `DASHSCOPE_API_KEY`
-- **GLM/Zhipu**: `ZHIPU_API_KEY`
-- **OpenRouter**: `OPENROUTER_API_KEY`
-- **Ollama**: no API key by default; configure the backend URL
-- **Azure OpenAI**: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_VERSION`
-
-#### Financial Data APIs
-- **Finnhub API Key** (Required for stock news and data):
-  - Sign up at [Finnhub](https://finnhub.io/register)
-
-- **FRED API Key** (Required for macro analysis):
-  - Get your free key from [FRED](https://fred.stlouisfed.org/docs/api/api_key.html)
-
-#### Crypto Data APIs
-- **CoinDesk/CryptoCompare API Key** (Required for crypto news):
-  - Sign up at [CryptoCompare](https://www.cryptocompare.com/cryptopian/api-keys)
-
-#### Optional APIs
-- **Alpha Vantage API Key** (Optional fallback market data):
-  - Get from [Alpha Vantage](https://www.alphavantage.co/support/#api-key)
-  - Fallback routing is optional and does not replace Alpaca as the primary market data path
-
-#### Runtime Paths
-`env.sample` also documents optional runtime paths:
-- `TRADINGAGENTS_RESULTS_DIR` for report output
-- `TRADINGAGENTS_CACHE_DIR` for cache and checkpoint files
-- `TRADINGAGENTS_MEMORY_LOG_PATH` for persistent decision memory
-
-3. **Restart the application** after setting up your API keys.
-
-> **Note**: Without valid Alpaca API keys, the application will fall back to demo mode without trading capabilities.
-
-### CLI Usage
-
-You can try out the CLI by running:
 ```bash
-python -m cli.main
+cp env.sample .env   # Windows: copy env.sample .env
 ```
 
-The CLI now supports multiple symbols and crypto assets:
-- Single stock: `NVDA`
-- Single crypto: `BTC/USD`
-- Multiple mixed assets: `NVDA, ETH/USD, AAPL, BTC/USD`
-- Provider/model selection, custom model IDs, checkpoint resume, and provider-specific settings are available from the CLI prompts.
+編輯 `.env`。**最低可執行組合**只有兩項：
 
-### Web UI Usage
+| 金鑰 | 取得處 | 必要 |
+|---|---|---|
+| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | [alpaca.markets](https://alpaca.markets) 免費 Paper 帳戶（用 Paper key，不是 live key） | ✅ |
+| `OPENAI_API_KEY`（或改 `LLM_PROVIDER` 用其他提供者） | [platform.openai.com](https://platform.openai.com) | ✅ |
+| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io) — 股票新聞、內部人交易、財報日曆 | 選配 |
+| `FRED_API_KEY` | [FRED](https://fred.stlouisfed.org/docs/api/api_key.html) — 巨觀分析師 | 選配 |
+| `COINDESK_API_KEY` | [CryptoCompare](https://www.cryptocompare.com/cryptopian/api-keys) — 加密貨幣新聞 | 選配 |
+| `ALPHA_VANTAGE_API_KEY` | [Alpha Vantage](https://www.alphavantage.co/support/#api-key) — 選配 fallback 行情源 | 選配 |
+| `SEC_IR_USER_AGENT` | 填入姓名與聯絡方式 — SEC 第一手資料來源的存取政策要求 | 啟用基本面 SEC 來源時填 |
 
-Launch the enhanced Dash-based web interface:
+> **Paper-only**：保持 `ALPACA_USE_PAPER=True`。設為 `False` 或指到 live endpoint 會 fail-closed、零 broker 呼叫，系統不存在 live 下單路徑。
+
+**LLM 提供者**：在 `.env` 設 `LLM_PROVIDER`（支援 `openai`、`local_openai`、`google`、`anthropic`、`xai`、`minimax`、`deepseek`、`qwen`、`glm`、`openrouter`、`ollama`、`azure`），並填對應金鑰（`GOOGLE_API_KEY`、`ANTHROPIC_API_KEY`、`DEEPSEEK_API_KEY`、`ZHIPU_API_KEY` 等，完整清單見 `env.sample`）。本地端點用 `OPENAI_USE_LOCAL=true` + `OPENAI_BASE_URL`（如 LM Studio `http://localhost:1234/v1`）。
+
+**角色與自動選股**：`analysis_*` / `decision_*` 與 screening 開關（`screening_provider` / `screening_model` / `screening_backend_url`）是 **config key，在 WebUI 或 CLI 設定**，環境變數只放角色專屬金鑰覆寫（如 `ANALYSIS_OPENAI_API_KEY`、`DECISION_OPENAI_API_KEY`、`SCREENING_<PROVIDER>_API_KEY`）。LLM 重試次數用 `LLM_MAX_RETRIES`（0–3）。
+
+**執行緒與路徑**（皆選配）：`TRADINGAGENTS_RESULTS_DIR`（報告輸出，預設 `eval_results/`）、`TRADINGAGENTS_CACHE_DIR`、`TRADINGAGENTS_MEMORY_LOG_PATH`（決策記憶檔）、`TRADINGAGENTS_PROMPT_DIR`（外部提示詞覆寫）。
+
+### 3.4 執行
+
+**WebUI**（預設 `http://127.0.0.1:7860`，埠被占用會自動往後找）：
 
 ```bash
 python run_webui_dash.py
+# 常用選項：--port / --share / --server-name / --debug / --max-threads
 ```
 
-Common options:
-- `--port PORT`: Specify a custom port (default: 7860)
-- `--share`: Create a public link to share with others
-- `--server-name`: Specify the server name/IP to bind to (default: 127.0.0.1)
-- `--debug`: Run in debug mode with more logging
-- `--max-threads N`: Set the maximum number of threads (default: 40)
+開啟頁面後：輸入標的（`NVDA, AAPL`、`BTC/USD` 或混合）→ 選擇 LLM 提供者/模型與研究深度 → 按 **Analyze** 觀看五分析師、多空辯論與風險團隊即時串流報告 → 手動執行建議，或開啟自動執行與定期排程分析。
 
-or launch it with Docker:
+**CLI**：
 
 ```bash
-cp env.sample .env
-# Edit .env with your provider, market data, and Alpaca credentials first.
-docker compose up -d --build
+python -m cli.main              # 互動式單次分析
+python -m cli.main long-run     # Phase D：30 天無人值守 Paper 觀察
 ```
 
-This starts a local web server at http://localhost:7860. To use a different
-host port, set `HOST_PORT`, for example `HOST_PORT=7861 docker compose up -d --build`.
+**Docker**：
 
-### Prompt Customization
+```bash
+cp env.sample .env   # 先填好提供者、行情與 Alpaca 憑證
+docker compose up -d --build   # 指定埠：HOST_PORT=7861 docker compose up -d --build
+```
 
-Model-facing prompts live in `tradingagents/prompts/templates`. Edit those
-Markdown templates to tune analyst, researcher, trader, risk, signal extraction,
-and reflection behavior from one place. Templates are grouped by role:
-`analysts/`, `researchers/`, `managers/`, `trader/`, `risk/`, `trading_modes/`,
-`graph/`, and `shared/`.
+### 3.5 驗證安裝與結果位置
 
-To keep custom prompts outside the repo, copy selected templates to another
-folder and set `TRADINGAGENTS_PROMPT_DIR` to that path. Keep the same group path
-for overrides, for example `analysts/market_system.md`. Missing files fall back
-to the bundled templates.
+```bash
+python -m pytest tests/   # 645 passed, 177 subtests passed（離線、無網路）
+```
 
-#### Enhanced Web UI Features
+| 產物 | 位置 |
+|---|---|
+| 報告與完整 audit trail（每個 prompt、tool call、LLM token 用量、最終狀態） | `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/` |
+| 決策記憶檔（每筆最終決策，之後以已實現報酬回結） | `~/.tradingagents/memory/trading_memory.md` |
+| 30 天觀察設定與最終報告 | `~/.tradingagents/long_run/`（`final_report.{md,json}`） |
 
-The web interface offers comprehensive trading and analysis capabilities:
-
-**Multi-Asset Analysis Dashboard**
-- Analyze multiple stocks and crypto assets simultaneously
-- Real-time progress tracking for each symbol
-- Support for mixed portfolios (e.g., `"NVDA, ETH/USD, AAPL"`)
-
-<p align="center">
-  <img src="assets/demo/config_and_run.gif" style="width: 100%; height: auto;">
-</p>
-
-**Paper Trading Integration**
-- View current Alpaca Paper positions and recent orders
-- Execute paper trades directly from the interface
-- Liquidate positions with one-click functionality
-- Real-time portfolio value tracking
-
-<p align="center">
-  <img src="assets/demo/analyst_list.gif" style="width: 100%; height: auto;">
-</p>
-
-**Interactive Charts & Data**
-- Live price charts powered by Alpaca API
-- Technical indicators and analysis overlays
-- Support for both stock and crypto price data
-
-**Enhanced Reporting Interface**
-- Tabbed navigation for different analysis reports
-- Chat-style conversation view for agent debates
-- Progress table showing analysis status for each symbol
-- Downloadable reports and trade recommendations
-
-<p align="center">
-  <img src="assets/demo/reports_and_final_result.gif" style="width: 100%; height: auto;">
-</p>
-
-**Automated Trading Controls**
-- Schedule recurring analysis during market hours
-- Configure auto-execution of trade recommendations
-- Set custom analysis intervals (every N hours)
-- Margin trading controls and risk management
-
-### Paper execution status and safe recovery
-
-The Alpaca account heading shows the last durable execution state and reason.
-`CLEAN` is required for new exposure. `PAUSED` means no new order will be sent;
-common causes are stale/malformed broker facts, a position mismatch, an unknown
-or duplicate order identity, an unresolved partial fill, or another process
-holding the account execution lock.
-
-To recover safely, stop duplicate app processes, confirm the Paper account and
-orders in Alpaca, then restart auto-trading. Startup reuses the durable
-`client_order_id` and reconciles again; do not delete SQLite rows or manually
-change their status to force `CLEAN`. Risk-reducing exits remain available only
-when the broker freshly verifies the position/side/quantity and no conflicting
-close order exists. Snapshot TTL defaults to 30 seconds and quote TTL to 15
-seconds; operators may override them with
-`TRADINGAGENTS_SNAPSHOT_TTL_SECONDS` and
-`TRADINGAGENTS_QUOTE_TTL_SECONDS`.
-
-Phase A.2 passed fresh independent acceptance (2026-09-04): full offline suite
-`347 passed, 158 subtests passed`, adversarial PoC 12/12, and a real Alpaca
-Paper E2E on a disposable paper account (submit → broker fill → adopt →
-reconcile `CLEAN` → verified close → account flat, no open orders). A stable
-observation period on small notional is required before treating the
-build as ready for a long unattended run.
-
-**P2 / P3 status**
-
-P1 corresponds to Phase A, P2 to Phase B, and P3 to Phase C. The completed
-P1 prompt files have been retired; their history remains in Git.
-P2 (SEC/IR primary sources, corporate-action quarantine, sector caps,
-Analysis/Decision roles, bounded LLM retries with run-stop, fresh holdings
-context and deterministic exposure caps) passed fresh independent acceptance
-on 2026-09-05 (**Accepted**). P3 (full-market screening: ACTIVE US_EQUITY
-universe, deterministic Top40, an independent Screening role returning a
-strictly validated Top20, the Top20 ∪ holdings deep-analysis set, the daily
-selection cache and the fail-closed Top20 entry gate) also passed fresh
-independent acceptance on 2026-09-05 (**Accepted**, C01–C23 all Pass);
-the acceptance Minor on cache integrity was remediated the same day with a
-self-hash seal on the selection cache. Follow [the status
-roadmap](PROJECT_GOALS_AND_STATUS.md) for the evidence trail.
-
-Paper observation does not block offline acceptance. It remains required
-before enabling long-running unattended Paper auto-trading, which needs
-separate explicit authorization — the accepted build does not enable
-trading by itself.
-
-**LLM and Runtime Controls**
-- Select OpenAI, local OpenAI-compatible, Google, Anthropic, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, or Azure OpenAI
-- Configure custom model IDs for every major cloud provider and Azure deployment names, so newly released chat models work before the static catalog is refreshed
-- Tune GPT reasoning controls, Gemini thinking level, Claude effort, output language, and checkpoint resume
-
-## AlpacaTradingAgent Package
-
-### Implementation Details
-
-Built with LangGraph for flexibility and modularity. The enhanced version integrates with multiple financial APIs and executes paper-only through Alpaca. We recommend `gpt-5-nano` for the cheapest testing runs or `gpt-5.4-nano` for a newer low-cost default, as the framework makes numerous API calls across all 5 agents.
-
-### Python Usage
+### 3.6 Python API
 
 ```python
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 
-# Initialize with default config
 ta = TradingAgentsGraph(debug=True, config=DEFAULT_CONFIG.copy())
 
-# Analyze a single stock
+# 單一股票
 _, decision = ta.propagate("NVDA", "2024-05-10")
 print(decision)
 
-# Analyze multiple assets including crypto
-symbols = ["NVDA", "ETH/USD", "AAPL"]
-for symbol in symbols:
+# 加密貨幣與混合標的
+for symbol in ["NVDA", "ETH/USD", "AAPL"]:
     _, decision = ta.propagate(symbol, "2024-05-10")
     print(f"{symbol}: {decision}")
 ```
 
-### Custom Configuration
+常用 config：`deep_think_llm` / `quick_think_llm`（模型）、`max_debate_rounds`（辯論輪數）、`online_tools`（即時資料）、`allow_shorts`（做空模式）、`parallel_analyst` 系列延遲（防 API 超載）、`checkpoint_enabled`（失敗 run 斷點續跑）。
 
-```python
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
+### 3.7 常見問題
 
-# Create custom config for enhanced features
-config = DEFAULT_CONFIG.copy()
-config["deep_think_llm"] = "gpt-5.4-mini"  # Balanced current default
-config["quick_think_llm"] = "gpt-5.4-nano"  # New low-cost quick model
-config["quick_llm_params"] = {
-    "reasoning_effort": "low",
-    "text_verbosity": "low",
-    "reasoning_summary": "auto",
-}
-config["deep_llm_params"] = {
-    "reasoning_effort": "medium",
-    "text_verbosity": "medium",
-    "reasoning_summary": "auto",
-}
-config["max_debate_rounds"] = 2  # Increase debate rounds
-config["online_tools"] = True  # Use real-time data
-config["allow_shorts"] = False  # Investment mode: BUY/HOLD/SELL
-config["checkpoint_enabled"] = False  # Enable to resume failed graph runs
-config["memory_log_path"] = "~/.tradingagents/memory/trading_memory.md"
-config["news_global_openai_enabled"] = False  # Macro handles broad global context by default
+| 症狀 | 解法 |
+|---|---|
+| `Alpaca API key or secret not found` | `.env` 未載入或金鑰為空——重查 3.3 步驟。 |
+| Alpaca 回 `unauthorized` | Paper 金鑰過期——重新產生 Paper 金鑰（不支援 live 金鑰）。 |
+| 分析卡在某個分析師 | 通常是 rate limit；降低研究深度或加大 analyst 啟動延遲。 |
+| 加密貨幣標的找不到 | 使用斜線格式 `BTC/USD`，不是 `BTCUSD`。 |
 
-# Parallel execution settings (to avoid API overload)
-config["parallel_analysts"] = True  # Run analysts in parallel (default: True)
-config["analyst_start_delay"] = 0.5  # Delay between starting each analyst (seconds)
-config["analyst_call_delay"] = 0.1  # Delay before making analyst calls (seconds)
-config["tool_result_delay"] = 0.2  # Delay between tool results and next call (seconds)
+### 3.8 Paper 執行狀態與安全恢復
 
-# Initialize with custom config
-ta = TradingAgentsGraph(debug=True, config=config)
+WebUI 的 Alpaca 帳戶狀態顯示最近一次持久化執行狀態：`CLEAN` 才允許新增曝險；`PAUSED` 表示不會送出新單，常見原因包括 broker 快照過期/損毀、持倉不符、未知或重複的訂單識別、未解決的部分成交，或另一個 process 持有執行鎖。
 
-# Analyze with crypto support
-_, decision = ta.propagate("BTC/USD", "2024-05-10")
-print(decision)
-```
+恢復方式：停止重複的 app process → 到 Alpaca 確認 Paper 帳戶與訂單 → 重新啟動自動交易。啟動時會沿用持久化的 `client_order_id` 重新 reconcile；**不要**刪除 SQLite 資料列或手改狀態來強迫 `CLEAN`。快照 TTL 預設 30 秒、報價 TTL 15 秒，可用 `TRADINGAGENTS_SNAPSHOT_TTL_SECONDS` / `TRADINGAGENTS_QUOTE_TTL_SECONDS` 覆寫。
 
-For non-OpenAI providers, switch the provider and model IDs:
+---
 
-```python
-config = DEFAULT_CONFIG.copy()
-config["llm_provider"] = "google"
-config["quick_think_llm"] = "gemini-2.5-flash"
-config["deep_think_llm"] = "gemini-3.1-pro-preview"
-config["google_thinking_level"] = "high"
+## 上游專案
 
-ta = TradingAgentsGraph(debug=True, config=config)
-_, decision = ta.propagate("NVDA", "2024-05-10")
-print(decision)
-```
+本專案為獨立強化版本，源於以下兩個上游專案，感謝原作者的開創性工作：
 
-## Contributing
+- **[TradingAgents](https://github.com/TauricResearch/TradingAgents)**（Tauric Research）——多代理 LLM 金融交易框架的原始出處，本專案的代理架構（分析師 / 研究員 / 交易員 / 風險管理）承襲自此。
+- **[AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent)**（huygiatrng，本機目錄名 `tradingAlpaca` 的由來）——本專案的直接 fork 上游（fork 點 `8d9d770`），在其 Alpaca 整合、多資產支援與 WebUI 基礎上重做執行層。
 
-We welcome contributions from the community! AlpacaTradingAgent is an independent project that builds upon concepts from the original TradingAgents framework, continuously evolving with new features for Alpaca integration and multi-asset support.
+若需引用原始 TradingAgents 研究：
 
-## Acknowledgments
-
-This project is inspired by and builds upon concepts from the original [TradingAgents](https://github.com/TauricResearch/TradingAgents) framework by Tauric Research. We extend our gratitude to the original authors for their pioneering work in multi-agent financial trading systems.
-
-**AlpacaTradingAgent** is an independent project that focuses specifically on providing Alpaca users with a production-ready trading interface, real-time market connectivity, and expanded asset class support while implementing an enhanced multi-agent architecture.
-
-## Citation
-
-Please reference the original TradingAgents work that inspired this project:
-
-```
+```bibtex
 @misc{xiao2025tradingagentsmultiagentsllmfinancial,
-      title={TradingAgents: Multi-Agents LLM Financial Trading Framework}, 
+      title={TradingAgents: Multi-Agents LLM Financial Trading Framework},
       author={Yijia Xiao and Edward Sun and Di Luo and Wei Wang},
       year={2025},
       eprint={2412.20138},
       archivePrefix={arXiv},
       primaryClass={q-fin.TR},
-      url={https://arxiv.org/abs/2412.20138}, 
+      url={https://arxiv.org/abs/2412.20138},
 }
 ```
