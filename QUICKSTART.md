@@ -53,6 +53,30 @@ Open the printed URL (usually `http://127.0.0.1:8050`), then:
 Prefer a terminal? `python -m cli.main` runs the same pipeline
 interactively.
 
+## 3b. 30-day Paper observation (Phase D)
+
+```bash
+python -m cli.main long-run
+```
+
+The first run asks for any missing settings (Analysis/Decision/Screening
+role provider+model, daily run time, trade notional, missing API keys),
+runs a read-only preflight, then asks for one explicit Paper-test
+authorization before entering `RUNNING`.
+
+- Paper only (`ALPACA_USE_PAPER=True`); 30 calendar days, US trading days
+  only (authoritative Alpaca calendar; early closes run at close−30min).
+- The terminal process must stay running. After a crash/reboot, rerunning
+  the same command resumes the original window (no duplicate orders, one
+  session executes at most once). A session missed while the process was
+  down is recorded as `MISSED_PROCESS_DOWN` and is never backfilled with a
+  late (stale) analysis or order.
+- Hard safety/provider failures stop the observation with a partial report
+  instead of silently continuing. A stopped observation is final: rerunning
+  `long-run` starts a new 30-day window, it does not resume the stopped one.
+- Final reports: `~/.tradingagents/long_run/runs/<run_id>/final_report.md`
+  and `final_report.json`.
+
 ## 4. Verify your setup
 
 ```bash

@@ -1301,5 +1301,347 @@ def analyze():
     run_analysis()
 
 
+# ---------------------------------------------------------------------------
+# Phase D: 30-day unattended paper observation
+# ---------------------------------------------------------------------------
+
+_PROVIDER_STANDARD_ENV = {
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "xai": "XAI_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "glm": "ZHIPU_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "azure": "AZURE_OPENAI_API_KEY",
+}
+
+
+def _long_run_env_path() -> str:
+    import os as _os
+
+    return _os.path.join(_os.getcwd(), ".env")
+
+
+def _read_env_file(path: str) -> tuple[list[str], dict[str, str]]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return [], {}
+    values: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        if key:
+            values[key] = value.strip().strip("\"'")
+    return lines, values
+
+
+def _write_env_updates(path: str, updates: dict[str, str]) -> None:
+    import os as _os
+
+    lines, _ = _read_env_file(path)
+    remaining = dict(updates)
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        key = None
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            candidate, _, _ = stripped.partition("=")
+            candidate = candidate.strip()
+            if candidate.startswith("export "):
+                candidate = candidate[len("export "):].strip()
+            key = candidate
+        if key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+    for key, value in remaining.items():
+        out.append(f"{key}={value}")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(out) + "\n")
+    for key, value in updates.items():
+        _os.environ[key] = value
+
+
+def _prompt_secret(label: str) -> str:
+    import getpass as _getpass
+
+    try:
+        value = _getpass.getpass(f"{label} (hidden input): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise typer.Abort()
+    if not value:
+        console.print("[bold red]A value is required; aborting.[/bold red]")
+        raise typer.Abort()
+    return value
+
+
+def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
+    """Prompt only for missing/invalid Phase-D values. Returns (config, secrets)."""
+    import sys as _sys
+
+    from tradingagents.llm_clients.roles import SUPPORTED_PROVIDERS
+
+    if not _sys.stdin.isatty():
+        missing = __import__(
+            "tradingagents.long_run", fromlist=["missing_config_fields"]
+        ).missing_config_fields(existing)
+        if missing:
+            console.print(
+                "[bold red]Missing Phase-D settings "
+                f"({', '.join(missing)}) and no interactive terminal. "
+                "Re-run interactively to configure.[/bold red]"
+            )
+            raise typer.Exit(code=2)
+        return existing, {}
+
+    cfg = dict(existing)
+    secrets: dict[str, str] = {}
+
+    def _ask_provider(role: str) -> None:
+        nonlocal cfg
+        current = (cfg.get(f"{role}_provider") or "").strip()
+        if current in SUPPORTED_PROVIDERS:
+            return
+        console.print(f"[bold]{role.capitalize()} role provider[/bold] (supported: "
+                      + ", ".join(SUPPORTED_PROVIDERS) + ")")
+        while True:
+            value = typer.prompt(f"{role} provider",
+                                 default=current or "").strip()
+            if value in SUPPORTED_PROVIDERS:
+                cfg[f"{role}_provider"] = value
+                return
+            console.print(f"[red]Unsupported provider {value!r}.[/red]")
+
+    def _ask_model(role: str) -> None:
+        nonlocal cfg
+        current = (cfg.get(f"{role}_model") or "").strip()
+        if current:
+            return
+        cfg[f"{role}_model"] = typer.prompt(f"{role} model").strip()
+
+    def _ask_url(role: str) -> None:
+        nonlocal cfg
+        from tradingagents.long_run import PROVIDERS_REQUIRING_URL
+
+        provider = str(cfg.get(f"{role}_provider") or "").lower()
+        current = (cfg.get(f"{role}_backend_url") or "").strip()
+        if provider not in PROVIDERS_REQUIRING_URL:
+            if not current:
+                cfg[f"{role}_backend_url"] = None
+            return
+        if current:
+            return
+        cfg[f"{role}_backend_url"] = typer.prompt(
+            f"{role} backend URL (required for {provider})").strip()
+
+    for _role in ("analysis", "decision", "screening"):
+        _ask_provider(_role)
+        _ask_model(_role)
+        _ask_url(_role)
+
+    if cfg.get("base_trade_notional_usd") is None:
+        while True:
+            raw = typer.prompt("Base trade notional in USD (e.g. 1000)").strip()
+            try:
+                amount = float(raw)
+                if amount > 0:
+                    cfg["base_trade_notional_usd"] = amount
+                    break
+            except ValueError:
+                pass
+            console.print("[red]Enter a positive number.[/red]")
+
+    from tradingagents.long_run import parse_run_time_et
+
+    def _run_time_valid(value) -> bool:
+        try:
+            parsed = parse_run_time_et(str(value or ""))
+        except ValueError:
+            return False
+        return __import__("datetime").time(9, 30) <= parsed <= __import__("datetime").time(16, 0)
+
+    if not _run_time_valid(cfg.get("run_time_et")):
+        # Ask only when missing or invalid; never re-ask a valid value.
+        while True:
+            raw = typer.prompt("Daily run time (ET, HH:MM)",
+                               default=str(cfg.get("run_time_et") or "11:00")).strip()
+            try:
+                parsed = parse_run_time_et(raw)
+                if not (__import__("datetime").time(9, 30) <= parsed
+                        <= __import__("datetime").time(16, 0)):
+                    console.print("[red]Must be within 09:30-16:00 ET.[/red]")
+                    continue
+                cfg["run_time_et"] = raw
+                break
+            except ValueError as exc:
+                console.print(f"[red]{exc}[/red]")
+
+    if not cfg.get("analysts"):
+        console.print("[bold]Analyst team[/bold] (default: all five)")
+        if typer.confirm("Customize analyst selection?", default=False):
+            from cli.utils import select_analysts as _select
+
+            cfg["analysts"] = [a.value for a in _select()]
+        else:
+            cfg["analysts"] = ["market", "social", "news", "fundamentals", "macro"]
+
+    if cfg.get("research_depth") not in (1, 3, 5):
+        choice = typer.prompt("Research depth (Shallow/Medium/Deep)",
+                              default="Medium").strip().lower()
+        cfg["research_depth"] = {"shallow": 1, "deep": 5}.get(choice, 3)
+
+    if not (cfg.get("output_language") or "").strip():
+        cfg["output_language"] = typer.prompt("Output language",
+                                              default="English").strip() or "English"
+
+    # Credentials: one prompt per distinct provider lacking any usable key,
+    # plus Alpaca Paper keys. Secrets go to .env only, never to config.json.
+    import os as _os
+
+    from tradingagents.dataflows.config import get_llm_api_key
+    from tradingagents.llm_clients.roles import _resolve_provider_key
+
+    seen_providers: dict[str, str] = {}
+    for _role in ("analysis", "decision", "screening"):
+        provider = str(cfg.get(f"{_role}_provider") or "").lower()
+        seen_providers.setdefault(provider, _role)
+    for provider, _role in seen_providers.items():
+        if provider in ("local_openai", "ollama"):
+            continue
+        has_key = bool(_resolve_provider_key(provider, _role).strip()
+                       or (get_llm_api_key(provider) or "").strip())
+        env_name = _PROVIDER_STANDARD_ENV.get(provider)
+        if not has_key and env_name and not (_os.getenv(env_name) or "").strip():
+            console.print(f"[bold]Missing API key for provider {provider!r}.[/bold]")
+            secrets[env_name] = _prompt_secret(env_name)
+        if provider == "azure" and not (_os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip():
+            console.print("[bold]Azure OpenAI endpoint required.[/bold]")
+            secrets["AZURE_OPENAI_ENDPOINT"] = typer.prompt(
+                "AZURE_OPENAI_ENDPOINT").strip()
+    if not (_os.getenv("ALPACA_API_KEY") or "").strip():
+        console.print("[bold]Missing Alpaca Paper credentials.[/bold]")
+        secrets["ALPACA_API_KEY"] = _prompt_secret("ALPACA_API_KEY")
+    if not (_os.getenv("ALPACA_SECRET_KEY") or "").strip():
+        secrets["ALPACA_SECRET_KEY"] = _prompt_secret("ALPACA_SECRET_KEY")
+    return cfg, secrets
+
+
+@app.command("long-run")
+def long_run():
+    """Configure, start, or resume the 30-day Paper observation (paper-only)."""
+    import sys as _sys
+    from datetime import date as _date
+    from datetime import datetime as _datetime
+    from datetime import timedelta as _timedelta
+
+    from tradingagents import long_run as lr
+
+    if _sys.version_info < (3, 10):
+        console.print("[bold red]Phase-D requires Python 3.10+.[/bold red]")
+        raise typer.Exit(code=2)
+
+    active = lr.load_active_state()
+    if active is not None:
+        # Resume path: same window, recovery first, no new prompts.
+        try:
+            with lr.runner_lock():
+                pass
+        except lr.RunnerLockBusy:
+            console.print("[bold yellow]A Phase-D runner is already active.[/bold yellow]")
+            console.print(f"run_id: {active.get('run_id')}")
+            console.print(f"status: {active.get('status')}")
+            raise typer.Exit(code=2)
+        active["restart_count"] = int(active.get("restart_count") or 0) + 1
+        lr.save_active_state(active)
+        long_cfg = dict(lr.default_long_run_config())
+        long_cfg.update(active.get("config") or {})
+        runtime = lr.build_runtime_config(long_cfg)
+        console.print(f"[green]Resuming observation {active['run_id']} "
+                      f"(restart #{active['restart_count']}).[/green]")
+        try:
+            with lr.runner_lock():
+                result = lr.run_observation_loop(active, long_cfg, runtime, lr.LongRunDeps())
+        except lr.LongRunStop as exc:
+            console.print(f"[bold red]Observation stopped: {exc.code}: {exc.detail}[/bold red]")
+            raise typer.Exit(code=1)
+        raise typer.Exit(code=0 if result.get("outcome") == "completed" else 1)
+
+    cfg = lr.load_long_run_config()
+    cfg, secrets = collect_long_run_config(cfg)
+    if secrets:
+        _write_env_updates(_long_run_env_path(), secrets)
+        console.print("[green]Saved credentials to .env (never printed back).[/green]")
+    lr.save_long_run_config(cfg)
+    runtime = lr.build_runtime_config(cfg)
+
+    # Read-only preflight before anything is created.
+    try:
+        preflight = lr.run_preflight(cfg, runtime, lr.LongRunDeps())
+    except lr.LongRunStop as exc:
+        console.print(f"[bold red]Preflight failed: {exc.code}: {exc.detail}[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print("\n[bold]Phase-D observation summary (secret-free)[/bold]")
+    console.print(f"Duration: {cfg['duration_calendar_days']} calendar days "
+                  f"| daily at {cfg['run_time_et']} ET "
+                  f"| notional ${float(cfg['base_trade_notional_usd']):,.0f}")
+    console.print(f"Analysts: {', '.join(cfg['analysts'])} "
+                  f"| depth {cfg['research_depth']} | {cfg['output_language']}")
+    for _role in ("analysis", "decision", "screening"):
+        console.print(f"{_role}: {cfg[f'{_role}_provider']}/{cfg[f'{_role}_model']} "
+                      f"endpoint={lr.sanitize_url(cfg.get(f'{_role}_backend_url')) or 'provider default'}")
+    console.print("Mode: paper-only, auto_screening_enabled=True, "
+                  "allow_shorts=False, trading_mode=investment")
+    if not typer.confirm(
+        "Authorize this 30-calendar-day PAPER test? The process must stay "
+        "running (rerun this command to resume after a crash).",
+        default=False,
+    ):
+        console.print("Not authorized; no observation was created.")
+        raise typer.Exit(code=1)
+
+    # Authoritative session list for the window, then create state + RUNNING.
+    eastern = lr.eastern_now()
+    start_day = eastern.date()
+    end_day = start_day + _timedelta(days=int(cfg["duration_calendar_days"]))
+    try:
+        expected = [d.isoformat() for d in lr.fetch_session_dates(start_day, end_day)]
+    except Exception as exc:
+        console.print(f"[bold red]Cannot prove observation sessions: {exc}[/bold red]")
+        raise typer.Exit(code=1)
+    state = lr.new_observation_state(cfg, expected_sessions=expected)
+    manifest = {
+        "run_id": state["run_id"], "created_at": state["started_at"],
+        "starts_at": state["started_at"], "ends_at": state["ends_at"],
+        "config": state["config"], "expected_sessions": expected,
+        "baseline_commit": state["baseline_commit"],
+    }
+    lr.atomic_write_json(lr.run_dir(state["run_id"]) / "manifest.json", manifest)
+    lr.append_jsonl(lr.run_dir(state["run_id"]) / "account_snapshots.jsonl",
+                    {"phase": "startup", **preflight["snapshot"]})
+    lr.log_event(state["run_id"], "observation_created",
+                 {"expected_sessions": len(expected)})
+    lr.save_active_state(state)
+    console.print(f"[green]Observation {state['run_id']} entering RUNNING. "
+                  "No further input is required.[/green]")
+    try:
+        with lr.runner_lock():
+            result = lr.run_observation_loop(state, cfg, runtime, lr.LongRunDeps())
+    except lr.LongRunStop as exc:
+        console.print(f"[bold red]Observation stopped: {exc.code}: {exc.detail}[/bold red]")
+        raise typer.Exit(code=1)
+    raise typer.Exit(code=0 if result.get("outcome") == "completed" else 1)
+
+
 if __name__ == "__main__":
     app()

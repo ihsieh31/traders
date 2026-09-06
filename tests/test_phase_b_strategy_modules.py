@@ -66,13 +66,17 @@ class CorrelationHookCallerTests(unittest.TestCase):
         self.assertEqual(adjusted, 10000.0)
 
     def test_auto_trade_path_wires_the_hook(self):
-        # The WebUI auto-trade path must call the hook (regime scaling and
-        # portfolio sizing both apply to NEW long exposure).
+        # The WebUI auto-trade path delegates to the shared helper, which
+        # must call the hook (regime scaling and portfolio sizing both
+        # apply to NEW long exposure).
         import webui.components.analysis as analysis
+        import tradingagents.execution.auto_trade as auto_trade
 
-        source = inspect.getsource(analysis)
-        self.assertIn("adjust_new_position_notional", source)
-        self.assertIn("regime_risk_multiplier", source)
+        webui_source = inspect.getsource(analysis)
+        self.assertIn("execute_auto_trade", webui_source)
+        helper_source = inspect.getsource(auto_trade)
+        self.assertIn("adjust_new_position_notional", helper_source)
+        self.assertIn("regime_risk_multiplier", helper_source)
 
 
 class KellyStaysOffTests(unittest.TestCase):
@@ -121,10 +125,15 @@ class KellyStaysOffTests(unittest.TestCase):
 
 class RegimeAndMemoryCallerEvidenceTests(unittest.TestCase):
     def test_regime_scaling_is_wired_into_auto_trade(self):
+        import tradingagents.execution.auto_trade as auto_trade
         import webui.components.analysis as analysis
 
-        source = inspect.getsource(analysis.execute_trade_after_analysis)
-        self.assertIn("regime_risk_multiplier", source)
+        helper_source = inspect.getsource(auto_trade.execute_auto_trade)
+        self.assertIn("regime_risk_multiplier", helper_source)
+        # The WebUI keeps no second sizing path: it delegates to the helper.
+        webui_source = inspect.getsource(analysis.execute_trade_after_analysis)
+        self.assertIn("execute_auto_trade", webui_source)
+        self.assertNotIn("regime_risk_multiplier", webui_source)
 
     def test_regime_multiplier_shrinks_hostile_regimes_only(self):
         from types import SimpleNamespace

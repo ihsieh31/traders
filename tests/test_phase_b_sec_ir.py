@@ -118,22 +118,28 @@ class FilingMetadataTests(unittest.TestCase):
             )
 
     def test_published_date_governs_freshness_not_retrieval_time(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            records = _client(tmp).latest_filings("AAPL")
-            by_form = {r.form_type: r for r in records}
-            # The 10-K was filed 2025-11-01 (~308 days old): fresh under the
-            # 500-day window, and retrieval time cannot make it fresher than
-            # that. An artificially long window boundary stays deterministic.
-            self.assertTrue(by_form["10-K"].is_fresh)
-            old_10k = SourceRecord(
-                kind="sec_filing", symbol="AAPL", source="SEC EDGAR",
-                url="https://www.sec.gov/x.htm",
-                published_at="2024-06-01T00:00:00+00:00",
-                retrieved_at=_NOW.isoformat(),  # retrieved seconds ago
-                form_type="10-K",
-                freshness_days=DEFAULT_FRESHNESS_DAYS["10-K"],
-            )
-            self.assertFalse(old_10k.is_fresh)
+        # Freshness is evaluated against the real clock (is_fresh has no
+        # injection point), so fixture dates are relative to "now" to stay
+        # valid regardless of when the suite runs.
+        now = datetime.now(timezone.utc)
+        fresh = SourceRecord(
+            kind="sec_filing", symbol="AAPL", source="SEC EDGAR",
+            url="https://www.sec.gov/x.htm",
+            published_at=(now - timedelta(days=300)).isoformat(),
+            retrieved_at="",  # retrieval time must not matter
+            form_type="10-K",
+            freshness_days=DEFAULT_FRESHNESS_DAYS["10-K"],
+        )
+        self.assertTrue(fresh.is_fresh)
+        old_10k = SourceRecord(
+            kind="sec_filing", symbol="AAPL", source="SEC EDGAR",
+            url="https://www.sec.gov/x.htm",
+            published_at=(now - timedelta(days=600)).isoformat(),
+            retrieved_at=now.isoformat(),  # retrieved seconds ago
+            form_type="10-K",
+            freshness_days=DEFAULT_FRESHNESS_DAYS["10-K"],
+        )
+        self.assertFalse(old_10k.is_fresh)
 
     def test_missing_future_and_unparseable_dates_are_never_fresh(self):
         base = dict(kind="sec_filing", symbol="AAPL", source="SEC EDGAR",
@@ -141,8 +147,11 @@ class FilingMetadataTests(unittest.TestCase):
                     freshness_days=500)
         missing = SourceRecord(published_at=None, retrieved_at="", **base)
         unparseable = SourceRecord(published_at="not-a-date", retrieved_at="", **base)
+        # Relative to the real clock: a fixed "future" date stops being
+        # future as the calendar advances and the assertion silently flips.
         future = SourceRecord(
-            published_at=(_NOW + timedelta(days=1)).isoformat(), retrieved_at="", **base
+            published_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+            retrieved_at="", **base
         )
         for record in (missing, unparseable, future):
             with self.subTest(record=record.published_at):
@@ -174,6 +183,10 @@ class IrPageTests(unittest.TestCase):
                     )
                 ],
                 ir_pages={"AAPL": "https://ir.example.com/apple"},
+                # The fixed fixture date ages past the default 14-day IR
+                # window; widen it — this test pins Last-Modified parsing,
+                # not the freshness window.
+                freshness_days={"ir": 36500},
             )
             record = client.ir_page("AAPL")
             self.assertEqual(record.published_at, "2026-08-28T12:00:00+00:00")

@@ -138,6 +138,7 @@ def generate_daily_report(
     day: Optional[str] = None,
     config: Optional[dict] = None,
     guard=None,
+    extra_header: Optional[List[str]] = None,
 ) -> str:
     """Markdown digest for one trading day, from persisted data only."""
     day = day or date.today().isoformat()
@@ -152,6 +153,10 @@ def generate_daily_report(
 
     runs = _day_runs(config.get("results_dir", "eval_results"), day)
     parts: List[str] = [f"# Daily Trading Report — {day}", ""]
+    for line in extra_header or []:
+        parts.append(f"> {line}")
+    if extra_header:
+        parts.append("")
     for section in (
         _decisions_section(runs),
         _safety_section(guard),
@@ -168,13 +173,16 @@ def write_daily_report(
     output_dir: str = "reports",
     config: Optional[dict] = None,
     guard=None,
+    extra_header: Optional[List[str]] = None,
 ) -> Tuple[str, str]:
     """Write the day's report as Markdown and a simple HTML page.
 
     Returns (markdown_path, html_path).
     """
     day = day or date.today().isoformat()
-    markdown = generate_daily_report(day=day, config=config, guard=guard)
+    markdown = generate_daily_report(
+        day=day, config=config, guard=guard, extra_header=extra_header
+    )
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)

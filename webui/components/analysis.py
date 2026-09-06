@@ -8,7 +8,10 @@ from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.run_logger import get_run_audit_logger
-from tradingagents.execution import ExecutionService
+# Re-exported name: execution itself delegates to the shared helper below,
+# but the single-entry gate test and chaos tests reference/patch
+# ExecutionService through this module.
+from tradingagents.execution import ExecutionService as ExecutionService
 from tradingagents.agents.schemas import trade_intent_action
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
 from webui.utils.state import app_state
@@ -83,53 +86,11 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
 
         print(f"[TRADE] Executing trade for {ticker}: {recommended_action} with ${trade_amount}")
 
-        # Regime-aware sizing: hostile regimes shrink NEW exposure, never
-        # flip the decision. Failure-isolated - any problem keeps the
-        # requested amount untouched.
-        if str(recommended_action).upper() in ("BUY", "LONG"):
-            try:
-                from tradingagents.dataflows.config import get_config
-                from tradingagents.regime import RegimeConfig, regime_risk_multiplier
+        # Shared auto-trade preparation (sizing + single execution entry).
+        # UI-state updates/printing stay here; sizing/execution live in
+        # tradingagents.execution.auto_trade so Phase D tests the same path.
+        from tradingagents.execution.auto_trade import execute_auto_trade
 
-                multiplier = regime_risk_multiplier(
-                    ticker, config=RegimeConfig.from_config(get_config() or {})
-                )
-                if multiplier < 1.0:
-                    trade_amount = trade_amount * multiplier
-                    print(
-                        f"[TRADE] Regime filter scaled {ticker} amount to "
-                        f"${trade_amount:,.0f} (x{multiplier:.2f})"
-                    )
-            except Exception as exc:
-                print(f"[TRADE] Regime sizing unavailable for {ticker}: {exc}")
-
-            # Phase B: wire the portfolio intelligence layer (correlation
-            # penalty, inverse-vol sizing, gross cap) into the auto-trade
-            # path. It only shrinks NEW long exposure; failures keep the
-            # amount untouched.
-            try:
-                from tradingagents.dataflows.config import get_config
-                from tradingagents.portfolio import (
-                    PortfolioLimitsConfig,
-                    adjust_new_position_notional,
-                    gather_portfolio_state_via_alpaca,
-                )
-
-                trade_amount = adjust_new_position_notional(
-                    ticker,
-                    recommended_action,
-                    trade_amount,
-                    gather_state=gather_portfolio_state_via_alpaca,
-                    config=PortfolioLimitsConfig.from_config(get_config() or {}),
-                )
-            except Exception as exc:
-                print(f"[TRADE] Portfolio sizing unavailable for {ticker}: {exc}")
-
-        # Single execution entry (Phase A.1 strict boundary): a missing or
-        # schema-invalid TradeIntent is fail-closed with zero broker calls.
-        # Legacy signal/Markdown/regex fallback is intentionally removed:
-        # display compatibility (recommended_action text) never implies
-        # tradability.
         if not trade_intent:
             print(
                 f"[TRADE] No schema-valid TradeIntent for {ticker}; "
@@ -144,11 +105,18 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
                 "broker_attempted": False,
             }
             return
-        service = ExecutionService()
-        result = service.execute(
+        try:
+            from tradingagents.dataflows.config import get_config
+
+            _auto_config = get_config() or {}
+        except Exception:
+            _auto_config = {}
+        result = execute_auto_trade(
+            ticker=ticker,
             trade_intent=trade_intent,
-            dollar_amount=trade_amount,
+            base_trade_notional_usd=trade_amount,
             allow_shorts=allow_shorts,
+            config=_auto_config,
         )
         # Normalize to the legacy result shape expected below.
         if "actions" not in result:
