@@ -25,11 +25,21 @@ Rules (implementation contract):
   ``DECISION_ANTHROPIC_API_KEY``, ...) are checked before the provider's
   standard key so one vendor can be used with two accounts. Secrets are
   never persisted to UI config, logs, or sample values.
+- Optional Analysis-only failover: when the ``analysis_fallback_provider``
+  / ``analysis_fallback_model`` pair is set (endpoint optional), a second
+  route is resolved for the same intended Analysis model and served by the
+  failover wrapper in ``retry.py``. Any fallback key set without the
+  required pair is a startup config error — failover fails closed. The
+  fallback credential comes from ``ANALYSIS_FALLBACK_<PROVIDER>_API_KEY``
+  before the provider's standard key, and a cross-provider fallback never
+  inherits the Analysis endpoint. Decision and Screening never consume
+  fallback configuration.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -43,6 +53,9 @@ ROLE_CONFIG_KEYS = (
     "analysis_provider",
     "analysis_model",
     "analysis_backend_url",
+    "analysis_fallback_provider",
+    "analysis_fallback_model",
+    "analysis_fallback_backend_url",
     "decision_provider",
     "decision_model",
     "decision_backend_url",
@@ -77,13 +90,16 @@ class RoleSpec:
     provider_explicit: bool
 
     def display_endpoint(self) -> str:
-        """Endpoint safe for display: strips any query or userinfo secrets."""
+        """Endpoint safe for display: strips any query, fragment or userinfo secrets."""
         url = self.backend_url
         if not url:
             return ""
-        # Keep the scheme+host+path only; query strings and userinfo can
-        # carry credentials and must never reach logs or the UI.
-        return str(url).split("?", 1)[0].split("#", 1)[0]
+        # Keep the scheme+host+path only; query strings, fragments and
+        # userinfo (user:password@host) can carry credentials and must never
+        # reach logs or the UI. Redacted userinfo keeps the ***@ marker used
+        # by retry.sanitize_error so operators can see credentials existed.
+        text = str(url).split("?", 1)[0].split("#", 1)[0]
+        return re.sub(r"(?<=://)[^/?#\s]*@", "***@", text)
 
 
 def _clean(value: Any) -> Optional[str]:
@@ -107,7 +123,8 @@ def resolve_role_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve Analysis/Decision roles from a config dict.
 
     Returns ``{"mode": "legacy"}`` or ``{"mode": "roles", "analysis":
-    RoleSpec, "decision": RoleSpec, "analysis_api_key", "decision_api_key"}``.
+    RoleSpec, "decision": RoleSpec, "analysis_api_key", "decision_api_key",
+    "analysis_fallback": RoleSpec | None, "analysis_fallback_api_key"}``.
     Raises RoleConfigError for invalid combinations so startup fails closed.
     """
     values = {key: _clean(config.get(key)) for key in ROLE_CONFIG_KEYS}
@@ -176,6 +193,40 @@ def resolve_role_config(config: Dict[str, Any]) -> Dict[str, Any]:
     if decision_provider == "local_openai":
         decision_backend_url = decision_backend_url or get_openai_base_url()
 
+    # --- Optional Analysis Fallback (Analysis role only) ---
+    # Same intended model, second provider route. None of the three keys
+    # set = failover disabled. Any key set = failover is intentional and
+    # the provider/model pair is required; endpoint stays optional. A
+    # cross-provider fallback never inherits the Analysis endpoint.
+    fb_provider = values["analysis_fallback_provider"]
+    fb_model = values["analysis_fallback_model"]
+    fb_backend = values["analysis_fallback_backend_url"]
+    analysis_fallback: Optional[RoleSpec] = None
+    analysis_fallback_api_key = ""
+    if fb_provider is not None or fb_model is not None or fb_backend is not None:
+        if fb_provider is None or fb_model is None:
+            raise RoleConfigError(
+                "analysis_fallback_provider and analysis_fallback_model are "
+                "both required when any analysis_fallback_* key is set: "
+                "refusing a partially configured failover route"
+            )
+        _validate_provider(fb_provider, "analysis_fallback_provider")
+        fb_backend_url = fb_backend
+        if fb_backend_url is None and fb_provider == analysis_provider:
+            fb_backend_url = analysis_backend_url
+        if fb_provider == "local_openai":
+            fb_backend_url = fb_backend_url or get_openai_base_url()
+        analysis_fallback = RoleSpec(
+            role="analysis_fallback",
+            provider=fb_provider,
+            model=fb_model,
+            backend_url=fb_backend_url,
+            provider_explicit=True,
+        )
+        analysis_fallback_api_key = _resolve_provider_key(
+            fb_provider, "analysis_fallback"
+        )
+
     analysis = RoleSpec(
         role="analysis",
         provider=analysis_provider,
@@ -196,6 +247,8 @@ def resolve_role_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "decision": decision,
         "analysis_api_key": _resolve_provider_key(analysis.provider, "analysis"),
         "decision_api_key": _resolve_provider_key(decision.provider, "decision"),
+        "analysis_fallback": analysis_fallback,
+        "analysis_fallback_api_key": analysis_fallback_api_key,
     }
 
 
@@ -213,9 +266,16 @@ def describe_roles(resolved: Dict[str, Any]) -> str:
         return "legacy quick/deep providers (no role overrides)"
     analysis: RoleSpec = resolved["analysis"]
     decision: RoleSpec = resolved["decision"]
-    return (
+    summary = (
         f"Analysis={analysis.provider}/{analysis.model}"
         f" endpoint={analysis.display_endpoint() or 'provider default'}; "
         f"Decision={decision.provider}/{decision.model}"
         f" endpoint={decision.display_endpoint() or 'provider default'}"
     )
+    fallback: Optional[RoleSpec] = resolved.get("analysis_fallback")
+    if fallback is not None:
+        summary += (
+            f"; AnalysisFallback={fallback.provider}/{fallback.model}"
+            f" endpoint={fallback.display_endpoint() or 'provider default'}"
+        )
+    return summary

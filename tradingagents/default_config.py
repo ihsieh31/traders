@@ -60,6 +60,14 @@ DEFAULT_CONFIG = {
     "analysis_provider": None,
     "analysis_model": None,
     "analysis_backend_url": None,
+    # Optional Analysis-only provider failover for the same intended model:
+    # provider/model required as a pair (endpoint optional) — any subset
+    # fails at startup. Enabled purely by presence of the pair; transient
+    # Analysis provider failures may spend the shared bounded retry budget
+    # on this route. None everywhere = disabled, behavior unchanged.
+    "analysis_fallback_provider": None,
+    "analysis_fallback_model": None,
+    "analysis_fallback_backend_url": None,
     "decision_provider": None,
     "decision_model": None,
     "decision_backend_url": None,

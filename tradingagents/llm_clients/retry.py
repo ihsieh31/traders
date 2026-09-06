@@ -20,6 +20,12 @@ Policy (implementation contract):
   response) are NOT classified here: a successful response is returned
   as-is so strict callers can emit INVALID/NO_TRADE without another model
   request.
+
+The Analysis-only failover siblings at the bottom of this module
+(:class:`FailoverRetryingLLM` and friends) reuse the exact same policy over
+one Primary/Fallback route pair that shares a single request budget. They
+are additive: :class:`RetryingLLM` stays the retry owner for every
+non-failover path.
 """
 
 from __future__ import annotations
@@ -291,3 +297,253 @@ class RetryingLLM(Runnable):
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
+
+
+class _FailoverRetryController:
+    """Shared-budget Primary→Fallback owner for the Analysis role.
+
+    One logical invocation gets exactly ``1 + max_retries`` provider
+    requests, shared between Primary and Fallback — they do NOT each
+    receive the budget. Attempt 1 is always Primary. A transient Primary
+    failure switches every remaining attempt to Fallback (no Primary retry
+    before failover, and no bouncing back: once switched, the invocation
+    stays on Fallback). Permanent failures stop immediately — failover
+    must never hide a misconfiguration or an incompatible request.
+    Selection state is per ``run`` call (per logical invocation), never
+    global, so concurrent invocations cannot affect each other.
+    """
+
+    def __init__(
+        self,
+        *,
+        role: str,
+        primary_provider: str,
+        primary_model: str,
+        fallback_provider: str,
+        fallback_model: str,
+        max_retries: int,
+        on_switch=None,
+    ):
+        self.role = role
+        self.primary_provider = primary_provider
+        self.primary_model = primary_model
+        self.fallback_provider = fallback_provider
+        self.fallback_model = fallback_model
+        self.max_retries = validate_llm_max_retries(max_retries)
+        self.backoff_cap = float(
+            os.getenv("TRADINGAGENTS_LLM_RETRY_BACKOFF_MAX_SECONDS", "4.0")
+        )
+        self.sleep = time.sleep
+        self.on_switch = on_switch  # best-effort audit hook: payload dict -> None
+
+    @property
+    def max_requests_per_invocation(self) -> int:
+        return 1 + self.max_retries
+
+    def _emit_switch(self, trigger_category: str, next_attempt: int) -> None:
+        if self.on_switch is None:
+            return
+        try:
+            self.on_switch(
+                {
+                    "role": self.role,
+                    "from_provider": self.primary_provider,
+                    "from_model": self.primary_model,
+                    "to_provider": self.fallback_provider,
+                    "to_model": self.fallback_model,
+                    "trigger_category": trigger_category,
+                    "attempt": next_attempt,
+                    "max_requests_per_invocation": self.max_requests_per_invocation,
+                }
+            )
+        except Exception:
+            pass  # audit logging must never affect LLM execution
+
+    def run(self, primary_call, fallback_call) -> Any:
+        total = self.max_requests_per_invocation
+        attempt = 0
+        on_fallback = False
+        while attempt < total:
+            attempt += 1
+            provider = self.fallback_provider if on_fallback else self.primary_provider
+            model = self.fallback_model if on_fallback else self.primary_model
+            call = fallback_call if on_fallback else primary_call
+            try:
+                return call()
+            except ProviderFailure:
+                raise
+            except Exception as exc:
+                category = classify_provider_error(exc)
+                if category == "permanent" or attempt >= total:
+                    raise ProviderFailure(
+                        role=self.role,
+                        provider=provider,
+                        model=model,
+                        attempts=attempt,
+                        category=category,
+                        detail=f"{type(exc).__name__}: {exc}",
+                    ) from exc
+                if not on_fallback:
+                    on_fallback = True
+                    self._emit_switch(category, attempt + 1)
+                backoff = min(self.backoff_cap, 0.5 * (2 ** (attempt - 1)))
+                if not math.isnan(backoff) and backoff > 0:
+                    self.sleep(backoff)
+        raise ProviderFailure(
+            role=self.role,
+            provider=self.fallback_provider,
+            model=self.fallback_model,
+            attempts=total,
+            category="transient",
+            detail="retry budget exhausted",
+        )
+
+
+class FailoverRetryingRunnable(Runnable):
+    """Failover-aware structured-output / tool-bound runnable.
+
+    Both route runnables are built from the same schema or tools and share
+    the one request budget owned by :class:`_FailoverRetryController`.
+    Never wrap each side in its own ``RetryingLLM`` — that would double
+    the cap.
+    """
+
+    def __init__(
+        self,
+        primary: Any,
+        fallback: Any,
+        controller: _FailoverRetryController,
+    ):
+        self._primary = primary
+        self._fallback = fallback
+        self._controller = controller
+
+    @property
+    def inner(self) -> Any:
+        return self._primary
+
+    @property
+    def fallback(self) -> Any:
+        return self._fallback
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs) -> Any:
+        if config is not None:
+            return self._controller.run(
+                lambda: self._primary.invoke(input, config, **kwargs),
+                lambda: self._fallback.invoke(input, config, **kwargs),
+            )
+        return self._controller.run(
+            lambda: self._primary.invoke(input, **kwargs),
+            lambda: self._fallback.invoke(input, **kwargs),
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._primary, name)
+
+
+class FailoverRetryingLLM(Runnable):
+    """Analysis-only Primary→Fallback wrapper with one shared retry budget.
+
+    Sibling of :class:`RetryingLLM`, which stays unchanged for every
+    non-failover path. Attempt 1 always goes to Primary; after a transient
+    Primary failure the remaining budget stays on Fallback; permanent
+    failures stop immediately; exhaustion raises :class:`ProviderFailure`.
+    ``with_structured_output`` and ``bind_tools`` build both route runnables
+    with the same schema/tools and share the controller, so every Analysis
+    invocation surface obeys identical rules. Unknown attributes delegate
+    to the Primary inner LLM. Extends
+    :class:`~langchain_core.runnables.Runnable` so existing LCEL chains
+    keep composing.
+    """
+
+    def __init__(
+        self,
+        primary_inner: Any,
+        fallback_inner: Any,
+        *,
+        role: str = "analysis",
+        primary_provider: str,
+        primary_model: str,
+        fallback_provider: str,
+        fallback_model: str,
+        max_retries: int,
+        on_switch=None,
+    ):
+        self._primary = primary_inner
+        self._fallback = fallback_inner
+        self._controller = _FailoverRetryController(
+            role=role,
+            primary_provider=primary_provider,
+            primary_model=primary_model,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            max_retries=max_retries,
+            on_switch=(
+                on_switch if on_switch is not None else self._audit_failover_event
+            ),
+        )
+
+    @property
+    def inner(self) -> Any:
+        return self._primary
+
+    @property
+    def fallback_inner(self) -> Any:
+        return self._fallback
+
+    @staticmethod
+    def _audit_failover_event(payload: dict) -> None:
+        """Best-effort secret-free failover event via the run audit logger.
+
+        Reuses ``RunAuditLogger.log_event`` (arbitrary event types are
+        already persisted); logging failure never affects LLM execution.
+        """
+        try:
+            from tradingagents.run_logger import get_run_audit_logger
+
+            get_run_audit_logger().log_event(
+                event_type="llm_provider_failover", payload=payload
+            )
+        except Exception:
+            pass
+
+    @property
+    def retry_policy(self) -> dict:
+        return {
+            "role": self._controller.role,
+            "primary_provider": self._controller.primary_provider,
+            "primary_model": self._controller.primary_model,
+            "fallback_provider": self._controller.fallback_provider,
+            "fallback_model": self._controller.fallback_model,
+            "max_retries": self._controller.max_retries,
+            "max_requests_per_invocation": self._controller.max_requests_per_invocation,
+            "failover_enabled": True,
+        }
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs) -> Any:
+        if config is not None:
+            return self._controller.run(
+                lambda: self._primary.invoke(input, config, **kwargs),
+                lambda: self._fallback.invoke(input, config, **kwargs),
+            )
+        return self._controller.run(
+            lambda: self._primary.invoke(input, **kwargs),
+            lambda: self._fallback.invoke(input, **kwargs),
+        )
+
+    def with_structured_output(self, schema: Any, **kwargs) -> FailoverRetryingRunnable:
+        return FailoverRetryingRunnable(
+            self._primary.with_structured_output(schema, **kwargs),
+            self._fallback.with_structured_output(schema, **kwargs),
+            self._controller,
+        )
+
+    def bind_tools(self, tools: Any, **kwargs) -> FailoverRetryingRunnable:
+        return FailoverRetryingRunnable(
+            self._primary.bind_tools(tools, **kwargs),
+            self._fallback.bind_tools(tools, **kwargs),
+            self._controller,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._primary, name)

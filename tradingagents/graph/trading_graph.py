@@ -10,7 +10,12 @@ import yfinance as yf
 from langgraph.prebuilt import ToolNode
 
 from tradingagents.llm_clients import create_llm_client
-from tradingagents.llm_clients.retry import ProviderFailure, RetryingLLM, validate_llm_max_retries
+from tradingagents.llm_clients.retry import (
+    FailoverRetryingLLM,
+    ProviderFailure,
+    RetryingLLM,
+    validate_llm_max_retries,
+)
 from tradingagents.llm_clients.roles import describe_roles, resolve_role_config
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -136,7 +141,29 @@ class TradingAgentsGraph:
                 f"[LLM CONFIG] Retry: max {llm_max_retries} retries "
                 f"(<= {1 + llm_max_retries} requests per invocation)"
             )
-            analysis_client = self._build_role_client(analysis_spec, self.role_resolution["analysis_api_key"])
+            fallback_spec = self.role_resolution.get("analysis_fallback")
+            if fallback_spec is None:
+                analysis_client = self._build_role_client(
+                    analysis_spec, self.role_resolution["analysis_api_key"]
+                )
+            else:
+                # Analysis-only failover: one shared request budget across
+                # the Primary and Fallback routes. Decision and Screening
+                # never consume fallback configuration.
+                analysis_client = FailoverRetryingLLM(
+                    self._build_role_inner(
+                        analysis_spec, self.role_resolution["analysis_api_key"]
+                    ),
+                    self._build_role_inner(
+                        fallback_spec, self.role_resolution["analysis_fallback_api_key"]
+                    ),
+                    role="analysis",
+                    primary_provider=analysis_spec.provider,
+                    primary_model=analysis_spec.model,
+                    fallback_provider=fallback_spec.provider,
+                    fallback_model=fallback_spec.model,
+                    max_retries=llm_max_retries,
+                )
             decision_client = self._build_role_client(decision_spec, self.role_resolution["decision_api_key"])
             self.deep_thinking_llm = analysis_client
             self.quick_thinking_llm = analysis_client
@@ -229,9 +256,11 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _build_role_client(self, spec, api_key: str):
-        """Build one role client (Analysis or Decision) with isolated
-        provider/model/endpoint/credential and the bounded retry owner."""
+    def _build_role_inner(self, spec, api_key: str):
+        """Build the unwrapped LLM for one role spec: provider kwargs, model
+        params, client construction. Retry wrapping stays with the caller so
+        the failover path can wrap a Primary/Fallback pair with one shared
+        owner instead of two stacked retry layers."""
         provider = spec.provider
         provider_kwargs = self._get_provider_kwargs(provider)
         if self.callbacks:
@@ -252,10 +281,15 @@ class TradingAgentsGraph:
             model_role="deep",
             **merged_kwargs,
         )
+        return client.get_llm()
+
+    def _build_role_client(self, spec, api_key: str):
+        """Build one role client (Analysis or Decision) with isolated
+        provider/model/endpoint/credential and the bounded retry owner."""
         return RetryingLLM(
-            client.get_llm(),
+            self._build_role_inner(spec, api_key),
             role=spec.role,
-            provider=provider,
+            provider=spec.provider,
             model=spec.model,
             max_retries=self.llm_max_retries,
         )
