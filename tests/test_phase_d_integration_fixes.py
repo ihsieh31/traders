@@ -652,6 +652,26 @@ class NeutralUserAgentTest(unittest.TestCase):
         )
         self.assertEqual(headers["User-Agent"], "my-agent/2.0")
 
+    def test_generic_path_caller_default_headers_survive(self):
+        # Full integration path: OpenAIClient kwargs -> llm_kwargs ->
+        # _endpoint_default_headers -> ChatOpenAI. A caller-supplied
+        # default_headers (including an explicit User-Agent) must reach the
+        # constructed LLM untouched instead of being dropped before the
+        # neutral-UA decision.
+        from tradingagents.llm_clients.openai_client import OpenAIClient
+
+        llm = OpenAIClient(
+            "deepseek-chat",
+            provider="deepseek",
+            api_key="sk-test",
+            default_headers={
+                "User-Agent": "my-agent/2.0",
+                "X-Test-Header": "keep-me",
+            },
+        ).get_llm()
+        self.assertEqual(llm.default_headers["User-Agent"], "my-agent/2.0")
+        self.assertEqual(llm.default_headers["X-Test-Header"], "keep-me")
+
     def test_max_retries_zero_preserved(self):
         from tradingagents.llm_clients.openai_client import OpenAIClient
 

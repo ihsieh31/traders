@@ -114,7 +114,13 @@ class OpenAIClient(BaseLLMClient):
         else:
             llm_kwargs["api_key"] = self.kwargs.get("api_key") or "ollama"
 
-        for key in ("timeout", "callbacks", "http_client", "http_async_client"):
+        for key in (
+            "timeout",
+            "callbacks",
+            "http_client",
+            "http_async_client",
+            "default_headers",
+        ):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
         # Third-party OpenAI-compatible providers are non-official endpoints:
