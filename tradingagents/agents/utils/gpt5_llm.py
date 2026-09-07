@@ -19,6 +19,30 @@ from tradingagents.openai_model_registry import (
 )
 
 
+# Some third-party OpenAI-compatible routers/WAFs block the OpenAI SDK's
+# default User-Agent ("OpenAI/Python ...") with 403 while the same key and
+# body pass with a neutral one. Caller-configured endpoints (explicit
+# base_url) therefore get a neutral UA: the official OpenAI endpoint keeps
+# the SDK default, and an explicit caller User-Agent always wins.
+_NEUTRAL_USER_AGENT = "traders-paper/1.0"
+
+
+def _endpoint_headers(
+    base_url: Optional[str],
+    custom_headers: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, str]]:
+    """Headers for one client construction; neutral UA only on custom endpoints."""
+    if custom_headers and any(k.lower() == "user-agent" for k in custom_headers):
+        # The caller set their own User-Agent; never clobber it.
+        return dict(custom_headers)
+    if not base_url:
+        # Official provider default endpoint: SDK default headers untouched.
+        return dict(custom_headers) if custom_headers else None
+    headers = dict(custom_headers) if custom_headers else {}
+    headers["User-Agent"] = _NEUTRAL_USER_AGENT
+    return headers
+
+
 def get_model_params_for_depth(
     model_name: str,
     research_depth: str,
@@ -47,6 +71,7 @@ class GPT5ChatModel(BaseChatModel):
     model: str = "gpt-5-mini"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    default_headers: Optional[Dict[str, str]] = None
     reasoning_effort: str = "medium"
     verbosity: str = "medium"  # low, medium, high
     summary: str = "auto"  # concise, detailed, auto, none
@@ -71,6 +96,9 @@ class GPT5ChatModel(BaseChatModel):
             client_kwargs["base_url"] = self.base_url
         if self.timeout:
             client_kwargs["timeout"] = self.timeout
+        headers = _endpoint_headers(self.base_url, self.default_headers)
+        if headers:
+            client_kwargs["default_headers"] = headers
         client_kwargs["max_retries"] = 0
         self._client = OpenAI(**client_kwargs) if client_kwargs else OpenAI(max_retries=0)
     
@@ -524,6 +552,7 @@ class GPT5ChatModel(BaseChatModel):
             model=self.model,
             api_key=self.api_key,
             base_url=self.base_url,
+            default_headers=self.default_headers,
             reasoning_effort=self.reasoning_effort,
             verbosity=self.verbosity,
             summary=self.summary,
@@ -570,11 +599,12 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
         max_output_tokens = params.get("max_output_tokens")
         store = bool(params.get("store", False))
         parallel_tool_calls = bool(params.get("parallel_tool_calls", True))
-        
+
         return GPT5ChatModel(
             model=model_name,
             api_key=api_key,
             base_url=base_url,
+            default_headers=_endpoint_headers(base_url, kwargs.get("default_headers")),
             reasoning_effort=reasoning_effort,
             verbosity=verbosity,
             summary=summary,
@@ -604,4 +634,7 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
             chat_kwargs["openai_api_key"] = api_key
         if base_url:
             chat_kwargs["openai_api_base"] = base_url
+        chat_headers = _endpoint_headers(base_url, chat_kwargs.get("default_headers"))
+        if chat_headers:
+            chat_kwargs["default_headers"] = chat_headers
         return ChatOpenAI(**chat_kwargs)

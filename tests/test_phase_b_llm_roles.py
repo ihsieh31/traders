@@ -16,6 +16,23 @@ from tradingagents.llm_clients.roles import (
 )
 
 
+# Ambient repository/user environment (e.g. a root .env with
+# OPENAI_USE_LOCAL=true, OPENAI_BASE_URL, or role credential overrides)
+# leaks into resolution through load_dotenv() + os.getenv and makes these
+# tests non-hermetic. Tests that exercise the local switch or role keys do
+# so with explicit patch.dict below; everything else must see a clean env.
+HERMETIC_ENV_OVERRIDES = {
+    key: "" for key in (
+        "OPENAI_USE_LOCAL",
+        "OPENAI_BASE_URL",
+        "ANALYSIS_OPENAI_API_KEY",
+        "DECISION_OPENAI_API_KEY",
+        "ANALYSIS_FALLBACK_OPENAI_API_KEY",
+        "SCREENING_OPENAI_API_KEY",
+    )
+}
+
+
 def _base_config(**overrides):
     config = DEFAULT_CONFIG.copy()
     config.update(
@@ -34,7 +51,16 @@ def _base_config(**overrides):
     return config
 
 
-class RoleResolutionTests(unittest.TestCase):
+class HermeticRoleTest(unittest.TestCase):
+    """Base class isolating role resolution from ambient env pollution."""
+
+    def setUp(self):
+        env_patcher = patch.dict(os.environ, HERMETIC_ENV_OVERRIDES)
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+
+class RoleResolutionTests(HermeticRoleTest):
     def test_no_role_keys_keeps_legacy_mode(self):
         resolved = resolve_role_config(_base_config())
         self.assertEqual(resolved["mode"], "legacy")
@@ -211,7 +237,7 @@ class RoleGraphWiringTests(unittest.TestCase):
         self.assertEqual(models, {"gpt-5.4-mini", "gpt-5.4-nano"})
 
 
-class RoleKwargsIsolationTests(unittest.TestCase):
+class RoleKwargsIsolationTests(HermeticRoleTest):
     def test_provider_kwargs_do_not_leak_between_roles(self):
         from tradingagents.graph.trading_graph import TradingAgentsGraph
 

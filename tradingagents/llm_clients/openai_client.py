@@ -6,6 +6,20 @@ from langchain_openai import ChatOpenAI
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+from tradingagents.agents.utils.gpt5_llm import _endpoint_headers
+
+
+def _endpoint_default_headers(
+    effective_base_url: Optional[str],
+    custom_headers: Optional[dict] = None,
+) -> Optional[dict]:
+    """Neutral UA on non-official endpoints; None (SDK default) otherwise.
+
+    Thin adapter over :func:`gpt5_llm._endpoint_headers` so the generic
+    OpenAI-compatible path shares one rule with the native clients.
+    """
+    headers = _endpoint_headers(effective_base_url, custom_headers)
+    return headers or None
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -103,6 +117,13 @@ class OpenAIClient(BaseLLMClient):
         for key in ("timeout", "callbacks", "http_client", "http_async_client"):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+        # Third-party OpenAI-compatible providers are non-official endpoints:
+        # some routers/WAFs block the SDK's default "OpenAI/Python" User-Agent
+        # with 403, so they get a neutral one. An explicit caller User-Agent
+        # inside default_headers is never overwritten.
+        llm_kwargs["default_headers"] = _endpoint_default_headers(
+            self.base_url or default_base, llm_kwargs.get("default_headers")
+        )
         # Phase B: SDK-level retries are pinned to 0. The single bounded
         # retry owner is tradingagents.llm_clients.retry.RetryingLLM; an
         # overlapping SDK layer would break the exact request cap.

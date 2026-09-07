@@ -1449,6 +1449,61 @@ def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
         _ask_model(_role)
         _ask_url(_role)
 
+    # Optional Analysis fallback (Phase B failover route). All three keys
+    # are optional overall: an existing complete pair is preserved and never
+    # re-asked; a partial pair is either completed or cleared; when nothing
+    # is set, a yes/no (default no) gates the extra prompts.
+    from tradingagents.long_run import PROVIDERS_REQUIRING_URL as _FB_URL_PROVIDERS
+
+    fb_provider = (cfg.get("analysis_fallback_provider") or "").strip()
+    fb_model = (cfg.get("analysis_fallback_model") or "").strip()
+    fb_url = (cfg.get("analysis_fallback_backend_url") or "").strip()
+    if fb_provider and fb_model and fb_provider in SUPPORTED_PROVIDERS:
+        fb_enabled = True  # complete, valid pair: preserve, never re-ask
+    elif fb_provider or fb_model:
+        fb_enabled = typer.confirm(
+            f"Existing partial Analysis fallback config found "
+            f"(provider={fb_provider or '(none)'}); complete it?",
+            default=True,
+        )
+    else:
+        fb_enabled = typer.confirm(
+            "Enable optional Analysis fallback (a second provider route used "
+            "only when the Analysis role fails)?",
+            default=False,
+        )
+    if fb_enabled:
+        if fb_provider not in SUPPORTED_PROVIDERS:
+            while True:
+                value = typer.prompt(
+                    "Analysis fallback provider",
+                    default=fb_provider or "").strip()
+                if value in SUPPORTED_PROVIDERS:
+                    fb_provider = value
+                    break
+                console.print(f"[red]Unsupported provider {value!r}.[/red]")
+        while not fb_model:
+            fb_model = typer.prompt("Analysis fallback model").strip()
+        if fb_provider in _FB_URL_PROVIDERS and not fb_url:
+            fb_url = typer.prompt(
+                f"Analysis fallback backend URL (required for {fb_provider})").strip()
+        elif fb_url == "" and fb_provider != str(
+            cfg.get("analysis_provider") or ""
+        ).strip().lower():
+            # A cross-provider fallback never inherits the Analysis endpoint;
+            # ask once (Enter = the provider's default endpoint).
+            entered = typer.prompt(
+                "Analysis fallback backend URL (optional, Enter = provider default)",
+                default="").strip()
+            fb_url = entered
+        cfg["analysis_fallback_provider"] = fb_provider
+        cfg["analysis_fallback_model"] = fb_model
+        cfg["analysis_fallback_backend_url"] = fb_url or None
+    else:
+        cfg["analysis_fallback_provider"] = None
+        cfg["analysis_fallback_model"] = None
+        cfg["analysis_fallback_backend_url"] = None
+
     if cfg.get("base_trade_notional_usd") is None:
         while True:
             raw = typer.prompt("Base trade notional in USD (e.g. 1000)").strip()
@@ -1528,6 +1583,32 @@ def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
             console.print("[bold]Azure OpenAI endpoint required.[/bold]")
             secrets["AZURE_OPENAI_ENDPOINT"] = typer.prompt(
                 "AZURE_OPENAI_ENDPOINT").strip()
+
+    # Analysis fallback credential: the resolver accepts
+    # ANALYSIS_FALLBACK_<PROVIDER>_API_KEY or the provider's standard key;
+    # prompt only when neither exists (including keys just collected above).
+    fb_provider_cfg = str(cfg.get("analysis_fallback_provider") or "").lower()
+    if fb_provider_cfg and fb_provider_cfg not in ("local_openai", "ollama"):
+        fb_env_name = _PROVIDER_STANDARD_ENV.get(fb_provider_cfg)
+        fb_has_key = bool(
+            _resolve_provider_key(fb_provider_cfg, "analysis_fallback").strip()
+            or (get_llm_api_key(fb_provider_cfg) or "").strip()
+            or (fb_env_name and (secrets.get(fb_env_name) or "").strip())
+        )
+        if not fb_has_key and fb_env_name:
+            console.print(
+                f"[bold]Missing API key for Analysis fallback provider "
+                f"{fb_provider_cfg!r}.[/bold]"
+            )
+            secrets[fb_env_name] = _prompt_secret(fb_env_name)
+        if (
+            fb_provider_cfg == "azure"
+            and not (_os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
+            and "AZURE_OPENAI_ENDPOINT" not in secrets
+        ):
+            console.print("[bold]Azure OpenAI endpoint required.[/bold]")
+            secrets["AZURE_OPENAI_ENDPOINT"] = typer.prompt(
+                "AZURE_OPENAI_ENDPOINT").strip()
     if not (_os.getenv("ALPACA_API_KEY") or "").strip():
         console.print("[bold]Missing Alpaca Paper credentials.[/bold]")
         secrets["ALPACA_API_KEY"] = _prompt_secret("ALPACA_API_KEY")
@@ -1600,6 +1681,12 @@ def long_run():
     for _role in ("analysis", "decision", "screening"):
         console.print(f"{_role}: {cfg[f'{_role}_provider']}/{cfg[f'{_role}_model']} "
                       f"endpoint={lr.sanitize_url(cfg.get(f'{_role}_backend_url')) or 'provider default'}")
+    if cfg.get("analysis_fallback_provider") and cfg.get("analysis_fallback_model"):
+        console.print(
+            f"analysis_fallback: {cfg['analysis_fallback_provider']}/"
+            f"{cfg['analysis_fallback_model']} "
+            f"endpoint={lr.sanitize_url(cfg.get('analysis_fallback_backend_url')) or 'provider default'}"
+        )
     console.print("Mode: paper-only, auto_screening_enabled=True, "
                   "allow_shorts=False, trading_mode=investment")
     if not typer.confirm(

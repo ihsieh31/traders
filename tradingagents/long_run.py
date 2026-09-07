@@ -240,6 +240,11 @@ def default_long_run_config() -> Dict[str, Any]:
         "decision_provider": None,
         "decision_model": None,
         "decision_backend_url": None,
+        # Optional Analysis-only failover route (Phase B): all three keys
+        # unset means failover stays disabled. Secrets never live here.
+        "analysis_fallback_provider": None,
+        "analysis_fallback_model": None,
+        "analysis_fallback_backend_url": None,
         "screening_provider": None,
         "screening_model": None,
         "screening_backend_url": None,
@@ -412,6 +417,8 @@ def build_runtime_config(
     runtime["quick_think_llm"] = long_cfg.get("analysis_model")
     for key in (
         "analysis_provider", "analysis_model", "analysis_backend_url",
+        "analysis_fallback_provider", "analysis_fallback_model",
+        "analysis_fallback_backend_url",
         "decision_provider", "decision_model", "decision_backend_url",
         "screening_provider", "screening_model", "screening_backend_url",
     ):
@@ -706,11 +713,30 @@ def _default_broker_client() -> Any:
     return get_alpaca_trading_client()
 
 
+# Redacted marker passed to injectable probes; the real probe re-resolves
+# the live credential itself so no live key crosses the probe boundary.
+REDACTED_API_KEY = "***"
+
+
 def _default_llm_probe(
     *, role: str, provider: str, model: str, backend_url: Optional[str],
     api_key: str, max_retries: int,
 ) -> Dict[str, Any]:
-    """One minimal bounded transport probe (tiny prompt, existing retry owner)."""
+    """One minimal bounded transport probe (tiny prompt, existing retry owner).
+
+    Secrets boundary: run_preflight (and any injected probe double) only ever
+    receives the redacted marker. This real probe re-resolves the live key
+    for the exact role itself and never stores or echoes it.
+    """
+    from tradingagents.llm_clients.roles import _resolve_provider_key
+
+    if api_key == REDACTED_API_KEY:
+        api_key = _resolve_provider_key(provider, role)
+    if not api_key:
+        raise LongRunStop(
+            "PREFLIGHT_FAILED",
+            f"no API key for probe role={role} provider={provider}",
+        )
     started = time.monotonic()
     try:
         from tradingagents.llm_clients.factory import create_llm_client
@@ -824,53 +850,45 @@ def run_preflight(
     errors = validate_long_run_config(long_cfg, runtime)
     _check("config_schema", not errors, "; ".join(errors))
 
-    from tradingagents.llm_clients.roles import resolve_role_config
-    from tradingagents.screening.llm import resolve_screening_config
+    from tradingagents.llm_clients.roles import (
+        _resolve_provider_key,
+        resolve_role_config,
+    )
+    from tradingagents.screening.llm import SCREENING_ROLE, resolve_screening_config
 
     roles = resolve_role_config(runtime)
     screening = resolve_screening_config(runtime)
     max_retries = int(runtime.get("llm_max_retries", 3))
 
-    # One transport probe per distinct (provider, model, endpoint) identity;
-    # role configuration itself was still validated independently above.
-    combos: Dict[Tuple[str, str, str], List[str]] = {}
-    specs = {
-        "analysis": roles["analysis"],
-        "decision": roles["decision"],
-        "screening": screening["spec"],
-    }
-    for role_name, spec in specs.items():
-        key = (spec.provider, spec.model, spec.display_endpoint())
-        combos.setdefault(key, []).append(role_name)
+    # One transport probe per role route — never deduped across roles. Two
+    # roles sharing provider/model/endpoint may still resolve different
+    # role-specific credentials (ANALYSIS_*_API_KEY vs DECISION_*_API_KEY vs
+    # ANALYSIS_FALLBACK_*), so every route is verified independently. At
+    # most four tiny probes: far cheaper than a dead role credential being
+    # discovered mid-way through 30 unattended days.
+    probe_routes = [
+        ("analysis", roles["analysis"]),
+        ("decision", roles["decision"]),
+        (SCREENING_ROLE, screening["spec"]),
+    ]
+    if roles.get("analysis_fallback") is not None:
+        probe_routes.append(("analysis_fallback", roles["analysis_fallback"]))
     probe_fn = deps.llm_probe_fn or _default_llm_probe
-    for (provider, model, endpoint), role_names in sorted(combos.items()):
-        role_label = "+".join(role_names)
+    for role_name, spec in probe_routes:
         try:
-            from tradingagents.llm_clients.roles import _resolve_provider_key
-
-            probe_kwargs: Dict[str, Any] = {}
-            if "screening" in role_names and len(role_names) == 1:
-                from tradingagents.screening.llm import SCREENING_ROLE
-
-                api_key = _resolve_provider_key(provider, SCREENING_ROLE)
-            else:
-                api_key = _resolve_provider_key(provider, role_names[0])
-            if not api_key:
+            # Resolve only to prove the credential exists for THIS role; the
+            # probe itself still receives just the redacted marker.
+            if not _resolve_provider_key(spec.provider, role_name):
                 raise LongRunStop(
                     "PREFLIGHT_FAILED",
-                    f"no API key for probe role={role_label} provider={provider}",
+                    f"no API key for probe role={role_name} provider={spec.provider}",
                 )
-            started = time.monotonic()
             result = probe_fn(
-                role=role_label, provider=provider, model=model,
-                backend_url=endpoint or None, api_key="***",
+                role=role_name, provider=spec.provider, model=spec.model,
+                backend_url=spec.backend_url or None, api_key=REDACTED_API_KEY,
                 max_retries=max_retries,
             )
-            # Real probe functions receive the redacted marker above; the
-            # default probe resolves the live key itself. Keep the boundary
-            # explicit: default probe ignores api_key="***" by re-resolving.
-            _ = started
-            checks.append({"name": f"llm_probe:{role_label}", "ok": True,
+            checks.append({"name": f"llm_probe:{role_name}", "ok": True,
                            "detail": str(result)})
         except LongRunStop:
             raise
@@ -878,9 +896,9 @@ def run_preflight(
             from tradingagents.llm_clients.retry import ProviderFailure
 
             if isinstance(exc, ProviderFailure):
-                raise LongRunStop("PREFLIGHT_FAILED", f"llm_probe:{role_label}: {exc}")
+                raise LongRunStop("PREFLIGHT_FAILED", f"llm_probe:{role_name}: {exc}")
             raise LongRunStop(
-                "PREFLIGHT_FAILED", f"llm_probe:{role_label}: {type(exc).__name__}: {exc}"
+                "PREFLIGHT_FAILED", f"llm_probe:{role_name}: {type(exc).__name__}: {exc}"
             )
 
     # Alpaca read-only preflight: paper client, account, positions, calendar,
