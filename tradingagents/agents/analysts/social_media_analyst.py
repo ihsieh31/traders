@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
+from tradingagents.dataflows.interface_utils import analysis_date_mode
 from tradingagents.prompts import load_prompt, render_prompt
 
 # Import prompt capture utility
@@ -20,14 +21,22 @@ def create_social_media_analyst(llm, toolkit):
         company_name = state["company_of_interest"]
         is_crypto = "/" in ticker or "USD" in ticker.upper() or "USDT" in ticker.upper()
         openai_available = toolkit.has_openai_web_search()
+        analysis_mode = analysis_date_mode(current_date)
 
         reddit_tool = toolkit.get_reddit_news if is_crypto else toolkit.get_reddit_stock_info
         tools = [reddit_tool]
-        if toolkit.config["online_tools"] and openai_available:
+        # OpenAI hosted web search is live-only: never offered for a
+        # historical as-of date.
+        openai_sentiment_allowed = (
+            toolkit.config["online_tools"]
+            and openai_available
+            and analysis_mode == "live"
+        )
+        if openai_sentiment_allowed:
             tools.insert(0, toolkit.get_stock_news_openai)
 
         source_labels = ["Reddit"]
-        if toolkit.config["online_tools"] and openai_available:
+        if openai_sentiment_allowed:
             source_labels.insert(0, "OpenAI web-search sentiment")
 
         source_guidance = (
@@ -35,6 +44,13 @@ def create_social_media_analyst(llm, toolkit):
             f" Active sources: {', '.join(source_labels)}."
             + (" Use `get_reddit_news(curr_date)` for crypto context." if is_crypto else " Use `get_reddit_stock_info(ticker, curr_date)` for stock context.")
         )
+        if analysis_mode != "live":
+            source_guidance += (
+                f" Historical as-of {current_date}: OpenAI hosted web search has no"
+                " verified point-in-time cutoff and is unavailable for this date."
+                " If no active source can evidence a claim, state it explicitly as"
+                " 'source unavailable'; never substitute present-day data."
+            )
         system_message = render_prompt(
             "analysts/social_system",
             source_guidance=source_guidance,
@@ -168,37 +184,29 @@ def create_social_media_analyst(llm, toolkit):
                 ).strip()
             )
         
+        # The analyst report is exactly what the tool loop produced. No
+        # separate final-recommendation call exists: analysts never emit
+        # executable actions, and an empty report is handled by the
+        # selected-analyst coverage gate, not patched here.
         analysis_content = (result.content or "").strip()
-        if not analysis_content:
-            analysis_content = (
-                "The analyst did not return a full social narrative. "
-                "Be explicit about that limitation in the final recommendation."
-            )
+        result = AIMessage(content=analysis_content)
 
-        # Ensure we have a final recommendation without replacing tool-grounded evidence.
-        if "FINAL TRANSACTION PROPOSAL:" not in analysis_content:
-            # Create a final recommendation based on the analysis
-            final_prompt = render_prompt(
-                "analysts/social_final_recommendation",
-                ticker=ticker,
-                analysis_content=analysis_content,
-            )
-            
-            # Use a simple chain without tools for the final recommendation
-            final_chain = llm
-            final_result = final_chain.invoke(final_prompt)
-            final_content = final_result.content if hasattr(final_result, 'content') else str(final_result)
-            
-            # Properly combine the analysis with the final proposal
-            combined_content = analysis_content + "\n\n---\n\n## Final Recommendation\n\n" + final_content
-            result = AIMessage(content=combined_content)
-        else:
-            # Analysis already contains final proposal
-            result = AIMessage(content=analysis_content)
-
+        merged_status = "completed" if analysis_content else "failed"
         return {
             "messages": [result],
             "sentiment_report": result.content,
+            "analysis_status": {
+                **(state.get("analysis_status") or {}),
+                "social": merged_status,
+            },
+            "analysis_errors": (
+                {
+                    **(state.get("analysis_errors") or {}),
+                    "social": "social analyst returned an empty report",
+                }
+                if merged_status == "failed"
+                else state.get("analysis_errors") or {}
+            ),
         }
 
     return social_media_analyst_node

@@ -334,40 +334,31 @@ class TradingAgentsGraph:
             return None if base == "BTC" else "BTC-USD"
         return None if ticker.upper() == "SPY" else "SPY"
 
-    def _fetch_return(self, ticker: str, start_date: date, holding_days: int) -> Optional[float]:
-        if datetime.now().date() < start_date + timedelta(days=holding_days):
+    def _fetch_return(self, ticker: str, start_date: date, holding_days: int,
+                      as_of: Optional[date] = None) -> Optional[float]:
+        """Fixed next-open forward asset move; never broker realized P&L."""
+        cutoff = min(as_of or date.today(), date.today())
+        if holding_days < 1 or cutoff <= start_date:
             return None
-
-        symbol = self._ticker_for_yfinance(ticker)
-        start = start_date.isoformat()
-        end = (start_date + timedelta(days=holding_days + 7)).isoformat()
         try:
-            data = yf.download(
-                symbol,
-                start=start,
-                end=end,
-                progress=False,
-                auto_adjust=True,
-                actions=False,
-                threads=False,
-            )
+            data = yf.download(self._ticker_for_yfinance(ticker), start=start_date.isoformat(),
+                               end=cutoff.isoformat(), progress=False, auto_adjust=True,
+                               actions=False, threads=False)
+            if data is None or data.empty or "Open" not in data:
+                return None
+            opens = data["Open"]
+            if hasattr(opens, "columns"):
+                opens = opens.iloc[:, 0]
+            opens = opens[(opens.index.date > start_date) & (opens.index.date < cutoff)].dropna()
+            if len(opens) <= holding_days:
+                return None
+            first, last = float(opens.iloc[0]), float(opens.iloc[holding_days])
+            import math
+            if not all(math.isfinite(v) and v > 0 for v in (first, last)):
+                return None
+            return last / first - 1.0
         except Exception:
             return None
-
-        if data is None or data.empty or "Close" not in data:
-            return None
-
-        close = data["Close"]
-        if hasattr(close, "columns"):
-            close = close.iloc[:, 0]
-        close = close.dropna()
-        if len(close) < 2:
-            return None
-        start_price = float(close.iloc[0])
-        end_price = float(close.iloc[-1])
-        if start_price == 0:
-            return None
-        return (end_price / start_price) - 1.0
 
     def _resolve_memory_log_outcomes(self, ticker: str, trade_date: str) -> None:
         holding_days = int(self.config.get("memory_outcome_holding_days", 5))
@@ -376,9 +367,11 @@ class TradingAgentsGraph:
         except ValueError:
             current_date = date.today()
 
+        from tradingagents.backtest.signals import load_recorded_runs
+        forward_runs = load_recorded_runs(ticker, self.config.get("results_dir", "eval_results"))
         for entry in self.memory_log.get_pending_entries(ticker):
             entry_date_text = entry.get("date")
-            if not entry_date_text:
+            if not entry_date_text or entry_date_text not in forward_runs:
                 continue
             try:
                 entry_date = datetime.strptime(entry_date_text, "%Y-%m-%d").date()
@@ -387,13 +380,13 @@ class TradingAgentsGraph:
             if entry_date >= current_date:
                 continue
 
-            raw_return = self._fetch_return(ticker, entry_date, holding_days)
+            raw_return = self._fetch_return(ticker, entry_date, holding_days, as_of=current_date)
             if raw_return is None:
                 continue
 
             benchmark = self._benchmark_for(ticker)
             benchmark_return = (
-                self._fetch_return(benchmark, entry_date, holding_days)
+                self._fetch_return(benchmark, entry_date, holding_days, as_of=current_date)
                 if benchmark
                 else None
             )
@@ -402,12 +395,11 @@ class TradingAgentsGraph:
                 if benchmark_return is not None
                 else None
             )
-            try:
-                reflection = self.reflector.reflect_on_final_decision(
-                    entry.get("decision", ""), raw_return, alpha_return
-                )
-            except Exception:
-                reflection = "Outcome resolved, but reflection generation failed."
+            reflection = (
+                f"Forward asset move over {holding_days} complete bars: {raw_return:+.1%}. "
+                "This is not strategy realized P&L. No inference of decision quality, "
+                "trade profitability or a missed opportunity is justified without positions, fills and costs."
+            )
             self.memory_log.update_with_outcome(
                 ticker=ticker,
                 trade_date=entry_date_text,
@@ -435,12 +427,12 @@ class TradingAgentsGraph:
         decision was made — not on today's state. Best-effort by design:
         reflection failures must never affect the current analysis run.
         """
-        if not self.config.get("reflection_on_outcome_enabled", True):
+        if not self.config.get("reflection_on_outcome_enabled", False):
             return
         try:
             from tradingagents.run_logger import load_final_state_snapshot
 
-            state = load_final_state_snapshot(ticker, trade_date)
+            state = load_final_state_snapshot(ticker, trade_date, eval_results_dir=self.config.get("results_dir", "eval_results"))
             if not state:
                 return
             alpha_text = (
@@ -449,7 +441,7 @@ class TradingAgentsGraph:
                 else "n/a"
             )
             returns_losses = (
-                f"Realized return over {holding_days} trading days: "
+                f"Forward asset move (NOT broker P&L) over {holding_days} completed bars: "
                 f"{raw_return:+.1%} (alpha: {alpha_text})."
             )
             memories = {
@@ -482,8 +474,9 @@ class TradingAgentsGraph:
         return {
             "market": ToolNode(
                 [
-                    # online tools
-                    self.toolkit.get_alpaca_data,
+                    # Only PIT-safe Alpaca price tools may be registered here:
+                    # get_alpaca_data_report bounds rows at curr_date and gates
+                    # the latest quote to live mode.
                     self.toolkit.get_stockstats_indicators_report_online,
                     # offline tools
                     self.toolkit.get_stockstats_indicators_report,

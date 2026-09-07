@@ -229,7 +229,7 @@ def parse_return_pct(raw) -> Optional[float]:
 
 
 def realized_returns_by_symbol(config: Optional[dict] = None) -> Dict[str, dict]:
-    """Average realized return per symbol from the resolved decision log.
+    """Average explicitly broker-labeled return; hypothetical labels are excluded.
 
     Joins the cost side ("what did analyzing this symbol cost") with the
     outcome side ("what did its decisions actually return").
@@ -239,7 +239,7 @@ def realized_returns_by_symbol(config: Optional[dict] = None) -> Dict[str, dict]
     log = TradingMemoryLog(config or {})
     per_symbol: Dict[str, dict] = {}
     for entry in log.load_entries():
-        if entry.get("pending"):
+        if entry.get("pending") or entry.get("outcome_kind") != "broker_realized_pnl":
             continue
         realized = parse_return_pct(entry.get("raw"))
         if realized is None:

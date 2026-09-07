@@ -66,6 +66,14 @@ _AS_OF = date(2026, 9, 4)
 # ---------------------------------------------------------------------------
 
 
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
+
 def _tmp_dirs():
     root = tempfile.mkdtemp(prefix="phase-c-")
     return root, Path(root) / "cache", Path(root) / "results"
@@ -1262,7 +1270,7 @@ class ExecutionEntryGateTests(unittest.TestCase):
                 action=ExecutableAction(action),
                 confidence="medium",
                 risk_rationale="gate test",
-                required_controls="strict",
+                required_controls="strict", entry_policy=_ready_entry_policy(), stop_loss_price=95,
             ),
         ).model_dump(mode="json")
 
@@ -1293,7 +1301,7 @@ class ExecutionEntryGateTests(unittest.TestCase):
 
         broker = SimpleNamespace(
             get_account=lambda: SimpleNamespace(
-                id="paper-1", equity="100000", cash="80000", buying_power="200000"
+                id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="200000"
             ),
             get_all_positions=lambda: list(state["positions"]),
             get_orders=lambda request=None: list(state["orders"]),

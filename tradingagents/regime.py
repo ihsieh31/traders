@@ -268,15 +268,35 @@ def _load_assessment(
     symbol: str,
     price_loader: Optional[Callable] = None,
     config: Optional[RegimeConfig] = None,
+    *,
+    as_of: str | None = None,
 ) -> Optional[RegimeAssessment]:
     from datetime import date, timedelta
+
+    from tradingagents.dataflows.interface_utils import analysis_date_mode, parse_analysis_date
 
     config = config or RegimeConfig()
     if not config.enabled:
         return None
     loader = price_loader or _default_price_loader()
-    start = (date.today() - timedelta(days=550)).isoformat()
-    prices = loader(symbol, start, None)
+    if as_of is not None:
+        # Historical analysis: window is bounded exactly at the as-of date.
+        # Invalid/future as_of raises rather than silently falling back to
+        # today.
+        analysis_date_mode(as_of)
+        as_of_date = parse_analysis_date(as_of)
+        start = (as_of_date - timedelta(days=550)).isoformat()
+        end = as_of_date.isoformat()
+    else:
+        # Live execution/helper compatibility: bounded at today's Eastern
+        # date; never pass end=None (which would pull data up to present).
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("America/New_York")).date()
+        end = today.isoformat()
+        start = (today - timedelta(days=550)).isoformat()
+    prices = loader(symbol, start, end)
     return classify_regime(prices, config=config, symbol=symbol)
 
 
@@ -284,10 +304,12 @@ def regime_report_block(
     symbol: str,
     price_loader: Optional[Callable] = None,
     config: Optional[RegimeConfig] = None,
+    *,
+    as_of: str | None = None,
 ) -> str:
     """Markdown regime block for the market report; '' when unavailable."""
     try:
-        assessment = _load_assessment(symbol, price_loader, config)
+        assessment = _load_assessment(symbol, price_loader, config, as_of=as_of)
         if assessment is None or assessment.label == "unknown":
             return ""
         return assessment.to_markdown()

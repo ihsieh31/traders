@@ -78,6 +78,13 @@ class AgentState(MessagesState):
     ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
     macro_report: Annotated[str, "Report from the Macro Economic Analyst"]
+    analysis_status: Annotated[
+        Dict[str, str],
+        "Per selected analyst completion status: only 'completed' or 'failed'",
+    ]
+    analysis_errors: Annotated[
+        Dict[str, str], "Sanitized failure reason per selected analyst"
+    ]
     report_context: Annotated[
         Dict[str, Any],
         "Structured context package built from all analyst reports",

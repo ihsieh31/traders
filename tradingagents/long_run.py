@@ -1123,6 +1123,10 @@ def run_daily_round(
             f"{recovery.get('reconciliation_reasons')}",
         )
 
+    deadlines = service.enforce_exit_deadlines()
+    if not deadlines.get("success"):
+        raise LongRunStop("DEADLINE_EXIT_UNSAFE", deadlines.get("error", "Deadline exit blocked"))
+
     # Step 2 — pre-round account snapshot.
     try:
         pre_snapshot = capture_account_snapshot(broker_factory())
@@ -1832,6 +1836,13 @@ def aggregate_final_report(
             "absolute_pl": (end_equity - start_equity)
             if start_equity is not None and end_equity is not None else None,
             "total_return": total_return,
+            "return_kind": "unadjusted_account_equity_change",
+            "return_limitations": [
+                "Not adjusted for deposits or withdrawals",
+                "May include positions that existed before the observation",
+                "Not pure strategy attribution",
+                "Not net profitability unless all research and trading costs are included",
+            ],
             "peak_equity": drawdown["peak"], "trough_equity": drawdown["trough"],
             "max_drawdown": drawdown["max_drawdown"],
             "starting_cash": snapshots[0].get("cash") if snapshots else None,
@@ -1950,6 +1961,12 @@ def render_final_markdown(report: Dict[str, Any]) -> str:
         f"- ending equity: {_fmt_usd(acct['ending_equity'])}",
         f"- absolute P/L: {_fmt_usd(acct['absolute_pl'])}",
         f"- total return: {_fmt_pct(acct['total_return'])}",
+    ]
+    if acct.get("return_kind"):
+        lines.append(f"- return kind: {acct['return_kind']}")
+    for limitation in acct.get("return_limitations") or []:
+        lines.append(f"- return limitation: {limitation}")
+    lines += [
         f"- peak equity: {_fmt_usd(acct['peak_equity'])}",
         f"- trough equity: {_fmt_usd(acct['trough_equity'])}",
         f"- maximum drawdown: {_fmt_pct(acct['max_drawdown'])}",

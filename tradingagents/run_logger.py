@@ -83,7 +83,7 @@ class RunAuditLogger:
         self._lock = threading.RLock()
         self._active_runs_by_symbol: Dict[str, str] = {}
         self._active_runs: Dict[str, Dict[str, Any]] = {}
-        self._recover_stale_running_logs()
+        # A running log may belong to another process. Never rewrite it at import/startup.
         atexit.register(self._close_active_runs_on_exit)
 
     def _recover_stale_running_logs(self) -> None:
@@ -164,9 +164,9 @@ class RunAuditLogger:
             run_uuid = uuid.uuid4().hex[:10]
             run_id = f"{trade_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_uuid}"
 
-            run_dir = Path("eval_results") / safe_symbol / "TradingAgentsStrategy_logs" / "runs"
+            run_dir = Path((config or {}).get("results_dir", "eval_results")) / safe_symbol / "TradingAgentsStrategy_logs" / "runs"
             run_dir.mkdir(parents=True, exist_ok=True)
-            file_path = run_dir / f"{run_id}.json"
+            file_path = (run_dir / f"{run_id}.json").resolve()
 
             run_data: Dict[str, Any] = {
                 "run_id": run_id,
@@ -427,8 +427,7 @@ class RunAuditLogger:
         if not run_data:
             return
 
-        safe_symbol = _sanitize_for_path(run_data.get("symbol") or "unknown")
-        path = Path("eval_results") / safe_symbol / "TradingAgentsStrategy_logs" / "runs" / f"{run_id}.json"
+        path = Path(run_data["file_path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
             json.dump(run_data, f, indent=2, ensure_ascii=False)

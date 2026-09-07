@@ -22,6 +22,14 @@ from tradingagents.safety import (
 )
 
 
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
+
 def make_guard(tmp, **overrides):
     config = dict(DEFAULT_SAFETY_CONFIG)
     config.update(overrides)
@@ -254,7 +262,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 action=ExecutableAction.BUY,
                 confidence="medium",
                 risk_rationale="test",
-                required_controls="test",
+                required_controls="test", entry_policy=_ready_entry_policy(), stop_loss_price=95,
             ),
         ).model_dump(mode="json")
 
@@ -296,7 +304,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 action=ExecutableAction.SHORT,
                 confidence="medium",
                 risk_rationale="flip",
-                required_controls="None.",
+                required_controls="None.", entry_policy=_ready_entry_policy(), stop_loss_price=105,
             ),
         ).model_dump(mode="json")
 
@@ -318,7 +326,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
         close_order.status = "accepted"
         broker.close_position.return_value = close_order
         broker.get_account.return_value = SimpleNamespace(
-            id="paper-safety", equity="100000", cash="100000", buying_power="200000"
+            id="paper-safety", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )
         broker.get_all_positions.return_value = []
         broker.get_orders.return_value = []

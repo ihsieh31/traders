@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from ..schemas import (
     ExecutableAction,
     RiskDecision,
@@ -16,6 +17,10 @@ from ..utils.report_context import (
     build_debate_digest,
 )
 from ..utils.structured import bind_structured, invoke_risk_structured_strict
+from tradingagents.dataflows.interface_utils import (
+    HISTORICAL_SOURCE_UNAVAILABLE,
+    analysis_date_mode,
+)
 from tradingagents.execution.context import (
     capture_position_context,
     render_account_context,
@@ -42,7 +47,7 @@ def create_risk_manager(llm, memory, config=None):
 
         history = state["risk_debate_state"]["history"]
         risk_debate_state = state["risk_debate_state"]
-        trader_plan = state["investment_plan"]
+        trader_plan = state["trader_investment_plan"]
 
         # Get trading mode from config
         allow_shorts = config.get("allow_shorts", False) if config else False
@@ -55,16 +60,71 @@ def create_risk_manager(llm, memory, config=None):
         # presented as flat. This prompt snapshot never bypasses the
         # executor's pre-submit revalidation, which takes its own
         # authoritative snapshot inside the lock.
-        expected_account = state.get("broker_account_id")
-        context = capture_position_context(
-            company_name, expected_account_id=expected_account
-        )
-        position_stats_desc = render_position_context(context)
-        account_status_desc = render_account_context(context)
+        #
+        # Historical as-of runs never call the live broker. Without a
+        # verified point-in-time portfolio context the Decision role fails
+        # closed: no opening READY intent, output is NO_TRADE / HOLD with an
+        # explicit unavailability explanation.
+        if analysis_date_mode(state.get("trade_date")) == "historical":
+            historical_position = state.get("current_position")
+            historical_position_stats = state.get("position_stats")
+            historical_account_status = state.get("account_status")
+            historical_context_trusted = (
+                bool(historical_position)
+                and historical_position != HISTORICAL_SOURCE_UNAVAILABLE
+                and bool(historical_position_stats)
+                and bool(historical_account_status)
+            )
+            if not historical_context_trusted:
+                trading_mode = "trading" if allow_shorts else "investment"
+                neutral_action = "NO_TRADE" if allow_shorts else "HOLD"
+                final_decision_content = (
+                    f"NO_TRADE — historical portfolio context unavailable "
+                    f"({HISTORICAL_SOURCE_UNAVAILABLE}). Without verified as-of "
+                    "position/account data no opening intent can be authorized; "
+                    "the live broker was not consulted for this historical date."
+                    f"\n\nFINAL TRANSACTION PROPOSAL: **{neutral_action}**"
+                )
+                new_risk_debate_state = {
+                    "judge_decision": final_decision_content,
+                    "history": risk_debate_state["history"],
+                    "risky_history": risk_debate_state["risky_history"],
+                    "safe_history": risk_debate_state["safe_history"],
+                    "neutral_history": risk_debate_state["neutral_history"],
+                    "risky_messages": risk_debate_state.get("risky_messages", []),
+                    "safe_messages": risk_debate_state.get("safe_messages", []),
+                    "neutral_messages": risk_debate_state.get("neutral_messages", []),
+                    "latest_speaker": "Judge",
+                    "current_risky_response": risk_debate_state["current_risky_response"],
+                    "current_safe_response": risk_debate_state["current_safe_response"],
+                    "current_neutral_response": risk_debate_state["current_neutral_response"],
+                    "count": risk_debate_state["count"],
+                }
+                return {
+                    "risk_debate_state": new_risk_debate_state,
+                    "final_trade_decision": final_decision_content,
+                    "final_trade_intent": None,
+                    "trading_mode": trading_mode,
+                    "current_position": historical_position
+                    or HISTORICAL_SOURCE_UNAVAILABLE,
+                    "recommended_action": neutral_action,
+                    "risk_invalid_reason": "historical_portfolio_context_unavailable",
+                }
+            current_position = historical_position
+            position_stats_desc = historical_position_stats
+            account_status_desc = historical_account_status
+            state["current_position"] = current_position
+        else:
+            expected_account = state.get("broker_account_id")
+            context = capture_position_context(
+                company_name, expected_account_id=expected_account
+            )
+            position_stats_desc = render_position_context(context)
+            account_status_desc = render_account_context(context)
 
-        current_position = context.side if context.side != "FLAT" else "NEUTRAL"
-        state["current_position"] = current_position
-        state["broker_account_id"] = context.account_id
+            current_position = context.side if context.side != "FLAT" else "NEUTRAL"
+            state["current_position"] = current_position
+            state["broker_account_id"] = context.account_id
 
         open_pos_desc = (
             f"We currently have an open {current_position} position in {company_name}."
@@ -96,16 +156,18 @@ def create_risk_manager(llm, memory, config=None):
         all_reports_text = context_bundle.get("all_reports_text", "")
 
         curr_situation = context_bundle["memory_context"]
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = memory.get_memories(curr_situation, n_matches=2, as_of=state.get("trade_date"))
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
-        decision_memory_str = decision_log.get_past_context(company_name)
+        decision_memory_str = decision_log.get_past_context(company_name, as_of=state.get("trade_date"))
 
         prompt = render_prompt(
             "managers/risk_manager",
             agent_context=agent_context,
+            decision_time_utc=datetime.now(timezone.utc).isoformat(),
+            analysis_date=state.get("trade_date", "unknown"),
             decision_format=decision_format,
             open_pos_desc=open_pos_desc,
             position_stats_desc=position_stats_desc,

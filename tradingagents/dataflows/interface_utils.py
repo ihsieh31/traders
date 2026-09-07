@@ -1,8 +1,52 @@
 from openai import OpenAI
 import httpx
-from typing import Any, List
+import re
+from datetime import datetime
+from typing import Any, List, Literal
+from zoneinfo import ZoneInfo
 
 from .config import get_config
+
+AnalysisDateMode = Literal["live", "historical"]
+
+HISTORICAL_SOURCE_UNAVAILABLE = (
+    "UNAVAILABLE_FOR_HISTORICAL_AS_OF: source has no verified point-in-time cutoff"
+)
+
+_EASTERN_TZ = ZoneInfo("America/New_York")
+_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def parse_analysis_date(value: str):
+    """Strict YYYY-MM-DD parser. Raise ValueError on blank, malformed or future dates."""
+    if not isinstance(value, str):
+        raise ValueError("analysis date must be a YYYY-MM-DD string")
+    if not _DATE_PATTERN.fullmatch(value):
+        raise ValueError(
+            f"analysis date must be exactly YYYY-MM-DD, got {value!r}"
+        )
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(f"analysis date is not a valid calendar date: {value!r}") from None
+    if parsed > datetime.now(_EASTERN_TZ).date():
+        raise ValueError("analysis date is in the future")
+    return parsed
+
+
+def analysis_date_mode(value: str, *, now: datetime | None = None) -> AnalysisDateMode:
+    """Compare value with today's America/New_York date."""
+    if now is None:
+        now = datetime.now(_EASTERN_TZ)
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    today = now.astimezone(_EASTERN_TZ).date()
+    analysis_date = parse_analysis_date(value)
+    if analysis_date < today:
+        return "historical"
+    if analysis_date == today:
+        return "live"
+    raise ValueError("analysis date is in the future")
 
 
 _TRAILING_INTERACTIVE_PATTERNS = (

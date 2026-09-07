@@ -720,32 +720,6 @@ class Toolkit:
     @staticmethod
     @tool
     @timing_wrapper("MARKET")
-    def get_alpaca_data(
-        symbol: Annotated[str, "ticker symbol (stocks: AAPL, TSM; crypto: ETH/USD, BTC/USD)"],
-        start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
-        end_date: Annotated[str, "End date in yyyy-mm-dd format"],
-        timeframe: Annotated[str, "Timeframe for data: 1Min, 5Min, 15Min, 1Hour, 1Day"] = "1Day",
-    ) -> str:
-        """
-        Retrieve stock and cryptocurrency price data from Alpaca.
-        For crypto symbols, use format with slash: ETH/USD, BTC/USD, SOL/USD
-        For stock symbols, use standard format: AAPL, TSM, NVDA
-        Args:
-            symbol (str): Ticker symbol - stocks: AAPL, TSM; crypto: ETH/USD, BTC/USD
-            start_date (str): Start date in yyyy-mm-dd format
-            end_date (str): End date in yyyy-mm-dd format
-            timeframe (str): Timeframe for data (1Min, 5Min, 15Min, 1Hour, 1Day)
-        Returns:
-            str: A formatted dataframe containing the price data for the specified ticker symbol in the specified date range.
-        """
-
-        result_data = interface.get_alpaca_data(symbol, start_date, end_date, timeframe)
-
-        return result_data
-
-    @staticmethod
-    @tool
-    @timing_wrapper("MARKET")
     def get_stockstats_indicators_report(
         symbol: Annotated[str, "ticker symbol of the company"],
         indicator: Annotated[
@@ -942,6 +916,7 @@ class Toolkit:
     def get_coindesk_news(
         ticker: Annotated[str, "Ticker symbol, e.g. 'BTC/USD', 'ETH/USD', 'ETH', etc."],
         num_sentences: Annotated[int, "Number of sentences to include from news body."] = 5,
+        curr_date: Annotated[str, "Analysis as-of date in yyyy-mm-dd format"] = None,
     ):
         """
         Retrieve news for a cryptocurrency.
@@ -951,11 +926,14 @@ class Toolkit:
         Args:
             ticker (str): Ticker symbol for the cryptocurrency.
             num_sentences (int): Number of sentences to extract from the body of each news article.
+            curr_date (str): Analysis as-of date (yyyy-mm-dd). Missing curr_date
+                is only allowed for direct live calls; historical callers must
+                pass the analysis date so the live-only source is rejected.
 
         Returns:
             str: Formatted string containing news.
         """
-        return interface.get_coindesk_news(ticker, num_sentences)
+        return interface.get_coindesk_news(ticker, num_sentences, curr_date)
 
     @staticmethod
     @tool
@@ -1227,24 +1205,28 @@ class Toolkit:
     def get_defillama_fundamentals(
         ticker: Annotated[str, "Crypto ticker symbol (without USD/USDT suffix)"],
         lookback_days: Annotated[int, "Number of days to look back for data"] = 30,
+        curr_date: Annotated[str, "Analysis as-of date in yyyy-mm-dd format"] = None,
     ):
         """
         Retrieve fundamental data for a cryptocurrency from DeFi Llama.
         This includes TVL (Total Value Locked), TVL change over lookback period,
         fees collected, and revenue data.
-        
+
         Args:
             ticker (str): Crypto ticker symbol (e.g., BTC, ETH, UNI)
             lookback_days (int): Number of days to look back for data
-            
+            curr_date (str): Analysis as-of date (yyyy-mm-dd). Missing curr_date
+                is only allowed for direct live calls; historical callers must
+                pass the analysis date so the live-only source is rejected.
+
         Returns:
             str: A markdown-formatted report of crypto fundamentals from DeFi Llama
         """
-        
+
         defillama_results = interface.get_defillama_fundamentals(
-            ticker, lookback_days
+            ticker, lookback_days, curr_date
         )
-        
+
         return defillama_results
 
     @staticmethod

@@ -15,6 +15,10 @@ from ..utils.report_context import (
     build_debate_digest,
 )
 from ..utils.structured import bind_structured, invoke_structured_or_freetext
+from tradingagents.dataflows.interface_utils import (
+    HISTORICAL_SOURCE_UNAVAILABLE,
+    analysis_date_mode,
+)
 from tradingagents.execution.context import (
     capture_position_context,
     render_account_context,
@@ -44,21 +48,40 @@ def create_trader(llm, memory, config=None):
         # failure (timeout, missing account, bad numbers, stale timestamp)
         # raises BrokerAuthorityError and stops the run — a failed read must
         # never be presented to the model as "no position".
-        context = capture_position_context(company_name)
-        position_stats_desc = render_position_context(context)
-        account_status_desc = render_account_context(context)
+        #
+        # Historical as-of runs never call the live broker: only the
+        # portfolio context already present in state is used, and missing
+        # fields are labeled rather than substituted with present-day
+        # account facts.
+        if analysis_date_mode(state.get("trade_date")) == "historical":
+            current_position = state.get("current_position") or HISTORICAL_SOURCE_UNAVAILABLE
+            position_stats_desc = state.get("position_stats") or HISTORICAL_SOURCE_UNAVAILABLE
+            account_status_desc = (
+                state.get("account_status") or HISTORICAL_SOURCE_UNAVAILABLE
+            )
+            broker_account_id = state.get("broker_account_id")
+        else:
+            context = capture_position_context(company_name)
+            position_stats_desc = render_position_context(context)
+            account_status_desc = render_account_context(context)
 
-        current_position = context.side if context.side != "FLAT" else "NEUTRAL"
+            current_position = context.side if context.side != "FLAT" else "NEUTRAL"
+            broker_account_id = context.account_id
         # Persist into state so downstream agents see an accurate picture and
         # the Risk Manager can verify it re-read the SAME account.
         state["current_position"] = current_position
-        state["broker_account_id"] = context.account_id
+        if broker_account_id is not None:
+            state["broker_account_id"] = broker_account_id
 
         # Human-readable description for the prompt
         open_pos_desc = (
             f"We currently have an open {current_position} position in {company_name}."
-            if current_position != "NEUTRAL"
-            else f"We do not have any open position in {company_name}."
+            if current_position not in ("NEUTRAL", HISTORICAL_SOURCE_UNAVAILABLE)
+            else (
+                f"Historical portfolio context for {company_name}: {current_position}."
+                if current_position == HISTORICAL_SOURCE_UNAVAILABLE
+                else f"We do not have any open position in {company_name}."
+            )
         )
         
         # Get centralized trading mode context
@@ -86,12 +109,12 @@ def create_trader(llm, memory, config=None):
         debate_digest = build_debate_digest(state.get("investment_debate_state"), "investment", config=config)
         all_reports_text = context_bundle.get("all_reports_text", "")
         curr_situation = context_bundle["memory_context"]
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = memory.get_memories(curr_situation, n_matches=2, as_of=state.get("trade_date"))
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
-        decision_memory_str = decision_log.get_past_context(company_name)
+        decision_memory_str = decision_log.get_past_context(company_name, as_of=state.get("trade_date"))
 
         trader_context = render_prompt(
             "trader/trader_context",

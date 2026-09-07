@@ -5,6 +5,49 @@ import re
 from typing import Any, Dict, List, Tuple
 
 
+class AnalysisCoverageError(RuntimeError):
+    """A selected analyst failed or produced no report; the run must stop."""
+
+
+SELECTED_ANALYST_REPORT_KEYS: Dict[str, str] = {
+    "market": "market_report",
+    "social": "sentiment_report",
+    "news": "news_report",
+    "fundamentals": "fundamentals_report",
+    "macro": "macro_report",
+}
+
+
+def validate_selected_analyst_coverage(
+    state: dict,
+    selected_analysts: list[str],
+) -> None:
+    """Fail closed when any selected analyst lacks a completed report.
+
+    Only the analysts actually selected for this run are required. A missing
+    status, a non-completed status, or an empty report each raise the single
+    AnalysisCoverageError; the exception propagates so the existing run
+    logger / long-run stop machinery records the round as stopped.
+    """
+    statuses = state.get("analysis_status") or {}
+    for name in selected_analysts:
+        report_key = SELECTED_ANALYST_REPORT_KEYS.get(name)
+        if report_key is None:
+            raise AnalysisCoverageError(
+                f"unknown selected analyst '{name}' has no report mapping"
+            )
+        status = statuses.get(name)
+        if status != "completed":
+            raise AnalysisCoverageError(
+                f"selected analyst '{name}' did not complete (status={status!r})"
+            )
+        report = state.get(report_key)
+        if not isinstance(report, str) or not report.strip():
+            raise AnalysisCoverageError(
+                f"selected analyst '{name}' returned an empty '{report_key}' report"
+            )
+
+
 REPORT_SPECS: List[Tuple[str, str]] = [
     ("macro_report", "Macro"),
     ("market_report", "Market"),
@@ -40,23 +83,23 @@ DEFAULT_CONTEXT_CONFIG = {
 SOURCE_PROFILE: Dict[str, Dict[str, Any]] = {
     "macro_report": {
         "source_type": "macro",
-        "source_quality": 0.80,
+        "source_quality": 0.35,
     },
     "market_report": {
         "source_type": "technical",
-        "source_quality": 0.82,
+        "source_quality": 0.35,
     },
     "sentiment_report": {
         "source_type": "sentiment",
-        "source_quality": 0.62,
+        "source_quality": 0.35,
     },
     "news_report": {
         "source_type": "news",
-        "source_quality": 0.76,
+        "source_quality": 0.35,
     },
     "fundamentals_report": {
         "source_type": "fundamental",
-        "source_quality": 0.86,
+        "source_quality": 0.35,
     },
 }
 
@@ -344,7 +387,7 @@ def _source_profile(report_key: str) -> Dict[str, Any]:
         report_key,
         {
             "source_type": "unknown",
-            "source_quality": 0.55,
+            "source_quality": 0.35,
         },
     )
 
@@ -409,7 +452,9 @@ def _score_freshness(text: str, trade_date: datetime | None) -> Tuple[float, str
     if explicit_dates:
         if trade_date:
             dated = [date for date in explicit_dates if date <= trade_date]
-            selected = dated[0] if dated else explicit_dates[-1]
+            if not dated:
+                return 0.0, explicit_dates[-1].date().isoformat(), "future_event_not_publication"
+            selected = dated[0]
             age_days = max(0, (trade_date.date() - selected.date()).days)
         else:
             selected = explicit_dates[0]
@@ -429,13 +474,8 @@ def _score_freshness(text: str, trade_date: datetime | None) -> Tuple[float, str
             score = 0.20
         return score, selected.date().isoformat(), "explicit"
 
-    lower = text.lower()
-    if any(term in lower for term in ("today", "latest", "current", "recent", "this week")):
-        timestamp = trade_date.date().isoformat() if trade_date else None
-        return 0.82, timestamp, "implicit_recent"
-
-    timestamp = trade_date.date().isoformat() if trade_date else None
-    return 0.62, timestamp, "implicit_report"
+    # Wording is not publication metadata. Never invent a source timestamp.
+    return 0.0, None, "publication_time_unverified"
 
 
 def _extract_numeric_support(text: str, max_items: int = 4) -> List[str]:
@@ -694,7 +734,7 @@ def _side_score(claims: List[Dict[str, Any]], direction: str) -> float:
 
     top_claims = side_claims[:5]
     average_confidence = sum(claim["confidence"] for claim in top_claims) / len(top_claims)
-    source_diversity = len({claim["source_type"] for claim in top_claims}) / max(1, len(SOURCE_PROFILE))
+    source_diversity = 0.0  # Report roles are not independent primary sources.
     average_contradiction = (
         sum(claim["scores"]["contradiction"] for claim in top_claims) / len(top_claims)
     )
@@ -762,9 +802,7 @@ def _build_evidence_scoreboard(
     quantitative_score = _round_score(
         sum(claim["scores"]["numeric_support"] for claim in claims) / len(claims)
     )
-    source_diversity_score = _round_score(
-        len({claim["source_type"] for claim in claims}) / max(1, len(SOURCE_PROFILE))
-    )
+    source_diversity_score = 0.0  # Independent sources are not verified by report roles.
 
     key_bullish = [
         claim["claim_id"]
@@ -913,7 +951,7 @@ def _render_evidence_scoreboard(
         return "Evidence Scoreboard: No structured claims available."
 
     lines: List[str] = []
-    lines.append("Evidence Scoreboard:")
+    lines.append("Evidence Scoreboard (heuristic reading-order priority, not confidence):")
     lines.append(
         "- Net: "
         f"{scoreboard.get('net_direction', 'mixed').title()} "
@@ -963,7 +1001,9 @@ def _render_decision_claim_matrix(
     point_chars = int(cfg["report_context_compact_point_chars"])
 
     lines: List[str] = []
-    lines.append("Decision Claim Matrix (evidence-scored):")
+    lines.append("Heuristic Claim Priority Matrix (reading-order heuristic; NOT probability, confidence, win rate or verified evidence):")
+    lines.append("Dates and numbers below are claims in generated reports, not independently verified facts. Repeated coverage across roles is not independent corroboration. Resolve claims against the linked original source; missing publication dates remain unknown.")
+    lines.append("The priority score is only a reading-order heuristic. It is not source verification, model confidence, probability, win rate or an independent vote. Numeric-looking text may still be wrong. Inspect the supplied excerpt, source label and as-of date before using a claim. Never assign high confidence solely because this score is high.")
     lines.append(_render_evidence_scoreboard(context, config=config))
     lines.append("")
     lines.append("Claims by source:")
@@ -1368,7 +1408,12 @@ def _render_analysis_context(
 
     lines: List[str] = []
     lines.append("Cross-Analyst Context Packet")
-    lines.append("Use this packet as canonical evidence synthesized from all analyst reports.")
+    lines.append(
+        "This packet organizes analyst claims with a heuristic claim priority matrix. "
+        "The priority score is only a reading-order heuristic. It is not source "
+        "verification, model confidence, probability, win rate or an independent vote. "
+        "Numeric-looking text may still be wrong."
+    )
     lines.append("")
 
     global_overview = context.get("global_overview", "").strip()
@@ -1419,7 +1464,7 @@ def _render_analysis_context_compact(
 
     lines: List[str] = []
     lines.append("Cross-Analyst Context Packet (Compact)")
-    lines.append("Use this compact packet for fast decisioning with full report coverage preserved.")
+    lines.append("Use this compact packet for fast decisioning with full report coverage preserved. The priority matrix is a reading-order heuristic, not confidence, probability or win rate.")
     lines.append("")
 
     global_overview = context.get("global_overview", "").strip()
@@ -1459,7 +1504,7 @@ def _render_memory_context(
     scoreboard = context.get("evidence_scoreboard", {})
     if scoreboard:
         lines.append(
-            "Evidence score: "
+            "Heuristic reading-order priority (not confidence): "
             f"{scoreboard.get('net_direction', 'mixed')} "
             f"({scoreboard.get('net_confidence', 'low')}) | "
             f"bull={scoreboard.get('bullish_score', 0):.2f}, "
@@ -1612,14 +1657,29 @@ def get_agent_context_bundle(
         "evidence_claims": context.get("evidence_claims", []),
         "evidence_scoreboard_data": context.get("evidence_scoreboard", {}),
         "memory_context": memory_context,
-        "all_reports_text": _render_all_reports_text(state, config=config),
+        "all_reports_text": (_render_all_reports_text(state, config=config)
+                             if (config or {}).get("include_full_reports_in_prompts", False)
+                             else "Retrieved analyst excerpts (not full reports):\n" + analysis_context),
         "selected_chunk_ids": [chunk["id"] for chunk in selected_chunks],
         "context_stats": context.get("stats", {}),
     }
 
 
-def create_report_context_node(config: Dict[str, Any] | None = None):
+def create_report_context_node(
+    config: Dict[str, Any] | None = None,
+    selected_analysts: List[str] | None = None,
+):
+    """Build the shared report-context node.
+
+    ``selected_analysts`` is the actual selection for this graph instance,
+    supplied by setup.py at node creation time (never guessed from global
+    config). When provided, the node first runs the coverage gate and fails
+    closed before any downstream decision agent can consume partial context.
+    """
+
     def report_context_node(state: Dict[str, Any]) -> Dict[str, Any]:
+        if selected_analysts:
+            validate_selected_analyst_coverage(state, selected_analysts)
         return {"report_context": build_report_context_index(state, config=config)}
 
     return report_context_node

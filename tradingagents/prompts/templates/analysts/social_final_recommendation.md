@@ -1,3 +1,4 @@
+Legacy unused template: analysts no longer produce final recommendations; runtime must not load this file.
 Based on the following social media and sentiment analysis for {ticker}, provide your final swing trading recommendation considering social momentum and sentiment indicators.
 
 Analysis:

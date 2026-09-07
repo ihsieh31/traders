@@ -108,11 +108,11 @@ class SignalNormalizationTests(unittest.TestCase):
     def test_all_aliases(self):
         for raw, expected in {
             "BUY": "BUY",
-            "long": "BUY",
-            " Short ": "SELL",
+            "long": "LONG",
+            " Short ": "SHORT",
             "sell": "SELL",
             "HOLD": "HOLD",
-            "Neutral": "HOLD",
+            "Neutral": "NEUTRAL",
         }.items():
             with self.subTest(raw=raw):
                 self.assertEqual(normalize_action(raw), expected)
@@ -124,7 +124,7 @@ class SignalNormalizationTests(unittest.TestCase):
 
 
 def write_run_log(root, symbol, trade_date, final_signal, status="completed", started_at=None):
-    runs_dir = Path(root) / symbol / "TradingAgentsStrategy_logs" / "runs"
+    runs_dir = Path(root) / symbol.replace("/", "_") / "TradingAgentsStrategy_logs" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     started = started_at or f"{trade_date}T10:00:00+00:00"
     payload = {
@@ -132,8 +132,9 @@ def write_run_log(root, symbol, trade_date, final_signal, status="completed", st
         "symbol": symbol,
         "trade_date": trade_date,
         "started_at": started,
+        "ended_at": started,
         "status": status,
-        "summary": {"final_signal": final_signal} if final_signal else {},
+        "summary": {"final_signal": final_signal, "llm_call_events": 1, "tool_events": 1} if final_signal else {},
     }
     path = runs_dir / f"{payload['run_id']}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -149,7 +150,7 @@ class LoadRecordedSignalsTests(unittest.TestCase):
             signals = load_recorded_signals("AAPL", eval_results_dir=root)
         self.assertEqual(
             signals,
-            {"2026-01-05": "BUY", "2026-01-06": "BUY", "2026-01-07": "HOLD"},
+            {"2026-01-05": "BUY", "2026-01-06": "LONG", "2026-01-07": "NEUTRAL"},
         )
 
     def test_ignores_aborted_missing_signal_and_bad_dates(self):
@@ -159,7 +160,7 @@ class LoadRecordedSignalsTests(unittest.TestCase):
             write_run_log(root, "AAPL", "not-a-date", "BUY")
             self.assertEqual(load_recorded_signals("AAPL", eval_results_dir=root), {})
 
-    def test_latest_run_per_date_wins(self):
+    def test_first_eligible_run_per_date_wins(self):
         with tempfile.TemporaryDirectory() as root:
             write_run_log(
                 root, "AAPL", "2026-01-05", "BUY",
@@ -170,11 +171,11 @@ class LoadRecordedSignalsTests(unittest.TestCase):
                 started_at="2026-01-05T15:00:00+00:00",
             )
             signals = load_recorded_signals("AAPL", eval_results_dir=root)
-        self.assertEqual(signals, {"2026-01-05": "SELL"})
+        self.assertEqual(signals, {"2026-01-05": "BUY"})
 
     def test_crypto_symbol_path_sanitization(self):
         with tempfile.TemporaryDirectory() as root:
-            write_run_log(root, "BTC_USD", "2026-01-05", "BUY")
+            write_run_log(root, "BTC/USD", "2026-01-05", "BUY")
             signals = load_recorded_signals("BTC/USD", eval_results_dir=root)
         self.assertEqual(signals, {"2026-01-05": "BUY"})
 
@@ -252,7 +253,7 @@ class RunBacktestTests(unittest.TestCase):
         # 200 open; the engine must record the rejection.
         prices = make_prices(closes=[100, 200, 200], opens=[100, 200, 200])
         result = run_backtest(
-            prices, {"2026-01-05": "BUY"}, initial_cash=10_000, commission=0.0
+            prices, {"2026-01-05": "BUY"}, initial_cash=10_000, commission=0.0, position_pct=0.95
         )
         self.assertEqual(result.orders, [])
         self.assertEqual(len(result.rejected_orders), 1)
@@ -271,7 +272,7 @@ class RunBacktestTests(unittest.TestCase):
         prices = make_prices(closes)
         result = run_backtest(
             prices,
-            {"2026-01-05": "SELL"},
+            {"2026-01-05": "SHORT"},
             initial_cash=100_000,
             commission=0.0,
             allow_shorts=True,

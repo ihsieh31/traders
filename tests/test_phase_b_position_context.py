@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from tradingagents.execution.authority import (
     BrokerAuthorityError,
@@ -35,6 +36,7 @@ def _snapshot(positions=None, *, account_id="paper-1", equity=100000.0, cash=800
         version="test-version",
         account_id=account_id,
         equity=equity,
+        last_equity=equity if equity > 0 else 100000.0,
         cash=cash,
         buying_power=160000.0,
         positions=position_objects,
@@ -100,7 +102,7 @@ class CaptureFailureTests(unittest.TestCase):
     def _broker(self):
         return SimpleNamespace(
             get_account=lambda: SimpleNamespace(
-                id="paper-1", equity="100000", cash="80000", buying_power="160000"
+                id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
             ),
             get_all_positions=lambda: [],
             get_orders=lambda request=None: [],
@@ -114,7 +116,7 @@ class CaptureFailureTests(unittest.TestCase):
     def test_wrong_account_is_rejected(self):
         broker = self._broker()
         broker.get_account = lambda: SimpleNamespace(
-            id="paper-OTHER", equity="100000", cash="80000", buying_power="160000"
+            id="paper-OTHER", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
         )
         with self.assertRaises(BrokerAuthorityError):
             capture_position_context(
@@ -142,6 +144,7 @@ class CaptureFailureTests(unittest.TestCase):
             version="v",
             account_id="paper-1",
             equity=100000.0,
+            last_equity=100000.0,
             cash=80000.0,
             buying_power=160000.0,
             positions=(),
@@ -160,7 +163,11 @@ class NodePromptInjectionTests(unittest.TestCase):
     def _state(self, symbol="NVDA"):
         return {
             "company_of_interest": symbol,
-            "trade_date": "2026-09-05",
+            # Live-mode fixture: today's Eastern date. A past date would be
+            # classified as a historical as-of and the (correct) PIT guard
+            # would skip the broker capture these tests exercise.
+            "trade_date": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+            "trader_investment_plan": "Trader plan requiring confirmed entry and a protective stop",
             "investment_plan": "FINAL TRANSACTION PROPOSAL: **BUY** — a plan " + "x" * 200,
             "investment_debate_state": {
                 "bull_history": "bull", "bear_history": "bear", "history": "h",

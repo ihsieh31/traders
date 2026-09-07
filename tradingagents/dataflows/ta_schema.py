@@ -42,8 +42,8 @@ class TrendState(BaseModel):
     trend_strength_adx: Literal["weak", "strong", "very_strong"] = Field(
         description="Qualitative strength based on ADX", default="weak"
     )
-    sma_200: float = Field(description="200-period Simple Moving Average", default=0.0)
-    sma_200_dist: float = Field(description="Distance from SMA 200 (%)", default=0.0)
+    sma_200: Optional[float] = Field(description="200-period SMA; null when history is insufficient", default=None)
+    sma_200_dist: Optional[float] = Field(description="Distance from SMA 200 (%); null when unavailable", default=None)
 
 
 class MomentumState(BaseModel):

@@ -120,7 +120,7 @@ class QuarantineExecutionGateTests(unittest.TestCase):
     def test_account_status_lists_active_quarantines(self):
         broker = SimpleNamespace(
             get_account=lambda: SimpleNamespace(
-                id="paper-1", equity="100000", cash="80000", buying_power="160000"
+                id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
             ),
             get_all_positions=lambda: [],
             get_orders=lambda request=None: [],
@@ -162,7 +162,7 @@ class QuarantineExecutionGateTests(unittest.TestCase):
         # operator path must list active quarantines.
         broker = SimpleNamespace(
             get_account=lambda: SimpleNamespace(
-                id="paper-1", equity="100000", cash="80000", buying_power="160000"
+                id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
             ),
             get_all_positions=lambda: [],
             get_orders=lambda request=None: [],

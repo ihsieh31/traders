@@ -136,7 +136,7 @@ class _PreflightTest(unittest.TestCase):
 
     def _deps(self, probe):
         broker = SimpleNamespace(
-            get_account=lambda: SimpleNamespace(equity=1.0, id="acct"),
+            get_account=lambda: SimpleNamespace(equity=1.0, last_equity=1.0, cash=1.0, buying_power=1.0, id="acct"),
             get_all_positions=lambda: [],
         )
         service = SimpleNamespace(

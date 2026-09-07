@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 ORDER_STATUSES = frozenset(
     {
@@ -103,6 +103,8 @@ def canonical_decision_id(trade_intent: dict[str, Any]) -> str:
             "sizing_basis": order_intent.get("sizing_basis"),
         },
         "planned_actions": planned,
+        "entry_policy": trade_intent.get("entry_policy"),
+        "risk_controls": trade_intent.get("risk_controls"),
     }
     blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
@@ -179,6 +181,10 @@ CREATE TABLE IF NOT EXISTS fills (
   qty REAL NOT NULL,
   price REAL NOT NULL,
   filled_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS protective_children (
+  order_id TEXT PRIMARY KEY REFERENCES orders(order_id),
+  parent_order_id TEXT NOT NULL REFERENCES orders(order_id)
 );
 CREATE INDEX IF NOT EXISTS idx_orders_intent ON orders(intent_id);
 CREATE INDEX IF NOT EXISTS idx_orders_client ON orders(client_order_id);
@@ -317,6 +323,42 @@ class ExecutionStore:
                 conn.execute("ROLLBACK")
             except Exception:
                 pass
+            raise
+        finally:
+            conn.close()
+
+    def protective_parent(self, order_id: str) -> Optional[str]:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT parent_order_id FROM protective_children WHERE order_id=?", (order_id,)).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def register_protective_child(self, parent: dict, child: Any) -> None:
+        """Persist a broker-proven child; callers must verify the nested relationship.
+
+        Fill quantity starts at zero so reconciliation records the actual fill.
+        This row is never an outbox instruction to submit a new order.
+        """
+        child_id = order_id_for_client(child.client_order_id)
+        now = utcnow_iso()
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute("SELECT * FROM orders WHERE client_order_id=?", (child.client_order_id,)).fetchone()
+            relation = conn.execute("SELECT parent_order_id FROM protective_children WHERE order_id=?", (child_id,)).fetchone()
+            if existing and (not relation or relation[0] != parent["order_id"] or existing["broker_order_id"] != child.broker_order_id):
+                raise ValueError("Protective child identity conflicts with an existing order")
+            conn.execute("""INSERT OR IGNORE INTO orders
+                (order_id,intent_id,client_order_id,broker_order_id,symbol,side,quantity,
+                 status,filled_qty,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'ACCEPTED',0,?,?)""",
+                (child_id, parent["intent_id"], child.client_order_id, child.broker_order_id,
+                 child.symbol, child.side, child.qty, now, now))
+            conn.execute("INSERT OR IGNORE INTO protective_children VALUES (?,?)", (child_id, parent["order_id"]))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
             raise
         finally:
             conn.close()

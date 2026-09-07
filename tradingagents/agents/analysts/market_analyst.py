@@ -277,31 +277,14 @@ def create_market_analyst(llm, toolkit):
                 ).strip()
             )
         
+        # The analyst report is exactly what the tool loop produced. No
+        # separate final-recommendation call exists: analysts never emit
+        # executable actions, and an empty report is handled by the
+        # selected-analyst coverage gate, not patched here.
         analysis_content = (result.content or "").strip()
-        if not analysis_content:
-            analysis_content = (
-                "The analyst did not return a complete technical narrative. "
-                "State the limitation clearly in the final recommendation."
-            )
+        result = AIMessage(content=_normalize_market_report_markdown(analysis_content))
 
-        # Check if the result already contains FINAL TRANSACTION PROPOSAL
-        if "FINAL TRANSACTION PROPOSAL:" not in analysis_content:
-            # Create a simple prompt that includes the analysis content directly
-            final_prompt = render_prompt(
-                "analysts/market_final_recommendation",
-                ticker=ticker,
-                analysis_content=analysis_content,
-            )
-            
-            # Use a simple chain without tools for the final recommendation
-            final_chain = llm
-            final_result = final_chain.invoke(final_prompt)
-            
-            # Combine the analysis with the final proposal
-            combined_content = analysis_content + "\n\n" + final_result.content
-            result = AIMessage(content=_normalize_market_report_markdown(combined_content))
-        else:
-            result = AIMessage(content=_normalize_market_report_markdown(analysis_content))
+        analysis_status = "completed" if analysis_content else "failed"
 
         # Deterministic regime context: computed from price/volume history
         # (no LLM), appended so every downstream agent that reads the market
@@ -312,7 +295,9 @@ def create_market_analyst(llm, toolkit):
             from tradingagents.regime import RegimeConfig, regime_report_block
 
             regime_block = regime_report_block(
-                ticker, config=RegimeConfig.from_config(get_config() or {})
+                ticker,
+                config=RegimeConfig.from_config(get_config() or {}),
+                as_of=current_date,
             )
             if regime_block:
                 market_report = f"{market_report}\n\n{regime_block}"
@@ -322,6 +307,18 @@ def create_market_analyst(llm, toolkit):
         return {
             "messages": [result],
             "market_report": market_report,
+            "analysis_status": {
+                **(state.get("analysis_status") or {}),
+                "market": analysis_status,
+            },
+            "analysis_errors": (
+                {
+                    **(state.get("analysis_errors") or {}),
+                    "market": "market analyst returned an empty report",
+                }
+                if analysis_status == "failed"
+                else state.get("analysis_errors") or {}
+            ),
         }
 
     return market_analyst_node

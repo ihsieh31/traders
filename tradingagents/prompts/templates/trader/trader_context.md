@@ -33,8 +33,13 @@ Current Alpaca Position Status:
 Alpaca Account Status:
 {account_status_desc}
 
-Evidence-Scored Decision Claim Matrix:
+Heuristic claim priority matrix (reading order only):
 {claim_matrix}
+
+The priority score is only a reading-order heuristic. It is not source verification,
+model confidence, probability, win rate or an independent vote. Numeric-looking text
+may still be wrong. Inspect the supplied excerpt, source label and as-of date before
+using a claim. Never assign high confidence solely because this score is high.
 
 Full Untruncated Analyst Reports:
 {all_reports_text}
@@ -48,7 +53,7 @@ Your {decision_format} should be based on:
 - **Stop Loss:** ATR-based or below key swing low/high (1.5-2x ATR)
 - **Position Size:** Calculated from stop distance and max risk per trade
 - **Time Horizon:** Expected 2-10 day hold with daily monitoring
-- **Evidence Quality:** Prefer high-actionability, low-contradiction claim IDs; lower conviction when the scoreboard is mixed.
+- **Evidence Quality:** Prefer high-actionability, low-contradiction claim IDs; lower conviction when the scoreboard is mixed. Treat the priority score as a reading-order heuristic, never as confidence, probability or win rate.
 
 Always conclude with: {final_format}
 

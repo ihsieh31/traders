@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,7 @@ class TradingMemoryLogTests(unittest.TestCase):
     def test_store_dedupe_and_resolve_equity_outcome(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "memory.md"
-            log = TradingMemoryLog({"memory_log_path": str(path), "memory_log_max_entries": 3})
+            log = TradingMemoryLog({"memory_log_path": str(path), "memory_log_max_entries": 3, "memory_retrieval_enabled": True})
 
             log.store_decision("AAPL", "2026-01-02", FINAL_BUY)
             log.store_decision("AAPL", "2026-01-02", FINAL_BUY)
@@ -40,7 +41,7 @@ class TradingMemoryLogTests(unittest.TestCase):
             self.assertFalse(entries[0]["pending"])
             self.assertEqual(entries[0]["raw"], "+4.0%")
             self.assertEqual(entries[0]["alpha"], "+1.0%")
-            self.assertIn("The setup worked.", log.get_past_context("AAPL"))
+            self.assertIn("The setup worked.", log.get_past_context("AAPL", as_of=(datetime.now(timezone.utc)+timedelta(days=1)).date().isoformat()))
 
     def test_rotation_keeps_pending_entries(self):
         with tempfile.TemporaryDirectory() as tmp:

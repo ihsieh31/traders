@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import multiprocessing
 import sqlite3
 import tempfile
@@ -25,6 +26,14 @@ from tradingagents.execution import (
     get_with_retry,
     validate_freshness,
 )
+
+
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
 
 
 def _now():
@@ -53,6 +62,7 @@ def _intent(action="BUY", current="NEUTRAL"):
             confidence="medium",
             risk_rationale="A2 test",
             required_controls="strict",
+            entry_policy=_ready_entry_policy(), stop_loss_price=95.0,
         ),
     ).model_dump(mode="json")
 
@@ -60,7 +70,7 @@ def _intent(action="BUY", current="NEUTRAL"):
 class FakeBroker:
     def __init__(self, *, account_id="paper-1", positions=None):
         self.account = SimpleNamespace(
-            id=account_id, equity="100000", cash="80000", buying_power="160000"
+            id=account_id, equity="100000", last_equity="100000", cash="80000", buying_power="160000"
         )
         self.positions = list(positions or [])
         self.orders = []
@@ -201,7 +211,7 @@ class SnapshotAndRetryTests(unittest.TestCase):
 
 
 class RecoveryAndReconciliationTests(unittest.TestCase):
-    def test_account_status_reuses_the_three_table_ledger(self):
+    def test_account_status_uses_ledger_with_protective_parent_links(self):
         broker = FakeBroker()
         with tempfile.TemporaryDirectory() as tmp:
             svc = _service(tmp, broker)
@@ -218,7 +228,7 @@ class RecoveryAndReconciliationTests(unittest.TestCase):
                 }
             finally:
                 conn.close()
-            self.assertEqual(tables, {"execution_intents", "orders", "fills"})
+            self.assertEqual(tables, {"execution_intents", "orders", "fills", "protective_children"})
 
     def test_post_timeout_is_unknown_without_retry_then_lookup_adopts(self):
         broker = FakeBroker()
@@ -247,8 +257,8 @@ class RecoveryAndReconciliationTests(unittest.TestCase):
             svc = _service(tmp, broker)
             _, orders, _ = svc.store.create_outbox(
                 decision_id="dec-restart", run_id=None, symbol="AAPL", action="BUY",
-                target_position="LONG", payload_json="{}",
-                orders=[{"client_order_id": "ta-restart", "symbol": "AAPL", "side": "buy", "quantity": 1, "notional": None}],
+                target_position="LONG", payload_json=json.dumps(_intent()),
+                orders=[{"client_order_id": "ta-restart", "symbol": "AAPL", "side": "buy", "quantity": None, "notional": 1000}],
             )
             result = svc.startup_recover()
             self.assertTrue(result["success"])

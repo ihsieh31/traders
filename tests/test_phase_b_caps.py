@@ -3,6 +3,7 @@ evaluator and the real execution entry — symbol/sector/gross/cash clipping,
 outstanding-order headroom, flip handling, and recovery-path enforcement."""
 
 import tempfile
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,6 +17,14 @@ from tradingagents.risk.exposure import (
     evaluate_opening_exposure,
     outstanding_increasing_notional,
 )
+
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
 
 def _now():
     # Fresh at call time: authority.py enforces real snapshot (30s) and
@@ -38,6 +47,7 @@ def _snapshot(positions=None, orders=None, *, equity=100000.0, cash=80000.0,
         version="v-caps",
         account_id=account_id,
         equity=equity,
+        last_equity=equity if equity > 0 else 100000.0,
         cash=cash,
         buying_power=equity * 2,
         positions=positions,
@@ -297,6 +307,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 confidence="medium",
                 risk_rationale="caps test",
                 required_controls="strict",
+                entry_policy=_ready_entry_policy(), stop_loss_price=95.0,
             ),
         ).model_dump(mode="json")
 
@@ -339,7 +350,8 @@ class ExecutionIntegrationTests(unittest.TestCase):
 
         broker = SimpleNamespace(
             get_account=lambda: SimpleNamespace(
-                id="paper-1", equity=str(equity), cash=str(cash), buying_power=str(equity * 2)
+                id="paper-1", equity=str(equity), last_equity=str(equity),
+                cash=str(cash), buying_power=str(equity * 2)
             ),
             get_all_positions=get_all_positions,
             get_orders=get_orders,
@@ -382,10 +394,11 @@ class ExecutionIntegrationTests(unittest.TestCase):
                     decision_id="dec-second-buy",
                 )
             self.assertTrue(second["success"])
-            clipped = float(second["orders"][0]["notional"])
+            clipped = float(second["orders"][0]["quantity"]) * 101
             # Headroom was recomputed from the fresh snapshot: the B13
             # acceptance example — 18% held, cap 20% -> only 2% (2000) fits.
-            self.assertEqual(clipped, 2000.0)
+            self.assertLessEqual(clipped, 2000.0)
+            self.assertGreater(clipped, 1899.0)
 
     def test_pending_buy_order_consumes_headroom(self):
         # A live (not yet filled) opening buy from a prior decision must be
@@ -408,9 +421,10 @@ class ExecutionIntegrationTests(unittest.TestCase):
                     decision_id="dec-second-buy",
                 )
             self.assertTrue(second["success"])
-            clipped = float(second["orders"][0]["notional"])
+            clipped = float(second["orders"][0]["quantity"]) * 101
             # Headroom 20000 minus the 5000 outstanding buy = 15000.
-            self.assertEqual(clipped, 15000.0)
+            self.assertLessEqual(clipped, 15100.0)
+            self.assertGreater(clipped, 14899.0)
 
     def test_quarantined_symbol_takes_zero_broker_calls(self):
         from tradingagents.risk.corporate_actions import QuarantineStore, QuarantineGate
@@ -454,7 +468,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
             svc = self._service(tmp, broker)
             svc.store.create_outbox(
                 decision_id="dec-cap", run_id=None, symbol="AAPL", action="BUY",
-                target_position="LONG", payload_json="{}",
+                target_position="LONG", payload_json=json.dumps(self._intent()),
                 orders=[{"client_order_id": "ta-cap-1", "symbol": "AAPL",
                          "side": "buy", "quantity": None, "notional": 4000.0}],
             )
@@ -469,7 +483,8 @@ class ExecutionIntegrationTests(unittest.TestCase):
             # The resubmitted request carried the clipped notional (500),
             # not the original 4000: 20000 cap - 19500 held = 500.
             submitted = broker.state["orders"][0]
-            self.assertEqual(float(submitted.notional), 500.0)
+            self.assertEqual(float(submitted.qty), 4.0)
+            self.assertIsNone(submitted.notional)
 
 
 def _pos_dict(symbol, qty, mv):

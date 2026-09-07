@@ -2,7 +2,7 @@ import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
 import numpy as np
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 import re
 import uuid
@@ -12,6 +12,7 @@ from tradingagents.agents.utils.agent_trading_modes import extract_recommendatio
 
 class FinancialSituationMemory:
     def __init__(self, name, config: dict = None):
+        self.retrieval_enabled = bool((config or {}).get("memory_retrieval_enabled", False))
         client_config = get_openai_client_config()
         self.client = OpenAI(**client_config) if client_config else None
         self.embedding_model = get_openai_embedding_model()
@@ -94,6 +95,7 @@ class FinancialSituationMemory:
         # extra_metadata (e.g. a backdated batch-taught lesson) wins.
         base_metadata = {"created_at": date.today().isoformat()}
         base_metadata.update(extra_metadata or {})
+        base_metadata["available_at_epoch"] = datetime.now(timezone.utc).timestamp()
 
         self.situation_collection.add(
             documents=situations,
@@ -110,9 +112,16 @@ class FinancialSituationMemory:
             return False
         return bool(found and found.get("ids"))
 
-    def get_memories(self, current_situation, n_matches=1):
+    def get_memories(self, current_situation, n_matches=1, *, as_of=None):
         """Find matching recommendations using OpenAI embeddings"""
-        if not self.embeddings_enabled:
+        if not self.embeddings_enabled or not self.retrieval_enabled or as_of is None:
+            return []
+        try:
+            cutoff_dt = datetime.fromisoformat(str(as_of))
+            if cutoff_dt.tzinfo is None:
+                cutoff_dt = cutoff_dt.replace(tzinfo=timezone.utc)
+            cutoff = cutoff_dt.timestamp()
+        except ValueError:
             return []
 
         query_embedding = self.get_embedding(current_situation)
@@ -122,6 +131,7 @@ class FinancialSituationMemory:
         results = self.situation_collection.query(
             query_embeddings=[query_embedding],
             n_results=n_matches,
+            where={"available_at_epoch": {"$lt": cutoff}},
             include=["metadatas", "documents", "distances"],
         )
 
@@ -193,6 +203,7 @@ class TradingMemoryLog:
 
     def __init__(self, config: dict = None):
         cfg = config or {}
+        self.retrieval_enabled = bool(cfg.get("memory_retrieval_enabled", False))
         path = cfg.get("memory_log_path")
         self._log_path = Path(path).expanduser() if path else None
         if self._log_path:
@@ -230,8 +241,12 @@ class TradingMemoryLog:
             return entries
         return [e for e in entries if e.get("ticker") == ticker]
 
-    def get_past_context(self, ticker: str, n_same: int = 5, n_cross: int = 3) -> str:
-        entries = [e for e in self.load_entries() if not e.get("pending")]
+    def get_past_context(self, ticker: str, n_same: int = 5, n_cross: int = 3, *, as_of=None) -> str:
+        if not self.retrieval_enabled or as_of is None:
+            return "Memory retrieval disabled or no point-in-time cutoff supplied."
+        entries = [e for e in self.load_entries() if not e.get("pending")
+                   and e.get("available_at") and e["available_at"] < str(as_of)
+                   and e.get("outcome_kind") == "forward_asset_return"]
         same, cross = [], []
         for entry in reversed(entries):
             if entry["ticker"] == ticker and len(same) < n_same:
@@ -292,7 +307,7 @@ class TradingMemoryLog:
                     alpha_pct = f"{alpha_value:+.1%}" if alpha_value is not None else "n/a"
                     new_tag = (
                         f"[{trade_date} | {ticker} | {fields[2]} | {fields[3]} "
-                        f"| {raw_pct} | {alpha_pct} | {upd['holding_days']}d]"
+                        f"| {raw_pct} | {alpha_pct} | {upd['holding_days']}d | forward_asset_return | {datetime.now(timezone.utc).isoformat()}]"
                     )
                     rest = "\n".join(lines[1:]).lstrip()
                     new_blocks.append(f"{new_tag}\n\n{rest}\n\nREFLECTION:\n{upd['reflection']}")
@@ -338,6 +353,8 @@ class TradingMemoryLog:
             "raw": fields[4] if len(fields) > 5 else None,
             "alpha": fields[5] if len(fields) > 6 else None,
             "holding": fields[6] if len(fields) > 6 else None,
+            "outcome_kind": fields[7] if len(fields) > 8 else "legacy_unverified",
+            "available_at": fields[8] if len(fields) > 8 else None,
             "decision": decision.group(1).strip() if decision else "",
             "reflection": reflection.group(1).strip() if reflection else "",
         }
@@ -347,7 +364,7 @@ class TradingMemoryLog:
             f"[{entry['date']} | {entry['ticker']} | {entry['action']} | {entry['rating']} "
             f"| {entry.get('raw') or 'n/a'} | {entry.get('alpha') or 'n/a'} | {entry.get('holding') or 'n/a'}]"
         )
-        parts = [tag, f"DECISION:\n{entry['decision']}"]
+        parts = ["Outcome is a forward asset move, NOT realized strategy P&L.", tag, f"DECISION:\n{entry['decision']}"]
         if entry.get("reflection"):
             parts.append(f"REFLECTION:\n{entry['reflection']}")
         return "\n\n".join(parts)

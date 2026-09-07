@@ -153,6 +153,10 @@ class BrokerSnapshot:
     version: str
     account_id: str
     equity: float
+    # Prior-session close equity from the broker account object. This is the
+    # daily-loss baseline. Broker last_equity can still be moved by deposits
+    # and withdrawals; a cash-flow adjusted TWR is NOT implemented this round.
+    last_equity: float
     cash: float
     buying_power: float
     positions: tuple[BrokerPosition, ...]
@@ -231,6 +235,17 @@ def capture_broker_snapshot(
             f"broker account mismatch: expected {expected_account_id}, got {account_id}"
         )
     equity = _number(_value(account, "equity"), field="account equity", minimum=0)
+    # Daily-loss baseline: never backfilled from equity, cash, buying power
+    # or HWM. Missing/non-finite/zero/negative last_equity fails closed.
+    # Broker last_equity can still be moved by deposits and withdrawals; a
+    # cash-flow adjusted TWR is NOT implemented this round.
+    last_equity = _number(
+        _value(account, "last_equity"),
+        field="account last equity",
+        minimum=0,
+    )
+    if last_equity <= 0:
+        raise BrokerAuthorityError("account last equity must be positive")
     cash = _number(_value(account, "cash"), field="account cash")
     buying_power = _number(
         _value(account, "buying_power"), field="account buying power", minimum=0
@@ -324,6 +339,7 @@ def capture_broker_snapshot(
             "observed_at": observed_at.isoformat(),
             "account_id": account_id,
             "equity": equity,
+            "last_equity": last_equity,
             "cash": cash,
             "buying_power": buying_power,
             "positions": [(p.symbol, p.qty, p.market_value) for p in positions],
@@ -341,6 +357,7 @@ def capture_broker_snapshot(
         version=version,
         account_id=account_id,
         equity=equity,
+        last_equity=last_equity,
         cash=cash,
         buying_power=buying_power,
         positions=tuple(positions),

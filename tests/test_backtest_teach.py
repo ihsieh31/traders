@@ -7,6 +7,7 @@ uses, and injects one dated lesson per decision into the persistent
 per-agent ChromaDB memories — idempotently, so re-teaching never duplicates.
 """
 
+from datetime import datetime, timedelta, timezone
 import json
 import tempfile
 import unittest
@@ -28,6 +29,7 @@ def _fake_embedding(text):
 
 
 def _enable_fake_embeddings(memory):
+    memory.retrieval_enabled = True
     memory.embeddings_enabled = True
     memory.get_embedding = _fake_embedding
 
@@ -71,8 +73,9 @@ def _write_run(root, symbol, trade_date, final_signal, final_state=None, status=
         "symbol": symbol,
         "trade_date": trade_date,
         "started_at": started,
+        "ended_at": started,
         "status": status,
-        "summary": {"final_signal": final_signal},
+        "summary": {"final_signal": final_signal, "llm_call_events": 1, "tool_events": 1},
         "snapshots": {"final_state": final_state} if final_state is not None else {},
     }
     name = f"{trade_date}_run.json"
@@ -105,32 +108,30 @@ class ComputeDecisionOutcomesTests(unittest.TestCase):
         self.assertAlmostEqual(out["decision_return"], out["asset_return"])
         self.assertFalse(out["partial"])
 
-    def test_sell_decision_return_is_negated(self):
+    def test_sell_closes_exposure(self):
         prices = _price_frame(days=10)
         outcomes = compute_decision_outcomes(
             prices, {"2025-01-06": "SELL"}, horizon_bars=3
         )
         out = outcomes[0]
-        self.assertAlmostEqual(out["decision_return"], -(out["asset_return"]))
+        self.assertEqual(out["decision_return"], 0.0)
 
-    def test_hold_decision_return_is_zero_but_asset_move_kept(self):
+    def test_hold_without_known_position_has_unknown_return(self):
         prices = _price_frame(days=10)
         outcomes = compute_decision_outcomes(
             prices, {"2025-01-06": "HOLD"}, horizon_bars=3
         )
         out = outcomes[0]
-        self.assertEqual(out["decision_return"], 0.0)
+        self.assertIsNone(out["decision_return"])
         self.assertGreater(out["asset_return"], 0.0)
 
-    def test_truncated_horizon_is_partial(self):
+    def test_truncated_horizon_is_not_taught(self):
         prices = _price_frame(days=5)
         # Entry at bar 1, horizon 10 runs past the data -> exit at last bar.
         outcomes = compute_decision_outcomes(
             prices, {"2025-01-06": "BUY"}, horizon_bars=10
         )
-        out = outcomes[0]
-        self.assertTrue(out["partial"])
-        self.assertEqual(out["exit_price"], 104.0)
+        self.assertEqual(outcomes, [])
 
     def test_signal_on_or_after_last_bar_is_skipped(self):
         prices = _price_frame(days=5)  # last bar 2025-01-10
@@ -186,7 +187,7 @@ class TeachMemoriesTests(unittest.TestCase):
                 "fundamentals_report",
             )
         )
-        matches = memories["trader"].get_memories(situation, n_matches=1)
+        matches = memories["trader"].get_memories(situation, n_matches=1, as_of=(datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat())
         self.assertEqual(len(matches), 1)
         self.assertIn("%", matches[0]["recommendation"])
         self.assertIn("BUY", matches[0]["recommendation"])
@@ -228,7 +229,7 @@ class TeachMemoriesTests(unittest.TestCase):
         for memory in memories.values():
             self.assertEqual(memory.situation_collection.count(), 0)
 
-    def test_llm_mode_uses_reflector_lesson(self):
+    def test_single_outcome_does_not_generate_causal_llm_lesson(self):
         memories = _make_memories()
         reflector = Mock()
         reflector.reflect_on_final_decision.return_value = "LLM lesson about the trade"
@@ -237,9 +238,9 @@ class TeachMemoriesTests(unittest.TestCase):
             summary = self._teach(root, memories, reflector=reflector)
 
         self.assertEqual(summary["decisions_taught"], 1)
-        reflector.reflect_on_final_decision.assert_called_once()
-        matches = memories["trader"].get_memories("market: day one", n_matches=1)
-        self.assertIn("LLM lesson", matches[0]["recommendation"])
+        reflector.reflect_on_final_decision.assert_not_called()
+        matches = memories["trader"].get_memories("market: day one", n_matches=1, as_of=(datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat())
+        self.assertIn("not broker realized P&L", matches[0]["recommendation"])
 
     def test_no_recorded_signals_raises(self):
         memories = _make_memories()

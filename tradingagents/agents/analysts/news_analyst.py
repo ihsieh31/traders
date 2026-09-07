@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
+from tradingagents.dataflows.interface_utils import analysis_date_mode
 from tradingagents.prompts import load_prompt, render_prompt
 
 # Import prompt capture utility
@@ -17,31 +18,41 @@ def create_news_analyst(llm, toolkit):
     def news_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
-        
+        analysis_mode = analysis_date_mode(current_date)
+
         is_crypto = "/" in ticker or "USD" in ticker.upper() or "USDT" in ticker.upper()
         openai_available = toolkit.has_openai_web_search()
         finnhub_available = toolkit.has_finnhub()
         coindesk_available = toolkit.has_coindesk()
 
+        # Live-only sources (OpenAI hosted web search, Google News RSS,
+        # CryptoCompare/CoinDesk) have no verified point-in-time publication
+        # cutoff: they are never offered on a historical as-of date.
+        live_only_sources_allowed = analysis_mode == "live"
         global_news_available = (
             toolkit.config["online_tools"]
             and openai_available
             and bool(toolkit.config.get("news_global_openai_enabled", False))
+            and live_only_sources_allowed
         )
-        tools = [toolkit.get_google_news]
+        tools = []
+        if live_only_sources_allowed:
+            tools.append(toolkit.get_google_news)
         if global_news_available:
             tools.append(toolkit.get_global_news_openai)
         if is_crypto:
-            if coindesk_available:
+            if coindesk_available and live_only_sources_allowed:
                 tools.append(toolkit.get_coindesk_news)
         else:
             if finnhub_available:
                 tools.append(toolkit.get_finnhub_news_recent)
 
-        source_labels = ["Google News"]
+        source_labels = []
+        if live_only_sources_allowed:
+            source_labels.append("Google News")
         if global_news_available:
             source_labels.append("OpenAI global web search")
-        if is_crypto and coindesk_available:
+        if is_crypto and coindesk_available and live_only_sources_allowed:
             source_labels.append("CoinDesk/CryptoCompare")
         if (not is_crypto) and finnhub_available:
             source_labels.append("Finnhub")
@@ -60,11 +71,19 @@ def create_news_analyst(llm, toolkit):
 
         source_guidance = (
             " Use all currently available news tools before concluding."
-            f" Active sources: {', '.join(source_labels)}."
+            f" Active sources: {', '.join(source_labels) if source_labels else 'none'}."
             " For `get_finnhub_news_recent`, pass ticker and curr_date from context."
             " Do not request broad macro/global web searches unless OpenAI global web search is listed as an active source;"
             " the Macro analyst handles that context when enabled."
         )
+        if analysis_mode != "live":
+            source_guidance += (
+                f" Historical as-of {current_date}: live-only sources without a verified"
+                " point-in-time cutoff (OpenAI web search, Google News RSS,"
+                " CryptoCompare/CoinDesk) are unavailable for this date."
+                " If no active source can evidence a claim, state it explicitly as"
+                " 'source unavailable'; never substitute present-day data."
+            )
         system_message = render_prompt(
             "analysts/news_system",
             ticker=ticker,
@@ -200,26 +219,29 @@ def create_news_analyst(llm, toolkit):
                 ).strip()
             )
         
-        # Check if the result already contains FINAL TRANSACTION PROPOSAL
-        if "FINAL TRANSACTION PROPOSAL:" not in result.content:
-            # Create a simple prompt that includes the analysis content directly
-            final_prompt = render_prompt(
-                "analysts/news_final_recommendation",
-                ticker=ticker,
-                analysis_content=result.content,
-            )
-            
-            # Use a simple chain without tools for the final recommendation
-            final_chain = llm
-            final_result = final_chain.invoke(final_prompt)
-            
-            # Combine the analysis with the final proposal
-            combined_content = result.content + "\n\n" + final_result.content
-            result = AIMessage(content=combined_content)
+        # The analyst report is exactly what the tool loop produced. No
+        # separate final-recommendation call exists: analysts never emit
+        # executable actions, and an empty report is handled by the
+        # selected-analyst coverage gate, not patched here.
+        analysis_content = (result.content or "").strip()
+        result = AIMessage(content=analysis_content)
 
+        merged_status = "completed" if analysis_content else "failed"
         return {
             "messages": [result],
             "news_report": result.content,
+            "analysis_status": {
+                **(state.get("analysis_status") or {}),
+                "news": merged_status,
+            },
+            "analysis_errors": (
+                {
+                    **(state.get("analysis_errors") or {}),
+                    "news": "news analyst returned an empty report",
+                }
+                if merged_status == "failed"
+                else state.get("analysis_errors") or {}
+            ),
         }
 
     return news_analyst_node

@@ -1,5 +1,7 @@
 import unittest
+from datetime import datetime
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
@@ -10,6 +12,11 @@ from tradingagents.agents.utils.agent_utils import (
     _should_retry_tool_output,
 )
 from tradingagents.default_config import DEFAULT_CONFIG
+
+
+def _live_date() -> str:
+    """Today's Eastern date: these tests exercise live-mode tool selection."""
+    return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
 
 class FakeTool:
@@ -58,7 +65,7 @@ class NewsLatencyControlTests(unittest.TestCase):
         with patch("tradingagents.agents.analysts.news_analyst.capture_agent_prompt"):
             result = node(
                 {
-                    "trade_date": "2026-05-03",
+                    "trade_date": _live_date(),
                     "company_of_interest": "NVDA",
                     "messages": [],
                 }
@@ -78,7 +85,7 @@ class NewsLatencyControlTests(unittest.TestCase):
         with patch("tradingagents.agents.analysts.news_analyst.capture_agent_prompt"):
             node(
                 {
-                    "trade_date": "2026-05-03",
+                    "trade_date": _live_date(),
                     "company_of_interest": "NVDA",
                     "messages": [],
                 }

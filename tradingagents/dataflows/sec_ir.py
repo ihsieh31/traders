@@ -74,6 +74,9 @@ class SourceRecord:
 
     @property
     def is_fresh(self) -> bool:
+        return self.is_fresh_at(datetime.now(timezone.utc))
+
+    def is_fresh_at(self, now: datetime) -> bool:
         if self.error or not self.published_at:
             return False
         try:
@@ -85,8 +88,7 @@ class SourceRecord:
         if published.tzinfo is None:
             return False
         published = published.astimezone(timezone.utc)
-        now = datetime.now(timezone.utc)
-        if published > now + timedelta(minutes=5):
+        if published > now:
             return False  # future timestamps are never fresh
         days = self.freshness_days
         if days is None:
@@ -215,7 +217,7 @@ class SecIrClient:
 
     # -- filings ---------------------------------------------------------------
 
-    def latest_filings(self, symbol: str, forms: tuple = ("10-K", "10-Q", "8-K")) -> List[SourceRecord]:
+    def latest_filings(self, symbol: str, forms: tuple = ("10-K", "10-Q", "8-K"), *, as_of: Optional[datetime] = None) -> List[SourceRecord]:
         """Latest filings per form type from the official submissions feed."""
         normalized = (symbol or "").upper().replace("/", "")
         records: List[SourceRecord] = []
@@ -261,9 +263,22 @@ class SecIrClient:
         filing_dates = recent.get("filingDate", [])
         documents = recent.get("primaryDocument", [])
         reports = recent.get("reportDate", [])
+        accepted = recent.get("acceptanceDateTime", [])
         seen_forms: set[str] = set()
         for idx, form in enumerate(form_list):
             if form not in forms or form in seen_forms:
+                continue
+            accepted_at = accepted[idx] if idx < len(accepted) else None
+            filing_day = filing_dates[idx] if idx < len(filing_dates) else None
+            try:
+                # Date-only filings are conservatively available after that date.
+                published = (datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
+                             if accepted_at else datetime.fromisoformat(filing_day).replace(tzinfo=timezone.utc) + timedelta(days=1))
+                if published.tzinfo is None:
+                    continue
+                if published > (as_of or datetime.now(timezone.utc)):
+                    continue
+            except (ValueError, TypeError, AttributeError):
                 continue
             seen_forms.add(form)
             accession = accessions[idx] if idx < len(accessions) else ""
@@ -272,11 +287,7 @@ class SecIrClient:
             report_date = reports[idx] if idx < len(reports) else None
             # published_at is the filing date (when it became public), not
             # the retrieval time. reportDate (period end) is context only.
-            published_iso = (
-                datetime.fromisoformat(filing_date).replace(tzinfo=timezone.utc).isoformat()
-                if filing_date
-                else None
-            )
+            published_iso = published.isoformat()
             accession_nodash = accession.replace("-", "") if accession else ""
             url = (
                 DOCUMENT_URL_TEMPLATE.format(
@@ -380,7 +391,7 @@ def render_sec_ir_report(
     current = now or datetime.now(timezone.utc)
     lines = [
         f"Primary source check for {symbol} (SEC filings and configured "
-        "company IR pages). Supplemental material only — the regular market "
+        "company IR pages). Filing metadata does not verify financial figures or document contents. Supplemental material only — the regular market "
         "and news data flow still applies and is labeled separately.",
     ]
     any_fresh = False
@@ -398,7 +409,7 @@ def render_sec_ir_report(
             published_text = f"{record.published_at} (~{age_days} days old)"
         except (ValueError, AttributeError, TypeError):
             published_text = "unavailable"
-        if record.is_fresh:
+        if record.is_fresh_at(current):
             any_fresh = True
             freshness = "FRESH"
         else:

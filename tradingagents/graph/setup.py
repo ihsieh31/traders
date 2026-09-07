@@ -290,19 +290,24 @@ class GraphSetup:
                     # analysts and no downstream node is dispatched; the
                     # legacy empty-report fallback must not swallow it.
                     print(f"[PARALLEL] {analyst_type} analyst provider failure: {e}")
+                    if ui_available:
+                        analyst_name = f"{analyst_type.capitalize()} Analyst"
+                        app_state.update_agent_status(analyst_name, "pending")
                     raise
 
                 except Exception as e:
+                    # Any selected-analyst failure fails the whole Parallel
+                    # Analysts node: no partial reports may be merged and no
+                    # downstream decision node may run. Mark the analyst as
+                    # not-completed in the UI and re-raise.
                     print(f"[PARALLEL] Error in {analyst_type} analyst: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-                    # Update UI status to error (completed with issues)
                     if ui_available:
                         analyst_name = f"{analyst_type.capitalize()} Analyst"
-                        app_state.update_agent_status(analyst_name, "completed")
-
-                    return analyst_type, analyst_state
+                        # The UI status vocabulary has no distinct "failed"
+                        # value; reset to pending so a failed analyst is never
+                        # displayed as completed.
+                        app_state.update_agent_status(analyst_name, "pending")
+                    raise
             
             # Execute all analysts in parallel with staggered starts
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(selected_analysts)) as executor:
@@ -335,16 +340,25 @@ class GraphSetup:
                             pending.cancel()
                         raise
                     except Exception as e:
+                        # Any selected-analyst exception fails the whole node.
                         print(f"[PARALLEL] {analyst_type} analyst failed: {e}")
-                        completed_results[analyst_type] = state  # Use original state as fallback
+                        for pending in future_to_analyst:
+                            pending.cancel()
+                        raise
             
             print(f"[PARALLEL] All analysts completed. Merging results...")
             
             # Merge all results into the final state
             final_state = copy.deepcopy(state)
-            
+
             # Collect all analyst reports
             for analyst_type, result_state in completed_results.items():
+                # Merge per-analyst completion status and sanitized errors.
+                for status_key in ("analysis_status", "analysis_errors"):
+                    merged = dict(final_state.get(status_key) or {})
+                    merged.update(result_state.get(status_key) or {})
+                    final_state[status_key] = merged
+
                 # Determine the report field name
                 report_field = f"{analyst_type}_report"
                 if analyst_type == "social":
@@ -641,7 +655,7 @@ class GraphSetup:
         workflow = StateGraph(AgentState)
         report_context_node = self._wrap_node_with_run_logging(
             "Build Report Context",
-            create_report_context_node(self.config),
+            create_report_context_node(self.config, selected_analysts=selected_analysts),
         )
         workflow.add_node("Build Report Context", report_context_node)
 

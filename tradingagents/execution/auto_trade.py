@@ -38,6 +38,9 @@ def execute_auto_trade(
             ),
         }
 
+    if config is None:
+        from tradingagents.dataflows.config import get_config
+        config = get_config() or {}
     action = trade_intent_action(trade_intent)
     amount = float(base_trade_notional_usd or 0.0)
 
@@ -87,4 +90,5 @@ def execute_auto_trade(
         run_id=run_id,
         dollar_amount=amount,
         allow_shorts=allow_shorts,
+        risk_params=(config.get("risk_sizing_params") or {}) if config.get("risk_sizing_enabled", False) else None,
     )

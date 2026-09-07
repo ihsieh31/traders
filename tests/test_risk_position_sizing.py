@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from tradingagents.agents.schemas import (
+    EntryPolicy,
     ExecutableAction,
     RiskDecision,
     build_trade_intent_from_risk_decision,
@@ -89,6 +90,7 @@ class PositionSizerTests(unittest.TestCase):
         self.sizer = PositionSizer(RiskParameters())
 
     def test_kelly_cap_binds_when_smallest(self):
+        self.sizer = PositionSizer(RiskParameters(kelly_enabled=True, confidence_edge={"high": (0.55, 1.5)}))
         # equity=100k, price=100, atr=2, stop=4 -> risk notional 25k
         # kelly(high)=0.125 -> 12.5k ; max position 20% -> 20k ; requested 50k
         decision = self.sizer.size_position(
@@ -190,7 +192,7 @@ class PositionSizerTests(unittest.TestCase):
 
     def test_result_below_minimum_notional_is_rejected(self):
         decision = self.sizer.size_position(
-            equity=50.0,
+            equity=40.0,
             price=100.0,
             atr=2.0,
             confidence="high",
@@ -238,6 +240,13 @@ class AccountRiskSnapshotTests(unittest.TestCase):
                 AlpacaUtils.get_account_risk_snapshot()
 
 
+def _ready_policy():
+    now = datetime.now(timezone.utc)
+    return EntryPolicy(status="READY", minimum_price=100, maximum_price=100,
+                       expires_at=(now + timedelta(hours=1)).isoformat(),
+                       exit_by=(now + timedelta(days=5)).isoformat(), confirmation="observed setup")
+
+
 def _buy_intent(confidence="high"):
     return build_trade_intent_from_risk_decision(
         symbol="AAPL",
@@ -250,6 +259,7 @@ def _buy_intent(confidence="high"):
             confidence=confidence,
             risk_rationale="Buy setup.",
             required_controls="Stop below support.",
+            stop_loss_price=96.0, entry_policy=_ready_policy(),
         ),
     ).model_dump(mode="json")
 
@@ -289,7 +299,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         close_order.status = "accepted"
         broker.close_position.return_value = close_order
         broker.get_account.return_value = SimpleNamespace(
-            id="paper-risk", equity="100000", cash="100000", buying_power="200000"
+            id="paper-risk", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )
         broker.get_all_positions.return_value = []
         broker.get_orders.return_value = []
@@ -322,7 +332,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
                 trade_intent=_buy_intent(),
                 dollar_amount=50_000,
                 allow_shorts=False,
-                risk_params={},
+                risk_params={"kelly_enabled": True, "confidence_edge": {"high": (0.55, 1.5)}},
             )
 
         self.assertTrue(result["success"])
@@ -369,7 +379,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         broker.submit_order.assert_not_called()
         broker.close_position.assert_not_called()
 
-    def test_risk_sizing_stop_is_forwarded_to_protective_order_execution(self):
+    def test_intent_stop_is_preserved_if_sizer_returns_a_different_stop(self):
         import tempfile
 
         sizing = SizingDecision(
@@ -400,9 +410,9 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         request = broker.submit_order.call_args[0][0]
-        self.assertEqual(float(request.stop_loss.stop_price), 95.0)
+        self.assertEqual(float(request.stop_loss.stop_price), 96.0)
 
-    def test_risk_engine_data_failure_fails_open_with_warning(self):
+    def test_risk_engine_data_failure_fails_closed(self):
         import tempfile
 
         broker = self._broker()
@@ -421,16 +431,10 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
                 risk_params={},
             )
 
-        self.assertTrue(result["success"])
-        self.assertFalse(result["risk_sizing"]["applied"])
-        request = broker.submit_order.call_args[0][0]
-        # Phase B deterministic exposure cap: the configured 50k opening
-        # notional is clipped to the 25% symbol cap on the 100k equity
-        # account (fail-open sizing still executes; the cap still binds).
-        self.assertEqual(float(request.notional), 25_000)
-        self.assertTrue(
-            any("risk sizing" in w.lower() for w in result["intent_warnings"])
-        )
+        self.assertFalse(result["success"])
+        self.assertTrue(result["fail_closed"])
+        self.assertIn("Risk sizing unavailable", result["error"])
+        broker.submit_order.assert_not_called()
 
     def test_risk_sizing_skipped_for_closing_actions(self):
         import tempfile
@@ -472,7 +476,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         broker.submit_order.assert_called_once()
         broker.close_position.assert_not_called()
 
-    def test_risk_sizing_skipped_when_target_position_is_already_held(self):
+    def test_risk_sizing_also_checks_same_side_increases(self):
         import tempfile
 
         broker = self._broker()
@@ -480,7 +484,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             SimpleNamespace(symbol="AAPL", qty="5", market_value="500")
         ]
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            AlpacaUtils, "get_account_risk_snapshot"
+            AlpacaUtils, "compute_risk_sized_amount", return_value=SizingDecision(approved=True, notional=1000, stop_loss_price=96, risk_amount=40, caps_applied=[], reason="test")
         ) as snapshot, patch(
             "tradingagents.safety.get_safety_guard",
             return_value=self._disabled_guard(),
@@ -494,15 +498,13 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             )
 
         self.assertTrue(result["success"])
-        snapshot.assert_not_called()
-        # Phase B: an opening order on an already-held symbol is an exposure
-        # increase governed by the deterministic caps — no implicit HOLD, and
-        # the risk-sizing engine is not consulted for same-target increases.
+        snapshot.assert_called_once()
+        # Increasing an existing position is new risk and must be sized.
         self.assertFalse(result.get("hold", False))
         self.assertEqual(broker.submit_order.call_count, 1)
-        self.assertNotIn("risk_sizing", result)
+        self.assertTrue(result["risk_sizing"]["applied"])
 
-    def test_default_call_without_risk_params_preserves_legacy_behavior(self):
+    def test_default_call_still_requires_a_protective_stop(self):
         import tempfile
 
         broker = self._broker()
@@ -519,7 +521,8 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertNotIn("risk_sizing", result)
         request = broker.submit_order.call_args[0][0]
-        self.assertEqual(float(request.notional), 1_000)
+        self.assertEqual(float(request.qty), 10)
+        self.assertEqual(float(request.stop_loss.stop_price), 96)
 
 
 class CalcQtyPriceFailureTests(unittest.TestCase):
@@ -550,7 +553,7 @@ class CalcQtyPriceFailureTests(unittest.TestCase):
         order.status = "accepted"
         broker.submit_order.return_value = order
         broker.get_account.return_value = SimpleNamespace(
-            id="paper-price", equity="100000", cash="100000", buying_power="200000"
+            id="paper-price", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )
         broker.get_all_positions.return_value = []
         broker.get_orders.return_value = []
@@ -601,7 +604,7 @@ class CalcQtyPriceFailureTests(unittest.TestCase):
                 confidence="high",
                 risk_rationale="Buy setup.",
                 required_controls="Stop at 95, target 110.",
-                stop_loss="95",
+                stop_loss="95", entry_policy=_ready_policy(),
                 take_profit="110",
             ),
         ).model_dump(mode="json")

@@ -4,6 +4,8 @@ import requests
 import datetime
 from typing import List, Dict, Tuple, Optional
 
+from .interface_utils import HISTORICAL_SOURCE_UNAVAILABLE, analysis_date_mode
+
 """defillama_utils.py — lightweight helpers that pull free on‑chain fundamentals
 from DeFi Llama’s open API so your agent can issue Buy / Sell / Hold
 signals without paid data feeds.
@@ -130,7 +132,7 @@ def _get_chain_fundamentals(symbol: str, lookback_days: int = 30) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def get_fundamentals(symbol: str, lookback_days: int = 30) -> str:
+def get_fundamentals(symbol: str, lookback_days: int = 30, curr_date: Optional[str] = None) -> str:
     """Return a markdown summary of free fundamentals for *symbol*.
 
     The summary includes:
@@ -141,10 +143,16 @@ def get_fundamentals(symbol: str, lookback_days: int = 30) -> str:
     Args:
         symbol: Token ticker such as 'UNI', 'SOL', 'GMX'.
         lookback_days: Window size for change / sum calculations.
+        curr_date: Analysis as-of date (yyyy-mm-dd). Missing curr_date is
+            only allowed for direct live calls; historical callers must pass
+            the analysis date so the live-only source is rejected before HTTP.
 
     Returns:
         Markdown‑formatted string suitable for LLM prompts or dashboards.
     """
+    # Live-only source: reject historical as-of before any HTTP call.
+    if curr_date is not None and analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
 
     # Check if this is a major base chain first (prioritize chain-level data)
     base_chains = ["ETH", "SOL", "AVAX", "MATIC", "BNB", "FTM", "ATOM", "ONE", "LUNA", "DOT"]

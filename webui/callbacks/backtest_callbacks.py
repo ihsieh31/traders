@@ -146,7 +146,7 @@ def _build_windows_table(windows):
         )
     return html.Div(
         [
-            html.H6("Out-of-sample windows", className="mt-2"),
+            html.H6("Segmented diagnostic windows", className="mt-2"),
             dbc.Table([header, html.Tbody(rows)], bordered=False, hover=True, size="sm", striped=True),
         ]
     )

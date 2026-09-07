@@ -1,3 +1,4 @@
+Legacy unused template: analysts no longer produce final recommendations; runtime must not load this file.
 Based on the following fundamental analysis for {ticker}, please provide your final trading recommendation considering the financial health, valuation, and earnings outlook.
 
 Analysis:

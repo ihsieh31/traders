@@ -22,6 +22,14 @@ from tradingagents.agents.schemas import (
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 
 
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 189, "maximum_price": 191,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
+
 def _intent(symbol="AAPL", stop_loss=None, take_profit=None, action=ExecutableAction.BUY,
             trading_mode="investment", current_position="NEUTRAL", allow_shorts=False):
     return build_trade_intent_from_risk_decision(
@@ -35,6 +43,7 @@ def _intent(symbol="AAPL", stop_loss=None, take_profit=None, action=ExecutableAc
             confidence="medium",
             risk_rationale="test",
             required_controls="test controls",
+            entry_policy=_ready_entry_policy(),
             stop_loss=stop_loss,
             take_profit=take_profit,
         ),
@@ -46,10 +55,10 @@ class ExtractProtectivePriceTests(unittest.TestCase):
         self.assertEqual(extract_protective_price("182.50"), 182.50)
 
     def test_parses_dollar_prefixed_number(self):
-        self.assertEqual(extract_protective_price("Stop at $1,234.56 (ATR-based)"), 1234.56)
+        self.assertEqual(extract_protective_price("$1,234.56"), 1234.56)
 
-    def test_takes_first_price_when_multiple(self):
-        self.assertEqual(extract_protective_price("195 then 202"), 195.0)
+    def test_rejects_ambiguous_multiple_prices(self):
+        self.assertIsNone(extract_protective_price("195 then 202"))
 
     def test_returns_none_for_no_number(self):
         self.assertIsNone(extract_protective_price("trail below support"))
@@ -85,7 +94,7 @@ class BracketExecutionTests(unittest.TestCase):
         order.order_class = "bracket"
         self.client.submit_order.return_value = order
         self.client.get_account.return_value = SimpleNamespace(
-            id="paper-bracket", equity="100000", cash="100000", buying_power="200000"
+            id="paper-bracket", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )
         self.client.get_all_positions.return_value = []
         self.client.get_orders.return_value = []
@@ -151,29 +160,27 @@ class BracketExecutionTests(unittest.TestCase):
         self.assertEqual(float(request.stop_loss.stop_price), 182.50)
         self.assertIsNone(request.take_profit)
 
-    def test_crypto_buy_stays_advisory(self):
+    def test_crypto_buy_without_supported_protection_is_blocked(self):
         result = self._execute(
             _intent(symbol="BTC/USD", stop_loss="60000", take_profit="70000"),
             symbol="BTC/USD",
         )
 
-        self.assertEqual(result["protective_order_status"], "advisory_only")
-        request = self.client.submit_order.call_args[0][0]
-        self.assertIsNone(getattr(request, "stop_loss", None))
-        self.assertTrue(any("crypto" in w.lower() for w in result["intent_warnings"]))
+        self.assertFalse(result["success"])
+        self.client.submit_order.assert_not_called()
 
-    def test_inverted_long_prices_fall_back_to_advisory(self):
+    def test_inverted_long_prices_are_blocked(self):
         # For a long entry the stop must sit below the target.
         result = self._execute(_intent(stop_loss="200", take_profit="180"))
 
-        self.assertEqual(result["protective_order_status"], "advisory_only")
-        request = self.client.submit_order.call_args[0][0]
-        self.assertIsNone(getattr(request, "stop_loss", None))
+        self.assertFalse(result["success"])
+        self.client.submit_order.assert_not_called()
 
-    def test_no_numeric_prices_stays_advisory(self):
+    def test_no_numeric_stop_is_blocked(self):
         result = self._execute(_intent(stop_loss="below support"))
 
-        self.assertEqual(result["protective_order_status"], "advisory_only")
+        self.assertFalse(result["success"])
+        self.client.submit_order.assert_not_called()
 
     def test_config_flag_disables_bracket_submission(self):
         with patch(
@@ -182,9 +189,8 @@ class BracketExecutionTests(unittest.TestCase):
         ):
             result = self._execute(_intent(stop_loss="182.50", take_profit="195"))
 
-        self.assertEqual(result["protective_order_status"], "advisory_only")
-        request = self.client.submit_order.call_args[0][0]
-        self.assertIsNone(getattr(request, "stop_loss", None))
+        self.assertFalse(result["success"])
+        self.client.submit_order.assert_not_called()
 
     def test_bracket_rejection_is_terminal_without_plain_retry(self):
         self.client.submit_order.side_effect = Exception("bracket orders not allowed")

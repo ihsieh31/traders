@@ -1,10 +1,9 @@
 """
-webui/components/backtest_panel.py - Walk-forward backtest dashboard panel
+webui/components/backtest_panel.py - recorded signal diagnostic panel
 
-Replays the decisions already recorded under eval_results/ against
-historical prices (zero LLM cost) and reports the TradingAgents-paper
-metric set: cumulative/annualized return, Sharpe ratio, max drawdown,
-plus win rate, per walk-forward window and for the full period.
+Replays recorded single-symbol signals against historical prices (zero LLM
+cost) and reports diagnostic metrics. This is not out-of-sample training or
+a full portfolio backtest and does not prove profitability.
 """
 
 import dash_bootstrap_components as dbc
@@ -111,8 +110,8 @@ def create_backtest_panel():
             dbc.Col(
                 html.Div(
                     "Injects one dated lesson per recorded decision (with its "
-                    "realized next-open return) into the persistent agent "
-                    "memories — idempotent, zero LLM cost.",
+                    "fixed-horizon hypothetical position return) into the "
+                    "persistent agent memories — idempotent, zero LLM cost.",
                     className="text-muted small",
                 ),
             ),
@@ -123,10 +122,13 @@ def create_backtest_panel():
     return dbc.Card(
         dbc.CardBody(
             [
-                html.H4("Walk-Forward Backtest", className="mb-1"),
+                html.H4("Recorded Signal Diagnostic", className="mb-1"),
                 html.Div(
-                    "Replays this deployment's recorded agent decisions on historical "
-                    "prices — signals execute at the next bar's open (no lookahead).",
+                    "Replays recorded single-symbol signals. This is not "
+                    "out-of-sample training or a full portfolio backtest and "
+                    "does not prove profitability. Screening, live sizing, "
+                    "protective-order behavior and complete research/trading "
+                    "costs are not replayed.",
                     className="text-muted small mb-3",
                 ),
                 controls,

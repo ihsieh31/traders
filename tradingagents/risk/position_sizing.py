@@ -14,14 +14,9 @@ from typing import Optional
 
 import pandas as pd
 
-# Conservative (win_rate, win/loss ratio) estimates per LLM confidence level.
-# Deliberately shrunk: Kelly sizing is fragile to estimation error, so these
-# assume only a slight edge even at high confidence.
-DEFAULT_CONFIDENCE_EDGE = {
-    "high": (0.55, 1.5),
-    "medium": (0.52, 1.3),
-    "low": (0.50, 1.1),
-}
+# No empirical calibration is bundled. Kelly is opt-in and requires an
+# explicitly supplied, versioned estimate from out-of-sample observations.
+DEFAULT_CONFIDENCE_EDGE = {}
 
 # Assumed stop distance as a fraction of price when no volatility data exists.
 FALLBACK_STOP_PCT = 0.05
@@ -88,6 +83,7 @@ class RiskParameters:
     """Tunable, deterministic risk limits. Defaults are intentionally strict."""
 
     risk_per_trade_pct: float = 0.01  # fraction of equity risked per trade
+    kelly_enabled: bool = False
     kelly_fraction: float = 0.5  # half-Kelly
     atr_period: int = 14
     atr_stop_multiplier: float = 2.0
@@ -154,6 +150,7 @@ class PositionSizer:
         requested_notional: float,
         current_gross_exposure: float = 0.0,
         side: str = "buy",
+        stop_loss_price: Optional[float] = None,
     ) -> SizingDecision:
         params = self.params
         try:
@@ -172,7 +169,12 @@ class PositionSizer:
             return _rejection(f"Invalid requested notional: {requested_notional}.")
 
         notes = []
-        if atr is not None and math.isfinite(atr) and atr > 0.0:
+        if stop_loss_price is not None:
+            stop = float(stop_loss_price)
+            stop_distance = stop - price if str(side).lower() in ("sell", "short") else price - stop
+            if not math.isfinite(stop) or stop <= 0 or stop_distance <= 0:
+                return _rejection("Invalid executable stop-loss price.")
+        elif atr is not None and math.isfinite(atr) and atr > 0.0:
             stop_distance = float(atr) * params.atr_stop_multiplier
         else:
             stop_distance = price * FALLBACK_STOP_PCT
@@ -191,20 +193,15 @@ class PositionSizer:
         risk_budget = equity * params.risk_per_trade_pct
         risk_notional = (risk_budget / stop_distance) * price
 
-        edge = params.confidence_edge.get(
-            str(confidence).strip().lower(),
-            params.confidence_edge.get("low", DEFAULT_CONFIDENCE_EDGE["low"]),
-        )
-        win_rate, win_loss_ratio = edge
-        kelly_f = kelly_position_fraction(
-            win_rate, win_loss_ratio, params.kelly_fraction
-        )
-        if kelly_f <= 0.0:
-            return _rejection(
-                f"No positive edge for confidence '{confidence}'; Kelly allocation is zero.",
-                notes,
-            )
-        kelly_notional = equity * kelly_f
+        kelly_notional = float("inf")
+        if params.kelly_enabled:
+            edge = params.confidence_edge.get(str(confidence).strip().lower())
+            if not edge or len(edge) != 2:
+                return _rejection("Kelly requires an explicit calibrated edge for this confidence.")
+            kelly_f = kelly_position_fraction(*edge, params.kelly_fraction)
+            if not math.isfinite(kelly_f) or kelly_f <= 0:
+                return _rejection("No positive calibrated Kelly allocation.")
+            kelly_notional = equity * kelly_f
 
         caps = {
             "requested_notional": requested_notional,

@@ -10,6 +10,7 @@ DEFAULT_CONFIG = {
         os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
     ),
     "memory_log_max_entries": None,
+    "memory_retrieval_enabled": False,  # Enable only after validating lessons on held-out data.
     # Self-learning memory: when set, the per-agent ChromaDB reflection
     # memories persist across restarts instead of resetting each session.
     "agent_memory_dir": os.getenv(
@@ -18,7 +19,7 @@ DEFAULT_CONFIG = {
     ),
     # Feed realized outcomes back into the per-agent memories (5 quick-LLM
     # reflection calls per resolved decision). Requires OpenAI embeddings.
-    "reflection_on_outcome_enabled": True,
+    "reflection_on_outcome_enabled": False,
     # FinMem-style memory maintenance (arXiv:2311.13743): Ebbinghaus time
     # decay with importance-scaled stability, near-duplicate pruning, and a
     # per-collection size cap. Runs after outcome reflections.

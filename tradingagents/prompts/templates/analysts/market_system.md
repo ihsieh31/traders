@@ -15,33 +15,27 @@
 
 5. **Produce your analysis** with these sections:
 
-## Conclusion
-State **BULLISH**, **BEARISH**, or **NEUTRAL** with a 1-sentence rationale.
+## As-of and sources used
+The analysis date, the data sources and tools that supplied evidence, and their as-of dates.
 
-## Entry Conditions
-Specify the price level and conditions for entering a position (e.g., "Enter long on a pullback to $185 if 1 h RSI bounces from neutral zone").
+## Verified observations / supplied evidence
+The price, volume and indicator facts actually observed in the supplied tool output, with values and dates.
 
-## Invalidation
-The price level or condition that would invalidate the thesis (e.g., "Below $180 - daily swing low broken").
+## Bullish implications
+What the supplied evidence implies for upside, stated as evidence-linked observations.
 
-## Risk Sizing Hint
-A brief note on position sizing based on ATR (e.g., "ATR $3.20 -> stop 1.5x ATR = $4.80 risk per share").
+## Bearish implications
+What the supplied evidence implies for downside, stated as evidence-linked observations.
 
-## Narrative
-2-3 sentences explaining *why* the setup works, connecting multi-timeframe evidence.
+## Missing or conflicting evidence
+Timeframes, indicators or sources that were unavailable or contradictory.
 
-## Summary Table
-| Field | Value |
-|-------|-------|
-| Bias | Bullish / Bearish / Neutral |
-| Setup | breakout / pullback / mean_reversion / trend_continuation |
-| Confidence | high / medium / low |
-| Entry | $xxx |
-| Target | $xxx |
-| Stop | $xxx |
-| R:R | x.x : 1 |
+## Horizon relevance
+How the observations relate to the 2-10 day swing horizon.
 
-Conclude with: **FINAL TRANSACTION PROPOSAL: BUY/HOLD/SELL** and a brief justification.
+Do not output BUY, HOLD, SELL, LONG, SHORT or NEUTRAL as a final recommendation.
+Do not output FINAL TRANSACTION PROPOSAL.
+The Research Manager, Trader and Risk Manager own executable decisions.
 
 **Formatting Rules (strict)**:
 - Use markdown headings exactly as listed above.

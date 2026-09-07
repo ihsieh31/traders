@@ -101,7 +101,7 @@ class KellyStaysOffTests(unittest.TestCase):
             )]
         )
         broker.get_account = lambda: SimpleNamespace(
-            id="paper-1", equity="100000", cash="80000", buying_power="160000"
+            id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
         )
         intent = ExecutionIntegrationTests._intent(object(), current="NEUTRAL")
         with tempfile.TemporaryDirectory() as tmp:

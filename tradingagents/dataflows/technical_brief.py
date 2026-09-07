@@ -41,7 +41,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 TIMEFRAMES: Dict[str, Tuple[str, int]] = {
     "1h": ("1Hour", 30),      # ~30 days of hourly bars ≈ 200 bars
     "4h": ("4Hour", 90),      # ~90 days of 4h bars ≈ 540 bars
-    "1d": ("1Day", 200),      # 200 calendar days ≈ 140 trading days
+    "1d": ("1Day", 420),      # More than 200 completed US trading sessions, including holidays
 }
 
 
@@ -59,15 +59,30 @@ def _sma(series: pd.Series, period: int) -> pd.Series:
     return series.rolling(window=period).mean()
 
 
+def _wilder_average(series: pd.Series, period: int) -> pd.Series:
+    """Seed with a full arithmetic mean, then Wilder's recursive smoothing."""
+    result = pd.Series(np.nan, index=series.index, dtype=float)
+    for index in range(period - 1, len(series)):
+        value = series.iloc[index]
+        if not np.isfinite(value):
+            continue
+        previous = result.iloc[index - 1] if index else np.nan
+        if np.isfinite(previous):
+            result.iloc[index] = (previous * (period - 1) + value) / period
+        else:
+            seed = series.iloc[index - period + 1:index + 1]
+            if np.isfinite(seed).all():
+                result.iloc[index] = float(seed.mean())
+    return result
+
+
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    """Wilder RSI."""
     delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return 100 - (100 / (1 + rs))
+    gain = _wilder_average(delta.clip(lower=0), period)
+    loss = _wilder_average(-delta.clip(upper=0), period)
+    result = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    result = result.mask((loss == 0) & (gain > 0), 100.0)
+    return result.mask((loss == 0) & (gain == 0), 50.0)
 
 
 def _stoch_rsi(close: pd.Series, period: int = 14, k: int = 3, d: int = 3) -> Tuple[pd.Series, pd.Series]:
@@ -82,19 +97,18 @@ def _stoch_rsi(close: pd.Series, period: int = 14, k: int = 3, d: int = 3) -> Tu
 
 
 def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    """Average Directional Index."""
-    plus_dm = high.diff()
-    minus_dm = low.diff()
-    plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0
-    
-    tr = _atr(high, low, close, period=1) # TR for 1 period
-    atr = _atr(high, low, close, period=period)
-    
-    plus_di = 100 * (plus_dm.ewm(alpha=1/period).mean() / atr)
-    minus_di = 100 * (minus_dm.abs().ewm(alpha=1/period).mean() / atr)
-    dx = (abs(plus_di - minus_di) / abs(plus_di + minus_di)) * 100
-    return dx.ewm(alpha=1/period).mean()
+    """Wilder directional movement: outside bars contribute to only one side."""
+    up = high.diff()
+    down = -low.diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    plus_dm.iloc[0] = minus_dm.iloc[0] = np.nan
+    plus = _wilder_average(plus_dm, period)
+    minus = _wilder_average(minus_dm, period)
+    # The common ATR denominator cancels in DX.
+    total = plus + minus
+    dx = (100 * (plus - minus).abs() / total.replace(0, np.nan)).mask(total == 0, 0.0)
+    return _wilder_average(dx, period)
 
 
 def _macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
@@ -115,7 +129,8 @@ def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) ->
         (high - prev_close).abs(),
         (low - prev_close).abs(),
     ], axis=1).max(axis=1)
-    return tr.rolling(window=period).mean()
+    tr.iloc[0] = np.nan
+    return _wilder_average(tr, period)
 
 
 def _bollinger(close: pd.Series, period: int = 20, num_std: float = 2.0):
@@ -218,7 +233,7 @@ def detect_trend(df: pd.DataFrame) -> TrendState:
     ema8 = df["ema_8"].iloc[-1]
     ema21 = df["ema_21"].iloc[-1]
     sma50 = df["sma_50"].iloc[-1]
-    sma200 = float(df["sma_200"].iloc[-1]) if "sma_200" in df.columns and not pd.isna(df["sma_200"].iloc[-1]) else 0.0
+    sma200 = float(df["sma_200"].iloc[-1]) if "sma_200" in df.columns and not pd.isna(df["sma_200"].iloc[-1]) else None
 
     # Normalized EMA-8 slope (pct change over last 5 bars)
     ema8_recent = df["ema_8"].iloc[-6:]
@@ -257,7 +272,7 @@ def detect_trend(df: pd.DataFrame) -> TrendState:
         adx_strength = "weak"
     
     # SMA 200 Distance
-    sma200_dist = ((close - sma200) / sma200) * 100 if sma200 > 0 else 0.0
+    sma200_dist = ((close - sma200) / sma200) * 100 if sma200 is not None and sma200 > 0 else None
 
     return TrendState(
         direction=direction,
@@ -267,8 +282,8 @@ def detect_trend(df: pd.DataFrame) -> TrendState:
         higher_lows=hl,
         adx=round(adx_val, 2),
         trend_strength_adx=adx_strength,
-        sma_200=round(sma200, 2),
-        sma_200_dist=round(sma200_dist, 2),
+        sma_200=round(sma200, 2) if sma200 is not None else None,
+        sma_200_dist=round(sma200_dist, 2) if sma200_dist is not None else None,
     )
 
 

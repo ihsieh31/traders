@@ -881,6 +881,7 @@ class AlpacaUtils:
         side: str = "buy",
         authoritative_snapshot: Optional[Any] = None,
         authoritative_quote: Optional[Any] = None,
+        stop_loss_price: Optional[float] = None,
     ) -> SizingDecision:
         """Run the deterministic sizing engine against live account/market data.
 
@@ -926,6 +927,7 @@ class AlpacaUtils:
             requested_notional=requested_notional,
             current_gross_exposure=snapshot["gross_exposure"],
             side=side,
+            stop_loss_price=stop_loss_price,
         )
 
     @staticmethod

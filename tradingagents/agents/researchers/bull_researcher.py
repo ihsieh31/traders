@@ -35,7 +35,7 @@ def create_bull_researcher(llm, memory):
         debate_digest = build_debate_digest(investment_debate_state, "investment")
         all_reports_text = context_bundle.get("all_reports_text", "")
         curr_situation = context_bundle["memory_context"]
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = memory.get_memories(curr_situation, n_matches=2, as_of=state.get("trade_date"))
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):

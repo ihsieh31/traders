@@ -51,12 +51,12 @@ def create_research_manager(llm, memory, config=None):
         all_reports_text = context_bundle.get("all_reports_text", "")
 
         curr_situation = context_bundle["memory_context"]
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = memory.get_memories(curr_situation, n_matches=2, as_of=state.get("trade_date"))
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
-        decision_memory_str = decision_log.get_past_context(ticker)
+        decision_memory_str = decision_log.get_past_context(ticker, as_of=state.get("trade_date"))
 
         prompt = render_prompt(
             "managers/research_manager",

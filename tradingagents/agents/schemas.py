@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,20 +25,27 @@ def extract_protective_price(guidance: Optional[str]) -> Optional[float]:
     """
     if not guidance:
         return None
-    match = _PRICE_PATTERN.search(guidance)
+    # Only a standalone absolute price is unambiguous. Never extract the
+    # "2" in "2 ATR below $100", dates, ranges or percentages.
+    match = re.fullmatch(r"\s*\$?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*", guidance)
     if not match:
         return None
-    # Percentages are relative to an unknown entry price, not price levels.
-    tail = guidance[match.end():].lstrip()
-    if tail.startswith("%") or tail.lower().startswith("percent"):
-        return None
-    whole = match.group(1).replace(",", "")
-    fraction = match.group(2) or "0"
-    try:
-        price = float(f"{whole}.{fraction}")
-    except ValueError:
-        return None
-    return price if price > 0 else None
+    import math
+    price = float(match.group(1).replace(",", ""))
+    return price if math.isfinite(price) and price > 0 else None
+
+
+class EntryPolicy(BaseModel):
+    """Explicit execution contract. WAIT is the safe default, never inferred from prose."""
+    status: Literal["WAIT", "READY"] = "WAIT"
+    minimum_price: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    maximum_price: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    expires_at: Optional[str] = Field(default=None, description="UTC ISO timestamp: last permissible entry.")
+    exit_by: Optional[str] = Field(default=None, description="UTC ISO timestamp: exit on first scheduled check at or after this deadline.")
+    risk_fraction: float = Field(default=0.01, gt=0, le=0.03, allow_inf_nan=False,
+                                description="Maximum planned loss / account equity; stop gaps may exceed it.")
+    maximum_notional: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    confirmation: str = Field(default="", description="Evidence that all non-price conditions are already satisfied. Otherwise WAIT.")
 
 
 class AdvisoryRating(str, Enum):
@@ -128,7 +135,7 @@ class OrderIntent(BaseModel):
 class TradeIntent(BaseModel):
     """Machine-readable execution contract consumed by the execution engine."""
 
-    schema_version: str = Field(default="1.0")
+    schema_version: str = Field(default="2.0")
     symbol: str
     trade_date: Optional[str] = None
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -143,6 +150,9 @@ class TradeIntent(BaseModel):
     planned_actions: list[PlannedBrokerAction] = Field(default_factory=list)
     risk_controls: RiskControls = Field(default_factory=RiskControls)
     execution_constraints: ExecutionConstraints
+    entry_policy: EntryPolicy = Field(default_factory=EntryPolicy)
+    entry_guidance: Optional[str] = None
+    time_horizon: Optional[str] = None
     rationale_summary: str = Field(description="Compact rationale suitable for audit logs.")
 
 
@@ -166,6 +176,9 @@ class TraderProposal(BaseModel):
 
 
 class RiskDecision(BaseModel):
+    entry_policy: EntryPolicy = Field(default_factory=EntryPolicy)
+    stop_loss_price: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    take_profit_price: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
     action: ExecutableAction = Field(description="Final executable action for Alpaca.")
     confidence: str = Field(description="Confidence level: high, medium, or low.")
     risk_rationale: str = Field(description="Risk-adjusted justification.")
@@ -422,8 +435,8 @@ def build_trade_intent_from_risk_decision(
     if target == TargetPosition.SHORT and not allow_shorts:
         warnings.append("Short exposure is disabled for this session.")
 
-    stop_loss_price = extract_protective_price(decision.stop_loss)
-    take_profit_price = extract_protective_price(decision.take_profit)
+    stop_loss_price = decision.stop_loss_price or extract_protective_price(decision.stop_loss)
+    take_profit_price = decision.take_profit_price or extract_protective_price(decision.take_profit)
     has_numeric_controls = bool(stop_loss_price or take_profit_price)
     if (decision.required_controls or decision.stop_loss or decision.take_profit) and not has_numeric_controls:
         warnings.append(
@@ -462,5 +475,8 @@ def build_trade_intent_from_risk_decision(
         planned_actions=planned,
         risk_controls=risk_controls,
         execution_constraints=constraints,
+        entry_policy=decision.entry_policy,
+        entry_guidance=decision.entry_guidance,
+        time_horizon=decision.time_horizon,
         rationale_summary=decision.risk_rationale,
     )

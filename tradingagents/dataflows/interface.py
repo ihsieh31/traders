@@ -19,14 +19,18 @@ from .earnings_utils import get_earnings_calendar_data, get_earnings_surprises_a
 from .macro_utils import get_macro_economic_summary, get_economic_indicators_report, get_treasury_yield_curve
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import json
 import os
 import pandas as pd
 from .config import get_config, set_config, DATA_DIR, get_api_key
 from .interface_utils import (
+    HISTORICAL_SOURCE_UNAVAILABLE,
     _coerce_bool,
+    analysis_date_mode,
     extract_responses_text,
+    parse_analysis_date,
     _strip_trailing_interactive_followup,
     get_global_news_profile_for_depth,
     get_model_params,
@@ -465,6 +469,7 @@ def get_finnhub_company_insider_transactions(
 def get_coindesk_news(
     ticker: Annotated[str, "Ticker symbol, e.g. 'BTC/USD', 'ETH/USD', 'ETH', etc."],
     num_sentences: Annotated[int, "Number of sentences to include from news body."] = 5,
+    curr_date: Annotated[str, "Analysis as-of date in yyyy-mm-dd format"] = None,
 ) -> str:
     """
     Retrieve news for a cryptocurrency.
@@ -474,17 +479,23 @@ def get_coindesk_news(
     Args:
         ticker (str): Ticker symbol for the cryptocurrency.
         num_sentences (int): Number of sentences to extract from the body of each news article.
+        curr_date (str): Analysis as-of date (yyyy-mm-dd). Missing curr_date is
+            only allowed for direct live calls; historical callers must pass
+            the analysis date so the live-only source can be rejected.
 
     Returns:
         str: Formatted string containing news.
     """
+    if curr_date is not None and analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
+
     crypto_symbol = ticker.upper()
     if "/" in crypto_symbol:
         crypto_symbol = crypto_symbol.split('/')[0]
     else:
         crypto_symbol = crypto_symbol.replace("USDT", "").replace("USD", "")
 
-    return get_coindesk_news_util(crypto_symbol, n=num_sentences)
+    return get_coindesk_news_util(crypto_symbol, n=num_sentences, curr_date=curr_date)
 
 
 def get_simfin_balance_sheet(
@@ -667,6 +678,12 @@ def get_google_news(
     curr_date: Annotated[str, "Curr date in yyyy-mm-dd format"],
     look_back_days: Annotated[int, "how many days to look back"],
 ) -> str:
+    # Live Google News RSS has no verified publication cutoff: for a
+    # historical as-of it can only return future data, so reject before any
+    # HTTP call and never fall back to another live source.
+    if analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
+
     query_for_search = _expand_google_news_query(query)
     query_encoded = query_for_search.replace(" ", "+")
 
@@ -1130,6 +1147,10 @@ def get_stockstats_indicator_history(
 
 
 def get_stock_news_openai(ticker, curr_date):
+    # Live-only source: hosted web search has no verified point-in-time
+    # cutoff, so reject before any client construction or key lookup.
+    if analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
@@ -1245,6 +1266,9 @@ def get_stock_news_openai(ticker, curr_date):
 
 
 def get_global_news_openai(curr_date, ticker_context=None):
+    # Live-only source: reject historical as-of before any client or key work.
+    if analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
@@ -1373,6 +1397,9 @@ def get_global_news_openai(curr_date, ticker_context=None):
 
 
 def get_fundamentals_openai(ticker, curr_date):
+    # Live-only source: reject historical as-of before any client or key work.
+    if analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
@@ -1485,22 +1512,29 @@ def get_fundamentals_openai(ticker, curr_date):
 def get_defillama_fundamentals(
     ticker: Annotated[str, "Crypto ticker symbol (without USD/USDT suffix)"],
     lookback_days: Annotated[int, "Number of days to look back for data"] = 30,
+    curr_date: Annotated[str, "Analysis as-of date in yyyy-mm-dd format"] = None,
 ) -> str:
     """
     Get fundamental data for a cryptocurrency from DeFi Llama
-    
+
     Args:
         ticker: Crypto ticker symbol (e.g., BTC, ETH, UNI)
         lookback_days: Number of days to look back for data
-        
+        curr_date: Analysis as-of date (yyyy-mm-dd). Missing curr_date is
+            only allowed for direct live calls; historical callers must pass
+            the analysis date so the live-only source can be rejected.
+
     Returns:
         str: Markdown-formatted fundamentals report for the cryptocurrency
     """
+    if curr_date is not None and analysis_date_mode(curr_date) == "historical":
+        return HISTORICAL_SOURCE_UNAVAILABLE
+
     # Clean the ticker - remove any USD/USDT suffix if present
     clean_ticker = ticker.upper().replace("USD", "").replace("USDT", "")
     if "/" in clean_ticker:
         clean_ticker = clean_ticker.split("/")[0]
-        
+
     try:
         return get_defillama_fundamentals_util(clean_ticker, lookback_days)
     except Exception as e:
@@ -1514,7 +1548,11 @@ def get_alpaca_data_window(
     timeframe: Annotated[str, "Timeframe for data: 1Min, 5Min, 15Min, 1Hour, 1Day"] = "1Day",
 ) -> str:
     """
-    Get a window of stock data from Alpaca
+    Get a window of stock data from Alpaca, bounded at day-level by curr_date.
+
+    Point-in-time contract: no row newer than curr_date is returned and the
+    latest live quote is only fetched in live mode. Historical as-of dates
+    never include Bid/Ask or a present-time quote.
     Args:
         symbol: ticker symbol of the company
         curr_date: The current trading date you are trading on, YYYY-mm-dd (optional - if not provided, will use today's date)
@@ -1524,40 +1562,64 @@ def get_alpaca_data_window(
         str: a report of the stock data
     """
     try:
-        # Calculate start date based on look_back_days
         if curr_date:
-            curr_dt = pd.to_datetime(curr_date)
+            parsed_analysis_date = parse_analysis_date(curr_date)
         else:
-            curr_dt = pd.to_datetime(datetime.now().strftime("%Y-%m-%d"))
-            
-        start_dt = curr_dt - pd.Timedelta(days=look_back_days)
-        start_date = start_dt.strftime("%Y-%m-%d")
-        
-        # Get data from Alpaca - don't pass end_date to avoid subscription limitations
+            parsed_analysis_date = datetime.now(ZoneInfo("America/New_York")).date()
+            curr_date = parsed_analysis_date.isoformat()
+        mode = analysis_date_mode(curr_date)
+
+        start_date = (parsed_analysis_date - timedelta(days=look_back_days)).strftime("%Y-%m-%d")
+
+        # Pass end_date=curr_date so the vendor window itself is bounded; the
+        # date-only end is still made inclusive by AlpacaUtils.get_stock_data.
         data = AlpacaUtils.get_stock_data(
             symbol=symbol,
             start_date=start_date,
-            timeframe=timeframe
+            end_date=curr_date,
+            timeframe=timeframe,
         )
-        
+
+        # Second-layer cutoff: even if the provider misbehaves, no row after
+        # the analysis date may reach the LLM. Unverifiable data is never
+        # returned as-is.
+        if (
+            not isinstance(data, pd.DataFrame)
+            or data.empty
+            or "timestamp" not in data.columns
+        ):
+            return (
+                f"UNAVAILABLE: no verifiable Alpaca bar data for {symbol} "
+                f"from {start_date} to {curr_date}."
+            )
+
+        timestamps = pd.to_datetime(data["timestamp"], utc=True, errors="coerce")
+        data = data[timestamps.notna()].copy()
+        data["timestamp"] = timestamps[timestamps.notna()]
+        data = data[data["timestamp"].dt.date <= parsed_analysis_date]
+
         if data.empty:
-            return f"No data found for {symbol} from {start_date} to present"
-        
+            return (
+                f"UNAVAILABLE: no verified Alpaca bar data for {symbol} "
+                f"within {start_date} to {curr_date} after the point-in-time cutoff."
+            )
+
         # Format the result
-        result = f"## Stock data for {symbol} from {start_date} to present:\n\n"
+        result = f"## Stock data for {symbol} from {start_date} to {curr_date}:\n\n"
         result += data.to_string()
-        
-        # Add latest quote if available
-        try:
-            latest_quote = AlpacaUtils.get_latest_quote(symbol)
-            if latest_quote:
-                result += f"\n\n## Latest Quote for {symbol}:\n"
-                result += f"Bid: {latest_quote['bid_price']} ({latest_quote['bid_size']}), "
-                result += f"Ask: {latest_quote['ask_price']} ({latest_quote['ask_size']}), "
-                result += f"Time: {latest_quote['timestamp']}"
-        except Exception as quote_error:
-            result += f"\n\nCould not fetch latest quote: {str(quote_error)}"
-        
+
+        # Latest quote is present-time data: only valid in live mode.
+        if mode == "live":
+            try:
+                latest_quote = AlpacaUtils.get_latest_quote(symbol)
+                if latest_quote:
+                    result += f"\n\n## Latest Quote for {symbol}:\n"
+                    result += f"Bid: {latest_quote['bid_price']} ({latest_quote['bid_size']}), "
+                    result += f"Ask: {latest_quote['ask_price']} ({latest_quote['ask_size']}), "
+                    result += f"Time: {latest_quote['timestamp']}"
+            except Exception as quote_error:
+                result += f"\n\nCould not fetch latest quote: {str(quote_error)}"
+
         return result
     except Exception as e:
         return f"Error getting stock data for {symbol}: {str(e)}"
@@ -1823,6 +1885,8 @@ def get_sec_ir_primary_source(
     from .sec_ir import default_client_from_config, render_sec_ir_report
     from .sec_ir import SecIrClient, SecIrError  # noqa: F401 (re-export parity)
 
+    from datetime import datetime, timezone
+    cutoff = datetime.fromisoformat(curr_date).replace(tzinfo=timezone.utc)
     client = default_client_from_config(get_config())
     if client is None:
         return (
@@ -1831,14 +1895,16 @@ def get_sec_ir_primary_source(
             "data applies; no primary-source evidence is available."
         )
     try:
-        records = client.latest_filings(ticker, forms=("10-K", "10-Q", "8-K"))
+        records = client.latest_filings(ticker, forms=("10-K", "10-Q", "8-K"), as_of=cutoff)
     except SecIrError as exc:
         records = []
         mapping_error = str(exc)
     else:
         mapping_error = None
     try:
-        records.append(client.ir_page(ticker))
+        if curr_date >= datetime.now(timezone.utc).date().isoformat():
+            records.append(client.ir_page(ticker))
+        # A current IR page cannot reconstruct its historical contents.
     except SecIrError as exc:
         from .sec_ir import SourceRecord
 
@@ -1851,4 +1917,4 @@ def get_sec_ir_primary_source(
         )
     if mapping_error and not records:
         return f"Primary source check for {ticker}: {mapping_error}"
-    return render_sec_ir_report(ticker, records)
+    return render_sec_ir_report(ticker, records, now=cutoff)

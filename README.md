@@ -128,6 +128,9 @@ python -m pytest tests/
 - 長期 Paper observation（小 notional）尚未開始；啟用長期無人值守 Paper 自動交易前必須完成，且需使用者另行明確授權——已驗收的 build 不會自行啟用交易。
 - 離線驗收只證明 mock 鏈路與 fail-closed 語義；真實 Alpaca universe/bars 資料品質、真實 Screening vendor 輸出品質尚未驗證。
 - 少量非阻擋維修項（死設定鍵 `llm_retry_backoff_max_seconds`、`ScreeningDeps.llm_factory` 死欄位等）留待一般維修。
+- Top40 權重是 research baseline，不是 validated alpha；尚未有任何統計驗證的前瞻收益證據。
+- 30 天無人值守 observation 屬於 operational observation（帳戶權益變化），不是 profitability proof：未調整入出金、可能含觀察期前既有部位、非純策略歸因，且未計入全部研究與交易成本。
+- Broker `last_equity` 作為 daily-loss baseline 仍可能受入出金影響；本版本未實作 cash-flow adjusted TWR。
 
 ---
 

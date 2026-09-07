@@ -108,7 +108,7 @@ class FilingMetadataTests(unittest.TestCase):
                 "https://www.sec.gov/Archives/edgar/data/320193/"
                 "000032019326000002/a10q.htm",
             )
-            self.assertEqual(ten_q.published_at, "2026-08-01T00:00:00+00:00")
+            self.assertEqual(ten_q.published_at, "2026-08-02T00:00:00+00:00")
             # retrieved_at is a real UTC timestamp (never a fake date).
             self.assertIn("T", ten_q.retrieved_at)
             self.assertIn("+00:00", ten_q.retrieved_at)

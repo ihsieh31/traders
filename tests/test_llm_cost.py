@@ -160,7 +160,7 @@ class RealizedReturnJoinTests(unittest.TestCase):
         self.assertIsNone(parse_return_pct("n/a"))
         self.assertIsNone(parse_return_pct(None))
 
-    def test_returns_joined_from_memory_log(self):
+    def test_hypothetical_returns_are_not_joined_as_realized_profit(self):
         from tradingagents.agents.utils.memory import TradingMemoryLog
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -181,9 +181,7 @@ class RealizedReturnJoinTests(unittest.TestCase):
             )
             returns = realized_returns_by_symbol({"memory_log_path": log_path})
 
-        self.assertIn("AAPL", returns)
-        self.assertEqual(returns["AAPL"]["resolved"], 1)
-        self.assertAlmostEqual(returns["AAPL"]["avg_return"], 0.04, places=3)
+        self.assertEqual(returns, {})
 
 
 class CostWebUIWiringTests(unittest.TestCase):

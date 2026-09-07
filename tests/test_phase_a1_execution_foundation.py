@@ -17,6 +17,14 @@ from unittest.mock import MagicMock, patch
 import tradingagents.agents  # noqa: F401  (production-safe import order)
 
 
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
+
 def _buy_intent(symbol="AAPL"):
     from tradingagents.agents.schemas import (
         ExecutableAction,
@@ -35,6 +43,7 @@ def _buy_intent(symbol="AAPL"):
             confidence="medium",
             risk_rationale="test setup",
             required_controls="Stop below support.",
+            entry_policy=_ready_entry_policy(), stop_loss_price=95.0,
         ),
     ).model_dump(mode="json")
 
@@ -67,7 +76,7 @@ def _mock_broker(order_id="broker-1", status="accepted"):
     close_order.status = "accepted"
     broker.close_position.return_value = close_order
     broker.get_account.return_value = SimpleNamespace(
-        id="paper-account-1", equity="100000", cash="100000", buying_power="200000"
+        id="paper-account-1", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
     )
     broker.get_all_positions.return_value = []
     broker.get_orders.side_effect = lambda request=None: list(broker_orders)
@@ -180,6 +189,7 @@ class StrictRiskBoundaryTests(unittest.TestCase):
                 "current_neutral_response": "",
                 "count": 1,
             },
+            "trader_investment_plan": "Trader plan requiring confirmed entry and a protective stop",
             "investment_plan": "plan",
             "trade_date": "2026-01-02",
         }

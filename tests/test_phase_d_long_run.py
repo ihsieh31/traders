@@ -80,6 +80,9 @@ class FakeBroker:
 class FakeService:
     """Durable-outbox stand-in: same decision_id never POSTs twice."""
 
+    def enforce_exit_deadlines(self):
+        return {"success": True, "deadline_exits": [], "broker_calls": 0}
+
     def __init__(self):
         self.recover_calls = 0
         self.execute_calls = []

@@ -1,22 +1,8 @@
-"""Backtest -> self-learning-memory bridge ("intensive teaching").
+"""Store complete fixed-horizon hypothetical outcomes from eligible forward logs.
 
-Replays the decisions this deployment already recorded under
-``eval_results/`` against historical prices and injects one dated lesson per
-decision into the persistent per-agent ChromaDB memories, so a fresh agent
-starts with the distilled experience of its own recorded history instead of
-an empty memory (FinMem's train-then-test warm-up, arXiv:2311.13743).
-
-Discipline mirrors the backtest engine: a decision made on day t enters at
-the *next* bar's open and its outcome is measured at the open ``horizon_bars``
-later — no lookahead. Lessons are built strictly from what the run log
-recorded at decision time plus that realized outcome; no new LLM forecasts
-are generated for historical dates, so pretraining contamination cannot leak
-into the replayed decisions.
-
-Teaching is idempotent: every lesson carries a ``teach_key`` and memories
-that already hold it are skipped, so re-running the bridge never duplicates.
-Lessons are also tagged ``source=backtest_teach`` so later memory
-maintenance can treat batch-taught lessons differently from live ones.
+These are signal diagnostics, not realized portfolio P&L or causal lessons.
+Incomplete horizons are skipped. Retrieval is opt-in and restricted to lessons
+available before the analysis date. No causal LLM reflection is generated.
 """
 
 from __future__ import annotations
@@ -26,7 +12,7 @@ from typing import Callable, Dict, List, Optional
 import pandas as pd
 
 from .engine import normalize_price_frame
-from .signals import load_recorded_signals
+from .signals import load_recorded_signals, load_recorded_runs
 
 _REPORT_KEYS = (
     "market_report",
@@ -40,15 +26,13 @@ def compute_decision_outcomes(
     prices: pd.DataFrame,
     signals: Dict[str, str],
     horizon_bars: int = 5,
+    positions: Optional[Dict[str, str]] = None,
 ) -> List[dict]:
-    """Realized outcome of each dated decision under next-open execution.
+    """Measure a complete next-open, fixed-horizon hypothetical position.
 
-    For a decision dated t, entry is the open of the first bar strictly
-    after t and exit is the open ``horizon_bars`` bars later (or the last
-    bar, flagged ``partial``). ``decision_return`` is signed by the action:
-    BUY earns the asset move, SELL earns its negation, HOLD earns nothing
-    (the asset move is still reported so a lesson can describe what holding
-    avoided or missed). Decisions with no bar after them are dropped.
+    BUY/LONG are long, SHORT is short, SELL/NEUTRAL are flat. HOLD requires
+    known starting exposure. Incomplete horizons are omitted. This excludes
+    intervening orders, position sizes, stop execution and trading costs.
     """
     if horizon_bars < 1:
         raise ValueError("horizon_bars must be at least 1.")
@@ -69,7 +53,7 @@ def compute_decision_outcomes(
         exit_idx = entry_idx + horizon_bars
         partial = exit_idx > len(frame) - 1
         if partial:
-            exit_idx = len(frame) - 1
+            continue  # Never teach a truncated horizon as a completed label.
         if exit_idx <= entry_idx:
             continue
 
@@ -79,12 +63,18 @@ def compute_decision_outcomes(
             continue
         asset_return = exit_price / entry_price - 1.0
 
-        if action == "BUY":
-            decision_return = asset_return
-        elif action == "SELL":
-            decision_return = -asset_return
-        else:  # HOLD
-            decision_return = 0.0
+        position = (positions or {}).get(trade_date)
+        if action in {"BUY", "LONG"}:
+            direction = 1
+        elif action == "SHORT":
+            direction = -1
+        elif action in {"SELL", "NEUTRAL"}:
+            direction = 0
+        elif action == "HOLD":
+            direction = {"LONG": 1, "SHORT": -1, "NEUTRAL": 0, "FLAT": 0}.get(position)
+        else:
+            direction = None
+        decision_return = asset_return * direction if direction is not None else None
 
         outcomes.append(
             {
@@ -97,6 +87,8 @@ def compute_decision_outcomes(
                 "horizon_used": exit_idx - entry_idx,
                 "asset_return": asset_return,
                 "decision_return": decision_return,
+                "outcome_kind": "hypothetical_position_return",
+                "current_position": position,
                 "partial": partial,
             }
         )
@@ -114,41 +106,14 @@ def _deterministic_lesson(symbol: str, outcome: dict) -> str:
     asset_pct = f"{outcome['asset_return']:+.1%}"
     span = "" if not outcome["partial"] else " (horizon truncated by data end)"
 
-    if action == "HOLD":
-        body = (
-            f"HOLD meant not participating in a {asset_pct} move over the next "
-            f"{horizon} bars{span}."
-        )
-        if abs(outcome["asset_return"]) >= 0.02:
-            verdict = (
-                "A move this size suggests the situation carried a tradable "
-                "signal that the HOLD decision left unused — look for what the "
-                "reports underweighted."
-            )
-        else:
-            verdict = "The quiet follow-through supports having stayed flat."
-    else:
-        realized = f"{outcome['decision_return']:+.1%}"
-        body = (
-            f"The {action} decision realized {realized} over the next {horizon} "
-            f"bars{span} (asset moved {asset_pct}; entry at the next open "
-            f"{outcome['entry_price']:.4g} on {outcome['entry_date']}, exit at "
-            f"the open {outcome['exit_price']:.4g} on {outcome['exit_date']})."
-        )
-        if outcome["decision_return"] > 0:
-            verdict = (
-                "The reasoning behind this call was validated by the market — "
-                "weight similar setups accordingly."
-            )
-        else:
-            verdict = (
-                "The market went against this call — in similar situations, "
-                "re-examine the evidence that drove it before repeating the trade."
-            )
-
+    hypothetical = outcome["decision_return"]
+    result = f"{hypothetical:+.1%}" if hypothetical is not None else "unknown (position was not recorded)"
     return (
-        f"[Backtest lesson] {symbol} on {outcome['trade_date']}: final decision "
-        f"was {action}. {body} {verdict}"
+        f"[Diagnostic observation v2] {symbol} on {outcome['trade_date']}: {action}. "
+        f"Asset moved {asset_pct} over {horizon} bars; hypothetical post-decision position return: {result}. "
+        f"Entry open {outcome['entry_date']}, exit open {outcome['exit_date']}. "
+        "This is not broker realized P&L: fills, sizing, intervening decisions, stops and costs are not modeled. "
+        "One outcome does not validate the reasoning or prove a tradable edge; HOLD may retain an existing position."
     )
 
 
@@ -181,16 +146,10 @@ def teach_memories_from_history(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> dict:
-    """Batch-inject realized-outcome lessons for `symbol` into agent memories.
+    """Store deterministic hypothetical outcomes with point-in-time metadata.
 
-    `memories` maps component name -> FinancialSituationMemory (the same map
-    reflect_on_outcome uses). When `reflector` is given, each decision's
-    lesson is written by one quick-LLM call
-    (``reflect_on_final_decision``); otherwise a deterministic template is
-    used — zero LLM cost, embeddings only.
-
-    Returns a summary dict; raises ValueError when the symbol has no
-    recorded completed decisions to teach from.
+    The reflector parameter remains for API compatibility and is not invoked.
+    Raises ValueError if no eligible forward decisions are available.
     """
     signals = load_recorded_signals(symbol, eval_results_dir=eval_results_dir)
     if start_date:
@@ -209,7 +168,10 @@ def teach_memories_from_history(
         price_loader = AlpacaUtils.get_stock_data
 
     prices = price_loader(symbol, min(signals), end_date)
-    outcomes = compute_decision_outcomes(prices, signals, horizon_bars=horizon_bars)
+    runs = load_recorded_runs(symbol, eval_results_dir)
+    positions = {day: ((run.get("snapshots") or {}).get("final_state") or {}).get("current_position")
+                 for day, run in runs.items()}
+    outcomes = compute_decision_outcomes(prices, signals, horizon_bars=horizon_bars, positions=positions)
 
     from tradingagents.run_logger import load_final_state_snapshot
 
@@ -225,7 +187,7 @@ def teach_memories_from_history(
 
     for outcome in outcomes:
         trade_date = outcome["trade_date"]
-        teach_key = f"{symbol}|{trade_date}|{horizon_bars}"
+        teach_key = f"v2|{symbol}|{trade_date}|{horizon_bars}"
 
         targets = {
             name: memory
@@ -237,25 +199,16 @@ def teach_memories_from_history(
             summary["decisions_skipped_duplicate"] += 1
             continue
 
-        state = load_final_state_snapshot(
-            symbol, trade_date, eval_results_dir=eval_results_dir
-        )
+        state = (runs[trade_date].get("snapshots") or {}).get("final_state")
         situation = _situation_from_state(state) if state else None
         if not situation:
             summary["decisions_skipped_no_state"] += 1
             continue
 
-        if reflector is not None:
-            final_decision = str(
-                state.get("final_trade_decision") or outcome["action"]
-            )
-            lesson = reflector.reflect_on_final_decision(
-                final_decision,
-                raw_return=outcome["decision_return"],
-                alpha_return=None,
-            )
-        else:
-            lesson = _deterministic_lesson(symbol, outcome)
+        # Deterministic observations only: do not let an LLM manufacture a causal
+        # lesson from a counterfactual return. The reflector argument is retained
+        # for API compatibility but no longer invoked here.
+        lesson = _deterministic_lesson(symbol, outcome)
 
         metadata = {
             "source": "backtest_teach",
@@ -263,7 +216,9 @@ def teach_memories_from_history(
             "symbol": symbol,
             "trade_date": trade_date,
             "action": outcome["action"],
-            "decision_return": float(outcome["decision_return"]),
+            "decision_return": float(outcome["decision_return"]) if outcome["decision_return"] is not None else "unknown",
+            "outcome_kind": "hypothetical_position_return",
+            "outcome_end": outcome["exit_date"],
             "horizon_bars": int(horizon_bars),
         }
         written = 0

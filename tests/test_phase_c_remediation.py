@@ -28,6 +28,14 @@ _AS_OF = date(2026, 9, 4)
 # ---------------------------------------------------------------------------
 
 
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
+
 def _row(day, open_t=time(9, 30), close_t=time(16, 0)):
     return SimpleNamespace(
         date=day,
@@ -696,7 +704,7 @@ def _execution_broker(posts, positions=None, orders=None):
         return order
 
     broker = SimpleNamespace(
-        get_account=lambda: SimpleNamespace(id="paper-1", equity="100000", cash="80000", buying_power="200000"),
+        get_account=lambda: SimpleNamespace(id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="200000"),
         get_all_positions=lambda: list(state["positions"]),
         get_orders=lambda request=None: list(state["orders"]),
         get_order_by_client_order_id=lambda cid: next((o for o in state["orders"] if o.client_order_id == cid), None),
@@ -759,7 +767,7 @@ def _intent(symbol, action="BUY", current="NEUTRAL"):
         allow_shorts=False,
         trade_date="2026-09-04",
         decision=RiskDecision(
-            action=ExecutableAction(action), confidence="medium", risk_rationale="r2", required_controls="strict"
+            action=ExecutableAction(action), confidence="medium", risk_rationale="r2", required_controls="strict", entry_policy=_ready_entry_policy(), stop_loss_price=95
         ),
     ).model_dump(mode="json")
 
@@ -791,7 +799,7 @@ class R2RecoveryGateTests(unittest.TestCase):
             symbol=symbol,
             action="BUY",
             target_position="LONG",
-            payload_json=json.dumps({"symbol": symbol}),
+            payload_json=json.dumps(_intent(symbol)),
             orders=[{"client_order_id": coid, "symbol": symbol, "side": side, "quantity": None, "notional": notional}],
         )
         return orders[0]
@@ -896,12 +904,12 @@ class R2RecoveryGateTests(unittest.TestCase):
         held = BrokerPosition("ZZZ", 10.0, 1000.0)
         broker = _execution_broker(posts, positions=[held])
         svc = self._service(config, broker)
-        # Seed a close-like order: side sell against LONG position. Recovery
-        # treats it as risk-reducing (position qty>0, side sell) and allows.
+        # Seed an explicitly authorized liquidation, with quantity bounded by
+        # the broker position. Side alone never proves an order is a close.
         from tradingagents.execution.store import client_order_id_for
 
         did = "dec-exit-ZZZ"
-        coid = client_order_id_for(did, "ZZZ", "sell", role="open", seq=0)
+        coid = client_order_id_for(did, "ZZZ", "sell", role="close", seq=0)
         # Use quantity so _resubmit passes idempotency check.
         svc.store.create_outbox(
             decision_id=did,
@@ -909,7 +917,7 @@ class R2RecoveryGateTests(unittest.TestCase):
             symbol="ZZZ",
             action="SELL",
             target_position="NEUTRAL",
-            payload_json=json.dumps({"symbol": "ZZZ"}),
+            payload_json=json.dumps({"symbol": "ZZZ", "kind": "liquidation"}),
             orders=[{"client_order_id": coid, "symbol": "ZZZ", "side": "sell", "quantity": 10.0, "notional": None}],
         )
         with patch(

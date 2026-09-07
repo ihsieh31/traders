@@ -108,11 +108,14 @@ class _SignalReplayStrategy(bt.Strategy):
         self.equity_values.append(float(self.broker.getvalue()))
 
         action = self._consume_signals_up_to(bar_date.isoformat())
-        if action == "BUY":
+        if action in {"BUY", "LONG"}:
             self.order_target_percent(target=self.p.position_pct)
-        elif action == "SELL":
-            target = -self.p.position_pct if self.p.allow_shorts else 0.0
-            self.order_target_percent(target=target)
+        elif action in {"SELL", "NEUTRAL"}:
+            self.order_target_percent(target=0.0)
+        elif action == "SHORT":
+            if not self.p.allow_shorts:
+                raise ValueError("SHORT signal requires allow_shorts=True")
+            self.order_target_percent(target=-self.p.position_pct)
         # HOLD / None: keep the current position untouched.
 
     def notify_order(self, order):
@@ -156,6 +159,9 @@ class BacktestResult:
 
     def to_dict(self) -> dict:
         return {
+            "evaluation_scope": "single_symbol_signal_diagnostic",
+            "limitations": ["Not a replay of live position sizing, screening, protective orders or portfolio allocation",
+                            "Returns exclude research/data costs, financing and dividends; not net strategy profitability"],
             "metrics": dict(self.metrics),
             "signals_used": self.signals_used,
             "start_date": self.start_date,
@@ -177,6 +183,7 @@ class WalkForwardResult:
 
     def to_dict(self) -> dict:
         return {
+            "evaluation_scope": "segmented_signal_diagnostic_not_out_of_sample_training",
             "windows": list(self.windows),
             "full_period": self.full_period.to_dict() if self.full_period else None,
         }
@@ -222,7 +229,7 @@ def run_backtest(
     initial_cash: float = 100_000.0,
     commission: float = 0.001,
     allow_shorts: bool = False,
-    position_pct: float = 0.95,
+    position_pct: float = 0.20,
     periods_per_year: int = TRADING_DAYS_PER_YEAR,
     slippage_model: str = "fixed",
     slippage_bps: float = 5.0,
@@ -312,7 +319,7 @@ def run_walk_forward(
     min_window_bars: int = 5,
     **backtest_kwargs,
 ) -> WalkForwardResult:
-    """Evaluate signals over consecutive non-overlapping out-of-sample windows.
+    """Diagnose signals over disjoint windows; this is not an out-of-sample training protocol.
 
     LLM decision replay has no parameters to re-fit between folds, so the
     walk-forward's purpose here is robustness: instead of one full-period
@@ -335,7 +342,9 @@ def run_walk_forward(
         chunk = frame.iloc[start:end]
         if len(chunk) < 2:
             break
-        result = run_backtest(chunk, signals, **backtest_kwargs)
+        window_signals = {d: a for d, a in signals.items()
+                          if chunk.index[0].date().isoformat() <= d <= chunk.index[-1].date().isoformat()}
+        result = run_backtest(chunk, window_signals, **backtest_kwargs)
         windows.append(
             {
                 "start_date": result.start_date,

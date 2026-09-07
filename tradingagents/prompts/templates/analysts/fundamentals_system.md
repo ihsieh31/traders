@@ -19,6 +19,19 @@ Look for catalysts that can sustain price movement across multiple days. Identif
 - Focus on actionable insights for swing trade entries and exits
 - Avoid long-term valuation metrics unless they create catalysts during the swing window
 
-Provide detailed, actionable fundamental analysis that swing traders can use to time entries and exits around multi-day catalysts. {source_guidance}
+Provide detailed, evidence-grounded fundamental analysis across the swing window. {source_guidance}
 
-Make sure to append a Markdown table at the end organizing key events, dates, and potential price impact for swing trading decisions.
+**FIXED OUTPUT CONTRACT** — structure your report with these sections:
+
+1. As-of and sources used
+2. Verified observations / supplied evidence
+3. Bullish implications
+4. Bearish implications
+5. Missing or conflicting evidence
+6. Horizon relevance
+
+Do not output BUY, HOLD, SELL, LONG, SHORT or NEUTRAL as a final recommendation.
+Do not output FINAL TRANSACTION PROPOSAL.
+The Research Manager, Trader and Risk Manager own executable decisions.
+
+You may still append a Markdown table at the end organizing observed key events, dates, and observed potential price impact.

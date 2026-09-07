@@ -442,6 +442,140 @@ class ExecutionService:
 
         return get_alpaca_trading_client()
 
+    def _cancel_owned_close_protections(self, broker, snapshot, symbol):
+        """Cancel proven protections before an explicit full-position exit.
+
+        Manual or ambiguous orders are never canceled. A pending cancellation
+        is still rejected by the subsequent verified-exit check.
+        """
+        position = snapshot.position(symbol)
+        if position is None:
+            return snapshot, 0
+        orders = [o for o in snapshot.orders if o.symbol == position.symbol and broker_status_to_local(o.status) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}]
+        if not orders:
+            return snapshot, 0
+        side = "sell" if position.qty > 0 else "buy"
+        for order in orders:
+            local = self._store.get_order_by_client(order.client_order_id)
+            if (not local or local.get("broker_order_id") != order.broker_order_id
+                    or not self._store.protective_parent(local["order_id"]) or order.side != side):
+                raise BrokerAuthorityError("Exit conflicts with an order not proven to be its protection")
+        from tradingagents.safety import get_safety_guard
+        guard = get_safety_guard()
+        verdict = (
+            guard.check_order(
+                symbol,
+                abs(position.market_value),
+                account={
+                    "equity": snapshot.equity,
+                    "last_equity": snapshot.last_equity,
+                },
+                position_value=abs(position.market_value),
+                risk_reducing=True,
+            )
+            if getattr(guard, "enabled", True)
+            else None
+        )
+        if verdict is not None and not verdict.allowed:
+            raise BrokerAuthorityError("Protection cancellation blocked by safety policy")
+        for order in orders:
+            broker.cancel_order_by_id(order.broker_order_id)
+        refreshed = capture_broker_snapshot(broker, expected_account_id=snapshot.account_id)
+        self._reconcile_snapshot(broker, refreshed)
+        return refreshed, len(orders)
+
+    def enforce_exit_deadlines(self) -> dict[str, Any]:
+        """Exit due, fill-proven positions on scheduled checks under the account lock.
+
+        Offline time, market closure and ambiguous broker state can delay exits.
+        Any ownership/quantity conflict pauses instead of closing an unrelated lot.
+        """
+        from .lifecycle import due_positions
+        results = []
+        cancellation_calls = 0
+        try:
+            if not due_positions(self._store, utc_now()):
+                return {"success": True, "deadline_exits": [], "broker_calls": 0}
+            broker = self._broker_factory()
+            identity = capture_broker_snapshot(broker)
+            with AccountExecutionLock(self.db_path, identity.account_id):
+                snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
+                snapshot, reconciliation = self._recover_locked(broker, snapshot)
+                for symbol, due in due_positions(self._store, utc_now()).items():
+                    position = snapshot.position(symbol)
+                    if position is None:
+                        continue
+                    if abs(position.qty - due["qty"]) > 1e-8:
+                        raise BrokerAuthorityError("Deadline position does not match durable filled lots")
+                    from tradingagents.safety import get_safety_guard
+                    guard = get_safety_guard()
+                    verdict = (
+                        guard.check_order(
+                            symbol,
+                            abs(position.market_value),
+                            account={
+                                "equity": snapshot.equity,
+                                "last_equity": snapshot.last_equity,
+                            },
+                            position_value=abs(position.market_value),
+                            risk_reducing=True,
+                        )
+                        if getattr(guard, "enabled", True)
+                        else None
+                    )
+                    if verdict is not None and not verdict.allowed:
+                        raise BrokerAuthorityError("Deadline exit blocked by safety policy: " +
+                                                   "; ".join(getattr(verdict, "reasons", ())))
+                    # Only cancel child protections proven to belong to our filled parents.
+                    from alpaca.trading.requests import GetOrderByIdRequest
+                    owned_children = set()
+                    for lot in due["lots"]:
+                        parent_id = lot["order"].get("broker_order_id")
+                        if not parent_id:
+                            raise BrokerAuthorityError("Deadline lot has no broker parent identity")
+                        parent = broker.get_order_by_id(parent_id, filter=GetOrderByIdRequest(nested=True))
+                        if str(getattr(parent, "id", "")) != parent_id:
+                            raise BrokerAuthorityError("Protective parent identity mismatch")
+                        owned_children.update(str(child.id) for child in (getattr(parent, "legs", None) or []))
+                    closing_side = "sell" if position.qty > 0 else "buy"
+                    conflicting = [o for o in snapshot.orders if o.symbol == position.symbol
+                                   and broker_status_to_local(o.status) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}]
+                    if any(o.broker_order_id not in owned_children or o.side != closing_side for o in conflicting):
+                        raise BrokerAuthorityError("Deadline exit conflicts with an order not proven to be its protection")
+                    for order in conflicting:
+                        cancellation_calls += 1
+                        broker.cancel_order_by_id(order.broker_order_id)
+                        snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
+                        self._reconcile_snapshot(broker, snapshot)
+                    snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
+                    current = snapshot.position(symbol)
+                    # A protective child may fill during cancellation. Recompute lots.
+                    self._reconcile_snapshot(broker, snapshot)
+                    refreshed = due_positions(self._store, utc_now()).get(symbol)
+                    if current is None:
+                        continue
+                    if not refreshed or abs(current.qty - refreshed["qty"]) > 1e-8:
+                        raise BrokerAuthorityError("Deadline position changed during protection cancellation")
+                    spec = [{"role": "close", "side": closing_side, "quantity": abs(current.qty)}]
+                    if not self._verified_reducing_exit(snapshot, symbol, spec):
+                        raise BrokerAuthorityError("Deadline close not yet safe; protection cancellation may be pending")
+                    result = self._liquidate_core(symbol, decision_id=due["decision_id"], _broker=broker,
+                                                   _quantity=abs(current.qty), _side=closing_side)
+                    results.append(result)
+                    snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
+                    post = self._reconcile_snapshot(broker, snapshot)
+                    if not result.get("success") or not post.clean:
+                        return {"success": False, "paused": True, "deadline_exits": results,
+                                "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
+                                "error": "Deadline exit requires reconciliation before further trading"}
+            return {"success": True, "deadline_exits": results,
+                    "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results)}
+        except Exception as exc:
+            return {"success": False, "paused": True, "fail_closed": True,
+                    "deadline_exits": results,
+                    "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
+                    "error": f"Deadline enforcement paused: {exc}"}
+
     # -- main entry ------------------------------------------------------
 
     def execute(
@@ -467,6 +601,14 @@ class ExecutionService:
                 risk_params=risk_params,
                 current_position=current_position,
             )
+        deadlines = self.enforce_exit_deadlines()
+        if not deadlines.get("success"):
+            return deadlines
+        if deadlines.get("deadline_exits"):
+            # The analysis position snapshot predates these exits. Require a fresh decision.
+            return {"success": True, "hold": True, "deadline_exits": deadlines["deadline_exits"],
+                    "broker_calls": deadlines.get("broker_calls", 0),
+                    "reason": "Deadline exits processed; reanalyze before any new entry"}
         specs = _planned_order_specs(intent_dict, dollar_amount)
         if not specs:  # HOLD has no execution facts to gate.
             return self._execute_core(
@@ -478,6 +620,12 @@ class ExecutionService:
                 risk_params=risk_params,
                 current_position=current_position,
             )
+        if any(spec.get("role") == "open" for spec in specs):
+            from .policy import entry_check
+            _, policy_error = entry_check(intent_dict)
+            if policy_error:
+                return {"success": False, "entry_policy_blocked": True, "fail_closed": True,
+                        "broker_attempted": False, "broker_calls": 0, "error": policy_error}
         # Phase B corporate-action quarantine: a quarantined symbol takes no
         # new exposure (zero broker calls). Verified reducing exits keep the
         # Phase A path and are checked below under the account lock.
@@ -525,6 +673,10 @@ class ExecutionService:
                 closing_specs = [spec for spec in specs if spec.get("role") == "close"]
                 if not reconciliation.clean and opening:
                     return self._paused_result(snapshot, reconciliation.reasons)
+                canceled_protections = 0
+                if closing_specs and not opening:
+                    snapshot, canceled_protections = self._cancel_owned_close_protections(
+                        broker, snapshot, intent_dict.get("symbol", ""))
                 if closing_specs and not self._verified_reducing_exit(
                     snapshot, intent_dict.get("symbol", ""), closing_specs
                 ):
@@ -582,12 +734,13 @@ class ExecutionService:
                     _snapshot=snapshot,
                     _quote=quote,
                 )
+                result["broker_calls"] = result.get("broker_calls", 0) + canceled_protections
                 result["preflight_snapshot_version"] = snapshot.version
                 try:
                     after = capture_broker_snapshot(
                         broker, expected_account_id=snapshot.account_id
                     )
-                    post = Reconciler(self._store).reconcile(after)
+                    post = self._reconcile_snapshot(broker, after)
                     result["snapshot_version"] = after.version
                     result["account_execution_state"] = post.state
                     result["reconciliation_reasons"] = list(post.reasons)
@@ -731,10 +884,7 @@ class ExecutionService:
             "LONG": "LONG",
             "SHORT": "SHORT",
         }.get(signal)
-        opens_new_exposure = bool(
-            target_position_open
-            and str(live_position or "NEUTRAL").upper() != target_position_open
-        )
+        opens_new_exposure = any(s.get("role") == "open" for s in _planned_order_specs(intent_dict, dollar_amount))
         if risk_params is not None and opens_new_exposure:
             order_side = "sell" if signal == "SHORT" else "buy"
             try:
@@ -748,12 +898,11 @@ class ExecutionService:
                     side=order_side,
                     authoritative_snapshot=_snapshot,
                     authoritative_quote=_quote,
+                    stop_loss_price=(intent_dict.get("risk_controls") or {}).get("stop_loss_price"),
                 )
             except Exception as exc:
-                warnings.append(
-                    f"Risk sizing unavailable ({exc}); falling back to configured notional."
-                )
-                risk_sizing_info = {"applied": False, "error": str(exc)}
+                return {"success": False, "fail_closed": True, "broker_attempted": False,
+                        "broker_calls": 0, "error": f"Risk sizing unavailable: {exc}"}
             else:
                 if not sizing.approved:
                     return {
@@ -797,7 +946,27 @@ class ExecutionService:
                 if not protective_prices.get("stop_loss_price"):
                     protective_prices["stop_loss_price"] = float(risk_stop_price)
 
+        if opens_new_exposure:
+            from .policy import entry_check
+            if _quote is None or _snapshot is None:
+                return {"success": False, "fail_closed": True, "broker_calls": 0,
+                        "broker_attempted": False, "error": "Execution policy requires authoritative quote and account"}
+            execution_price = _quote.ask_price if signal in {"BUY", "LONG"} else _quote.bid_price
+            proposed_specs = _planned_order_specs(intent_dict, effective_amount)
+            requested = sum(float(s.get("notional") or float(s.get("quantity") or 0) * _quote.price)
+                            for s in proposed_specs if s.get("role") == "open")
+            effective_amount, policy_error = entry_check(intent_dict, price=execution_price or float("nan"),
+                                                        equity=_snapshot.equity, requested=requested)
+            if policy_error or not protective_prices or not protective_prices.get("stop_loss_price"):
+                return {"success": False, "fail_closed": True, "entry_policy_blocked": True,
+                        "broker_attempted": False, "broker_calls": 0,
+                        "error": policy_error or "Broker-side stop-loss is required for opening exposure"}
+
         specs = _planned_order_specs(intent_dict, effective_amount)
+        if opens_new_exposure:
+            for spec in specs:
+                if spec.get("role") == "open":
+                    spec["quantity"] = None  # clipped notional is authoritative
         if _snapshot is not None:
             verified = _snapshot.position(symbol)
             for spec in specs:
@@ -877,7 +1046,7 @@ class ExecutionService:
                 and not is_crypto
             ):
                 if _quote is not None:
-                    qty_int = int(float(s.get("notional") or effective_amount or 0.0) / _quote.price)
+                    qty_int = int(float(s.get("notional") or effective_amount or 0.0) / float(intent_dict["entry_policy"]["maximum_price"]))
                     qty_int = qty_int if qty_int >= 1 else None
                 else:
                     qty_int = _resolve_qty(symbol, float(s.get("notional") or effective_amount or 0.0))
@@ -999,7 +1168,14 @@ class ExecutionService:
                     verdict = guard.check_order(
                         symbol,
                         amount,
-                        account={"equity": _snapshot.equity} if _snapshot else None,
+                        account=(
+                            {
+                                "equity": _snapshot.equity,
+                                "last_equity": _snapshot.last_equity,
+                            }
+                            if _snapshot
+                            else None
+                        ),
                         position_value=(
                             abs(_snapshot.position(symbol).market_value)
                             if _snapshot and _snapshot.position(symbol) else 0.0
@@ -1149,11 +1325,10 @@ class ExecutionService:
             quantity = spec.get("quantity")
             if quantity is not None and float(quantity) > abs(position.qty) + 1e-9:
                 return False
-        live_statuses = {"new", "accepted", "pending_new", "partially_filled", "partial"}
         return not any(
             order.symbol == position.symbol
             and order.side == expected_side
-            and order.status in live_statuses
+            and broker_status_to_local(order.status) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
             for order in snapshot.orders
         )
 
@@ -1208,7 +1383,7 @@ class ExecutionService:
             local["order_id"],
             broker_status_to_local(status),
             broker_order_id=str(broker_id),
-            filled_qty=float(filled or 0),
+            filled_qty=float(local.get("filled_qty") or 0),
         )
 
     def _resubmit_recovered(
@@ -1227,10 +1402,23 @@ class ExecutionService:
         quote = validate_quote(self._quote_factory(local["symbol"]), local["symbol"])
         position = snapshot.position(local["symbol"])
         side = str(local["side"]).lower()
+        intent = self._store.get_intent_for_order(local["order_id"]) or {}
+        payload = json.loads(intent.get("payload_json") or "{}")
+        closing_ids = {
+            client_order_id_for(intent.get("decision_id", ""), local["symbol"], spec["side"],
+                                role="close", seq=spec["seq"])
+            for spec in _planned_order_specs(payload, None) if spec.get("role") == "close"
+        }
+        authorized_close = payload.get("kind") == "liquidation" or local["client_order_id"] in closing_ids
         risk_reducing = bool(
-            position
+            authorized_close and position
+            and local.get("quantity") is not None
+            and 0 < float(local["quantity"]) <= abs(position.qty) + 1e-8
             and ((position.qty > 0 and side == "sell") or (position.qty < 0 and side == "buy"))
         )
+        if risk_reducing and not self._verified_reducing_exit(snapshot, local["symbol"],
+                [{"role": "close", "side": side, "quantity": local["quantity"]}]):
+            raise BrokerAuthorityError("Recovery close conflicts with a live order")
         # Phase C: exposure-increasing US-equity recovery resubmits must
         # re-run today's program-derived entry gate (trading day + validated
         # current Top20) before any broker POST. Broker-existing orders are
@@ -1297,6 +1485,18 @@ class ExecutionService:
         # Phase B note: the Phase A "recovery target already exists" block is
         # superseded — an increase onto an existing same-side position is
         # allowed and clipped by the recomputed exposure caps above.
+        recovery_controls = None
+        if not risk_reducing:
+            from .policy import entry_check
+            payload = json.loads((intent or {}).get("payload_json") or "{}")
+            amount = float(effective_notional or float(effective_quantity or 0) * quote.price)
+            amount, error = entry_check(payload, price=(quote.ask_price if side == "buy" else quote.bid_price) or float("nan"),
+                                        equity=snapshot.equity, requested=amount)
+            recovery_controls = _resolve_protective_prices(payload, payload.get("action", ""), False, [])
+            if error or not recovery_controls or not recovery_controls.get("stop_loss_price"):
+                self._store.transition_order(local["order_id"], "CANCELED")
+                raise BrokerAuthorityError(error or "Recovery requires the original protective stop")
+            effective_notional, effective_quantity = amount, None
         try:
             from tradingagents.safety import get_safety_guard
 
@@ -1309,7 +1509,10 @@ class ExecutionService:
             verdict = guard.check_order(
                 local["symbol"],
                 amount,
-                account={"equity": snapshot.equity},
+                account={
+                    "equity": snapshot.equity,
+                    "last_equity": snapshot.last_equity,
+                },
                 position_value=abs(position.market_value) if position else 0.0,
                 risk_reducing=risk_reducing,
             )
@@ -1329,6 +1532,11 @@ class ExecutionService:
             local["symbol"], local["side"], effective_notional,
             effective_quantity, local["client_order_id"],
         )
+        if recovery_controls:
+            quantity = int(float(effective_notional) / float(payload["entry_policy"]["maximum_price"]))
+            request = _build_protective_request(local["symbol"], side, quantity,
+                                                recovery_controls.get("stop_loss_price"),
+                                                recovery_controls.get("take_profit_price"), local["client_order_id"]) if quantity >= 1 else None
         if request is None:
             self._store.transition_order(current["order_id"], "REJECTED")
             raise BrokerAuthorityError(
@@ -1347,11 +1555,47 @@ class ExecutionService:
             ) from exc
         self._adopt_recovery_order(current, response)
 
+    def _reconcile_snapshot(self, broker: Any, snapshot: BrokerSnapshot):
+        """Recognize only protective children proven by a nested broker parent.
+
+        Without these rows, a filled stop looks like an unexplained position
+        change and the lot book retains an already-closed position.
+        """
+        from alpaca.trading.requests import GetOrderByIdRequest
+        orders = self._store.list_all_orders()
+        known_ids = {o.get("broker_order_id") for o in orders}
+        unknown = {o.broker_order_id: o for o in snapshot.orders if o.broker_order_id not in known_ids}
+        if unknown:
+            for local in orders:
+                if not local.get("broker_order_id") or self._store.protective_parent(local["order_id"]):
+                    continue
+                intent = self._store.get_intent_for_order(local["order_id"]) or {}
+                payload = json.loads(intent.get("payload_json") or "{}")
+                expected_side = "buy" if payload.get("target_position") == "LONG" else "sell"
+                if not (payload.get("risk_controls") or {}).get("stop_loss_price") or local["side"] != expected_side:
+                    continue
+                if not any(o.symbol == local["symbol"] and o.side != local["side"] for o in unknown.values()):
+                    continue
+                parent = broker.get_order_by_id(local["broker_order_id"], filter=GetOrderByIdRequest(nested=True))
+                if str(getattr(parent, "id", "")) != local["broker_order_id"]:
+                    raise BrokerAuthorityError("Protective parent identity mismatch")
+                for leg in (getattr(parent, "legs", None) or []):
+                    child = unknown.get(str(leg.id))
+                    if child is None:
+                        continue
+                    if (child.symbol != local["symbol"] or child.side == local["side"]
+                            or not 0 < child.qty <= float(local.get("quantity") or 0) + 1e-8
+                            or str(getattr(leg, "client_order_id", "")) != child.client_order_id):
+                        raise BrokerAuthorityError("Protective child does not match its parent's exposure")
+                    self._store.register_protective_child(local, child)
+                    unknown.pop(child.broker_order_id)
+        return Reconciler(self._store).reconcile(snapshot)
+
     def _recover_locked(
         self, broker: Any, snapshot: BrokerSnapshot
     ) -> tuple[BrokerSnapshot, Any]:
         """Resolve durable nonterminal rows before permitting new exposure."""
-        initial = Reconciler(self._store).reconcile(snapshot)
+        initial = self._reconcile_snapshot(broker, snapshot)
         recoverable_reasons = (
             "unresolved PENDING order:",
             "unresolved UNKNOWN order:",
@@ -1363,6 +1607,8 @@ class ExecutionService:
         for local in self._store.list_recoverable_orders():
             if local["client_order_id"] in broker_clients:
                 continue
+            if self._store.protective_parent(local["order_id"]):
+                raise BrokerAuthorityError("Missing protective child must be reconciled; never resubmit it as a market order")
             status = str(local["status"]).upper()
             found = self._lookup_for_recovery(broker, local["client_order_id"])
             if found is not None:
@@ -1377,7 +1623,7 @@ class ExecutionService:
         if not changed:
             return snapshot, initial
         refreshed = capture_broker_snapshot(broker, expected_account_id=snapshot.account_id)
-        return refreshed, Reconciler(self._store).reconcile(refreshed)
+        return refreshed, self._reconcile_snapshot(broker, refreshed)
 
     def startup_recover(self) -> dict[str, Any]:
         """Scheduler/startup gate: recover first; only CLEAN may auto-trade."""
@@ -1490,8 +1736,7 @@ class ExecutionService:
                     "error": "no quantity/notional: refusing to guess size",
                 }
             # Broker-side protective legs ride on the same parent submit (no
-            # separate child POSTs): try bracket/OTO first, fall back to plain
-            # market if the broker rejects the protective legs.
+            # separate child POSTs). A rejection never falls back to a bare market order.
             protective_request = None
             if (
                 spec.get("role") == "open"
@@ -1507,6 +1752,10 @@ class ExecutionService:
                     spec.get("take_profit_price"),
                     client_oid,
                 )
+            if spec.get("role") == "open" and protective_request is None:
+                self._store.transition_order(order_id, "REJECTED")
+                return {"ok": False, "status": "REJECTED", "broker_calls": 0,
+                        "error": "Required protective order could not be constructed"}
             resp = None
             broker_calls = 0
             order_class: Optional[str] = None
@@ -1536,6 +1785,10 @@ class ExecutionService:
                         "broker_calls": 1,
                         "error": str(exc),
                     }
+            if protective_request is not None and resp is None:
+                self._store.transition_order(order_id, "UNKNOWN")
+                return {"ok": False, "status": "UNKNOWN", "broker_calls": 1,
+                        "client_order_id": client_oid, "error": "Empty protective submit response; reconcile before retry"}
             if resp is None:
                 try:
                     resp = broker.submit_order(request)
@@ -1581,6 +1834,10 @@ class ExecutionService:
                     "broker_calls": broker_calls,
                     "error": str(resp.get("error", "broker rejected order")),
                 }
+            if not broker_oid:
+                self._store.transition_order(order_id, "UNKNOWN")
+                return {"ok": False, "status": "UNKNOWN", "broker_calls": broker_calls,
+                        "client_order_id": client_oid, "error": "Submit response has no broker order identity"}
             local = broker_status_to_local(status_raw)
             self._store.transition_order(
                 order_id, local, broker_order_id=str(broker_oid) if broker_oid else None
@@ -1644,6 +1901,7 @@ class ExecutionService:
                     broker, expected_account_id=identity.account_id
                 )
                 snapshot, reconciliation = self._recover_locked(broker, snapshot)
+                snapshot, canceled_protections = self._cancel_owned_close_protections(broker, snapshot, sym)
                 position = snapshot.position(sym)
                 side = "sell" if position and position.qty > 0 else "buy"
                 spec = [{"role": "close", "side": side, "quantity": abs(position.qty) if position else None}]
@@ -1660,7 +1918,10 @@ class ExecutionService:
                         guard.check_order(
                             sym,
                             abs(position.market_value),
-                            account={"equity": snapshot.equity},
+                            account={
+                                "equity": snapshot.equity,
+                                "last_equity": snapshot.last_equity,
+                            },
                             position_value=abs(position.market_value),
                             risk_reducing=True,
                         )
@@ -1686,11 +1947,12 @@ class ExecutionService:
                     _quantity=abs(position.qty),
                     _side=side,
                 )
+                result["broker_calls"] = result.get("broker_calls", 0) + canceled_protections
                 try:
                     after = capture_broker_snapshot(
                         broker, expected_account_id=snapshot.account_id
                     )
-                    post = Reconciler(self._store).reconcile(after)
+                    post = self._reconcile_snapshot(broker, after)
                     result["account_execution_state"] = post.state
                     result["reconciliation_reasons"] = list(post.reasons)
                     result["snapshot_version"] = after.version
@@ -1837,6 +2099,10 @@ class ExecutionService:
             status_raw = getattr(resp, "status", None) or (
                 resp.get("status") if isinstance(resp, dict) else "accepted"
             )
+            if not broker_oid:
+                self._store.transition_order(orow["order_id"], "UNKNOWN")
+                return {"success": False, "status": "UNKNOWN", "broker_attempted": True,
+                        "broker_calls": 1, "error": "Close response has no broker order identity"}
             local = broker_status_to_local(status_raw)
             self._store.transition_order(
                 orow["order_id"], local,

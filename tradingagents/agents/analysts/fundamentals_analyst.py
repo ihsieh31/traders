@@ -2,6 +2,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from langchain_core.messages import AIMessage, ToolMessage
+from tradingagents.dataflows.interface_utils import analysis_date_mode
+from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.prompts import load_prompt, render_prompt
 
 # Import prompt capture utility
@@ -43,17 +45,32 @@ def create_fundamentals_analyst(llm, toolkit):
             openai_available = toolkit.has_openai_web_search()
             finnhub_available = toolkit.has_finnhub()
             simfin_available = toolkit.has_simfin_data()
+            # Live-only sources (OpenAI hosted web search, DeFiLlama) are
+            # never offered on a historical as-of date; SEC/SimFin/Finnhub
+            # have point-in-time capability and stay available.
+            analysis_mode = analysis_date_mode(current_date)
+            live_only_sources_allowed = analysis_mode == "live"
 
-            if toolkit.config["online_tools"] and openai_available:
+            if (
+                toolkit.config["online_tools"]
+                and openai_available
+                and live_only_sources_allowed
+            ):
                 base_openai_tools = [toolkit.get_fundamentals_openai]
             else:
                 base_openai_tools = []
 
             if is_crypto:
-                tools = [toolkit.get_defillama_fundamentals] + base_openai_tools
-                active_sources = ["DeFiLlama"] + (["OpenAI web search"] if base_openai_tools else [])
+                tools = (
+                    [toolkit.get_defillama_fundamentals]
+                    if live_only_sources_allowed
+                    else []
+                ) + base_openai_tools
+                active_sources = (
+                    ["DeFiLlama"] if live_only_sources_allowed else []
+                ) + (["OpenAI web search"] if base_openai_tools else [])
             else:
-                tools = []
+                tools = [toolkit.get_sec_ir_source] if toolkit.config.get("sec_ir_enabled", True) else []
                 tools.extend(base_openai_tools)
                 if finnhub_available:
                     tools.extend(
@@ -70,7 +87,7 @@ def create_fundamentals_analyst(llm, toolkit):
                             toolkit.get_simfin_income_stmt,
                         ]
                     )
-                active_sources = []
+                active_sources = ["SEC/IR filing metadata (not verified financial figures)"] if toolkit.config.get("sec_ir_enabled", True) else []
                 if base_openai_tools:
                     active_sources.append("OpenAI web search")
                 if finnhub_available:
@@ -82,6 +99,14 @@ def create_fundamentals_analyst(llm, toolkit):
                 " Use all available fundamentals tools before concluding. "
                 + (f"Active sources now: {', '.join(active_sources)}." if active_sources else "No external fundamentals source is available; reason from existing context only.")
             )
+            if analysis_mode != "live":
+                source_guidance += (
+                    f" Historical as-of {current_date}: live-only sources without a"
+                    " verified point-in-time cutoff (OpenAI web search, DeFiLlama)"
+                    " are unavailable for this date. If no active source can"
+                    " evidence a claim, state it explicitly as 'source unavailable';"
+                    " never substitute present-day data."
+                )
             asset_focus = (
                 "Analyze DeFi metrics like TVL changes, protocol upgrades, token unlock schedules, yield farming opportunities, and major partnership announcements that could sustain multi-day crypto price trends."
                 if is_crypto
@@ -231,71 +256,49 @@ def create_fundamentals_analyst(llm, toolkit):
             # print(f"[FUNDAMENTALS] ✅ Analysis completed in {elapsed_time:.2f} seconds")
             # print(f"[FUNDAMENTALS] Generated report length: {len(result.content)} characters")
 
-            # Check if the result already contains FINAL TRANSACTION PROPOSAL
-            if "FINAL TRANSACTION PROPOSAL:" not in result.content:
-                # Create a simple prompt that includes the analysis content directly
-                final_prompt = render_prompt(
-                    "analysts/fundamentals_final_recommendation",
-                    ticker=ticker,
-                    analysis_content=result.content,
-                )
-                
-                # Use a simple chain without tools for the final recommendation
-                final_chain = llm
-                final_result = final_chain.invoke(final_prompt)
-                
-                # Combine the analysis with the final proposal
-                combined_content = result.content + "\n\n" + final_result.content
-                result = AIMessage(content=combined_content)
+            # The analyst report is exactly what the tool loop produced. No
+            # separate final-recommendation call exists: analysts never emit
+            # executable actions, and an empty report is handled by the
+            # selected-analyst coverage gate, not patched here.
+            analysis_content = (result.content or "").strip()
+            result = AIMessage(content=analysis_content)
 
             # Append final assistant response to history for downstream agents
             messages_history.append(result)
 
+            merged_status = "completed" if analysis_content else "failed"
             return {
                 "messages": messages_history,
                 "fundamentals_report": result.content,
+                "analysis_status": {
+                    **(state.get("analysis_status") or {}),
+                    "fundamentals": merged_status,
+                },
+                "analysis_errors": (
+                    {
+                        **(state.get("analysis_errors") or {}),
+                        "fundamentals": "fundamentals analyst returned an empty report",
+                    }
+                    if merged_status == "failed"
+                    else state.get("analysis_errors") or {}
+                ),
             }
-            
+
+        except ProviderFailure:
+            # Provider access failures keep their original type and stop the round.
+            raise
+
         except Exception as e:
             elapsed_time = time.time() - start_time
             error_msg = f"Error in fundamentals analysis for {state['company_of_interest']}: {str(e)}"
             print(f"[FUNDAMENTALS] ❌ {error_msg}")
             print(f"[FUNDAMENTALS] ❌ Failed after {elapsed_time:.2f} seconds")
-            
-            # Import traceback for detailed error logging
+            # Sanitized error record, then re-raise: a broad exception must
+            # never be repackaged as a completed report.
             import traceback
-            print(f"[FUNDAMENTALS] ❌ Full traceback:")
-            traceback.print_exc()
-            
-            # Return a minimal report with error information
-            fallback_report = f"""
-# Fundamentals Analysis Error
-
-**Symbol:** {state['company_of_interest']}
-**Date:** {state.get('trade_date', 'Unknown')}
-**Error:** {str(e)}
-**Duration:** {elapsed_time:.2f} seconds
-
-## Error Details
-The fundamentals analysis encountered an error and could not complete successfully. This may be due to:
-- API rate limits or timeouts
-- Network connectivity issues  
-- Invalid ticker symbol
-- Missing data for the requested symbol
-
-## Recommendation
-⚠️ **PROCEED WITH CAUTION** - Unable to perform fundamental analysis for this symbol.
-
-| Metric | Status |
-|--------|--------|
-| Fundamental Data | ❌ Unavailable |
-| Analysis Status | ❌ Failed |
-| Recommendation | ⚠️ Incomplete Analysis |
-"""
-            
-            return {
-                "messages": [result if 'result' in locals() else None],
-                "fundamentals_report": fallback_report,
-            }
+            import os as _os
+            if _os.environ.get("TRADINGAGENTS_DEBUG_TRACEBACK"):
+                traceback.print_exc()
+            raise RuntimeError(error_msg) from e
 
     return fundamentals_analyst_node

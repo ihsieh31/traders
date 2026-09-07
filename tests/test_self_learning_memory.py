@@ -1,6 +1,7 @@
 """Tests for the self-learning memory loop: persistence, snapshot recovery,
 and outcome-driven reflection into the per-agent ChromaDB memories."""
 
+from datetime import datetime, timedelta, timezone
 import json
 import tempfile
 import unittest
@@ -33,7 +34,7 @@ class MemoryPersistenceTests(unittest.TestCase):
         # ignore_cleanup_errors: chromadb keeps its store files open on
         # Windows, so temp-dir removal can race the process handle.
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            config = {"agent_memory_dir": tmp}
+            config = {"agent_memory_dir": tmp, "memory_retrieval_enabled": True}
 
             first = FinancialSituationMemory("persist_test_memory", config)
             _enable_fake_embeddings(first)
@@ -46,13 +47,13 @@ class MemoryPersistenceTests(unittest.TestCase):
             _enable_fake_embeddings(second)
             self.assertEqual(second.situation_collection.count(), 1)
 
-            matches = second.get_memories("High inflation with rising rates", n_matches=1)
+            matches = second.get_memories("High inflation with rising rates", n_matches=1, as_of=(datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat())
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0]["recommendation"], "Prefer defensive sectors")
 
     def test_ids_do_not_collide_across_instances(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            config = {"agent_memory_dir": tmp}
+            config = {"agent_memory_dir": tmp, "memory_retrieval_enabled": True}
             for i in range(3):
                 memory = FinancialSituationMemory("collision_test_memory", config)
                 _enable_fake_embeddings(memory)

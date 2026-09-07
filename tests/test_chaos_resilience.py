@@ -22,9 +22,17 @@ from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.safety.guardrails import SafetyGuard
 
 
+def _ready_entry_policy():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return {"status": "READY", "minimum_price": 99, "maximum_price": 101,
+            "expires_at": (now+timedelta(hours=1)).isoformat(),
+            "exit_by": (now+timedelta(days=5)).isoformat(), "confirmation": "fixture observed setup"}
+
+
 def _authority_broker(broker, *, positioned=False):
     broker.get_account.return_value = SimpleNamespace(
-        id="paper-chaos", equity="100000", cash="100000", buying_power="200000"
+        id="paper-chaos", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
     )
     broker.get_all_positions.return_value = (
         [SimpleNamespace(symbol="AAPL", qty="5", market_value="500")]
@@ -57,7 +65,7 @@ def _buy_intent():
             action=ExecutableAction.BUY,
             confidence="medium",
             risk_rationale="test",
-            required_controls="test",
+            required_controls="test", entry_policy=_ready_entry_policy(), stop_loss_price=95,
         ),
     ).model_dump(mode="json")
 
@@ -179,7 +187,7 @@ class MidFlipOutageTests(unittest.TestCase):
                 action=ExecutableAction.SHORT,
                 confidence="medium",
                 risk_rationale="flip",
-                required_controls="None.",
+                required_controls="None.", entry_policy=_ready_entry_policy(), stop_loss_price=105,
             ),
         ).model_dump(mode="json")
 

@@ -83,6 +83,7 @@ class StructuredDecisionTests(unittest.TestCase):
                 required_controls="Stop below support.",
                 stop_loss="182.50",
                 take_profit="195 then 202",
+                take_profit_price=195.0,
             ),
         )
 

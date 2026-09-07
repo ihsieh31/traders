@@ -42,6 +42,8 @@ def get_fred_data(series_id: str, start_date: str, end_date: str) -> Dict:
         'file_type': 'json',
         'observation_start': start_date,
         'observation_end': end_date,
+        'realtime_start': end_date,
+        'realtime_end': end_date,
         'sort_order': 'desc',
         'limit': 100
     }
@@ -324,16 +326,9 @@ def get_fed_calendar_and_minutes(curr_date: str) -> str:
             
             result += "\n"
     
-    # Fed meeting schedule (approximate - would need real Fed calendar API)
-    result += "### 2024 FOMC Meeting Schedule\n"
-    result += "- **January 30-31**: FOMC Meeting\n"
-    result += "- **March 19-20**: FOMC Meeting\n"
-    result += "- **April 30-May 1**: FOMC Meeting\n"
-    result += "- **June 11-12**: FOMC Meeting\n"
-    result += "- **July 30-31**: FOMC Meeting\n"
-    result += "- **September 17-18**: FOMC Meeting\n"
-    result += "- **October 29-30**: FOMC Meeting\n"
-    result += "- **December 17-18**: FOMC Meeting\n\n"
+    # FOMC meeting calendar: no authoritative point-in-time calendar source
+    # is configured, so no meeting dates (hardcoded or otherwise) are shown.
+    result += "FOMC event calendar unavailable: no authoritative point-in-time calendar source is configured.\n\n"
     
     result += "### Key Policy Considerations\n"
     result += "- **Dual Mandate**: Maximum employment and price stability\n"

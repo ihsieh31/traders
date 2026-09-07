@@ -2,6 +2,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from langchain_core.messages import AIMessage, ToolMessage
+from tradingagents.dataflows.interface_utils import analysis_date_mode
+from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.prompts import load_prompt, render_prompt
 
 # Import prompt capture utility
@@ -23,9 +25,17 @@ def create_macro_analyst(llm, toolkit):
             ticker = state.get("company_of_interest", "MARKET")
             fred_available = toolkit.has_fred()
             openai_available = toolkit.has_openai_web_search()
-            
+            # OpenAI hosted macro web search is live-only: never offered on a
+            # historical as-of date. FRED series with realtime vintage stay.
+            analysis_mode = analysis_date_mode(current_date)
+            macro_news_available = (
+                toolkit.config["online_tools"]
+                and openai_available
+                and analysis_mode == "live"
+            )
+
             # print(f"[MACRO] Analyzing macro environment on {current_date}")
-            
+
             tools = []
             if fred_available:
                 tools.extend(
@@ -35,13 +45,12 @@ def create_macro_analyst(llm, toolkit):
                         toolkit.get_yield_curve_analysis,
                     ]
                 )
-            if toolkit.config["online_tools"] and openai_available:
+            if macro_news_available:
                 tools.append(toolkit.get_macro_news_openai)
 
             active_sources = []
             if fred_available:
                 active_sources.append("FRED macro data")
-            macro_news_available = toolkit.config["online_tools"] and openai_available
             if macro_news_available:
                 active_sources.append("OpenAI macro web search")
 
@@ -54,6 +63,13 @@ def create_macro_analyst(llm, toolkit):
                     else ""
                 )
             )
+            if analysis_mode != "live":
+                source_guidance += (
+                    f" Historical as-of {current_date}: OpenAI hosted macro web search"
+                    " has no verified point-in-time cutoff and is unavailable for this"
+                    " date. If no active source can evidence a claim, state it"
+                    " explicitly as 'source unavailable'; never substitute present-day data."
+                )
 
             system_message = render_prompt(
                 "analysts/macro_system",
@@ -269,27 +285,13 @@ Based on current market conditions as of {current_date}:
 """
                     })()
 
+            # The analyst report is exactly what the tool loop produced. No
+            # separate final-recommendation call exists: analysts never emit
+            # executable actions, and an empty report is handled by the
+            # selected-analyst coverage gate, not patched here.
             analysis_content = (result.content or "").strip()
-            if not analysis_content:
-                analysis_content = (
-                    "Macro analysis was limited by unavailable tools. "
-                    "State the limitation clearly in the final recommendation."
-                )
+            result = AIMessage(content=analysis_content)
 
-            if "FINAL TRANSACTION PROPOSAL:" not in analysis_content:
-                final_prompt = render_prompt(
-                    "analysts/macro_final_recommendation",
-                    current_date=current_date,
-                    analysis_content=analysis_content,
-                )
-                final_result = llm.invoke(final_prompt)
-                final_content = final_result.content if hasattr(final_result, "content") else str(final_result)
-                result = AIMessage(
-                    content=analysis_content + "\n\n---\n\n## Final Recommendation\n\n" + final_content
-                )
-            else:
-                result = AIMessage(content=analysis_content)
-            
             elapsed_time = time.time() - start_time
             # print(f"[MACRO] ✅ Analysis completed in {elapsed_time:.2f} seconds")
             # print(f"[MACRO] Generated report length: {len(result.content)} characters")
@@ -298,68 +300,39 @@ Based on current market conditions as of {current_date}:
             # Append final message for downstream agents
             messages_history.append(result)
 
+            merged_status = "completed" if analysis_content else "failed"
             return {
                 "messages": messages_history,
                 "macro_report": result.content,
+                "analysis_status": {
+                    **(state.get("analysis_status") or {}),
+                    "macro": merged_status,
+                },
+                "analysis_errors": (
+                    {
+                        **(state.get("analysis_errors") or {}),
+                        "macro": "macro analyst returned an empty report",
+                    }
+                    if merged_status == "failed"
+                    else state.get("analysis_errors") or {}
+                ),
             }
-            
+
+        except ProviderFailure:
+            # Provider access failures keep their original type and stop the round.
+            raise
+
         except Exception as e:
             elapsed_time = time.time() - start_time
             error_msg = f"Error in macro analysis for {current_date}: {str(e)}"
             print(f"[MACRO] ❌ {error_msg}")
             print(f"[MACRO] ❌ Failed after {elapsed_time:.2f} seconds")
-            
-            # Import traceback for detailed error logging
+            # Sanitized error record, then re-raise: a broad exception must
+            # never be repackaged as a completed report.
             import traceback
-            print(f"[MACRO] ❌ Full traceback:")
-            traceback.print_exc()
-            
-            # Return a minimal report with error information that still allows the analysis to continue
-            fallback_report = f"""
-# Macro Economic Analysis Error
+            import os as _os
+            if _os.environ.get("TRADINGAGENTS_DEBUG_TRACEBACK"):
+                traceback.print_exc()
+            raise RuntimeError(error_msg) from e
 
-**Date:** {state.get('trade_date', 'Unknown')}
-**Error:** {str(e)}
-**Duration:** {elapsed_time:.2f} seconds
-
-## Error Details
-The macro economic analysis encountered an error and could not complete successfully. This may be due to:
-- FRED API rate limits or timeouts
-- Network connectivity issues  
-- Missing API keys (FRED_API_KEY required)
-- Invalid date ranges or data unavailability
-
-## General Market Guidance
-⚠️ **PROCEED WITH CAUTION** - Unable to perform detailed macro economic analysis.
-
-### Manual Check Recommendations
-- Monitor Federal Reserve policy updates manually
-- Check recent CPI and employment data releases
-- Observe Treasury yield curve for inversion signals
-- Watch VIX levels for market volatility assessment
-- Review latest FOMC meeting minutes
-
-### General Trading Implications
-- **Rising Rate Environment**: Favor financials, pressure growth stocks
-- **Inflation Concerns**: Consider commodity exposure, real assets
-- **Economic Uncertainty**: Increase defensive positioning
-- **Market Volatility**: Adjust position sizing accordingly
-
-| Indicator | Status | Recommendation |
-|-----------|--------|----------------|
-| Economic Data | ❌ Unavailable | Manual Review Required |
-| Yield Curve | ❌ Unavailable | Monitor Treasury.gov |
-| Fed Policy | ❌ Unavailable | Check Federal Reserve Website |
-| Analysis Status | ❌ Failed | ⚠️ Use General Guidance |
-| Overall Recommendation | ⚠️ Limited Analysis | Proceed with Caution |
-
-**Configuration Note**: Set FRED_API_KEY environment variable for complete macro analysis.
-"""
-            
-            # Ensure we return proper message structure even in error case
-            return {
-                "messages": [result if 'result' in locals() and result else AIMessage(content="Macro analysis encountered an error.")],
-                "macro_report": fallback_report,
-            }
-
-    return macro_analyst_node 
+    return macro_analyst_node
