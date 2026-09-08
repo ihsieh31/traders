@@ -97,7 +97,7 @@ def check_entry_allowed(
     if store is None:
         store = SelectionStore(default_selection_cache_path(config))
     selection = store.load_valid(
-        config, spec=resolved_spec, now=now, calendar_client=client, calendar_rows=rows
+        config, spec=resolved_spec, now=eastern, calendar_client=client, calendar_rows=rows
     )
     if selection is None:
         return (

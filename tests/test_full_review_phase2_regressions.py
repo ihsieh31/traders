@@ -201,6 +201,7 @@ class F08TimeoutTests(_Isolated, unittest.TestCase):
             "llm_request_timeout_seconds": 11,
         }
         resolved = resolve_screening_config(config)
+        resolved["api_key"] = "fake-key"
         with patch(
             "tradingagents.llm_clients.create_llm_client",
             side_effect=_fake_create_llm_client,

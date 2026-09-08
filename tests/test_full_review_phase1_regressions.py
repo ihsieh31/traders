@@ -1365,7 +1365,9 @@ class F06PreflightReadOnlyTests(_GuardIsolated, unittest.TestCase):
         with patch("tradingagents.llm_clients.roles._resolve_provider_key",
                    return_value="k"), \
              patch.object(lr, "_default_llm_probe",
-                          return_value={"ok": True}):
+                          return_value={"ok": True}), \
+             patch.object(lr, "fetch_session_dates",
+                          return_value=[datetime(2026, 9, 8).date()]):
             result = lr.run_preflight(cfg, runtime, deps)
         self.assertTrue(result["ok"])
         self.assertEqual(len(submit_calls), 0)
