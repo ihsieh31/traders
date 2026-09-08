@@ -195,61 +195,62 @@ USER MESSAGE:
             "Trader",
         )
 
-        # Enhanced validation and final proposal handling
-        # Check if we have substantial analysis content
-        if len(analysis_content.strip()) < 200 or ("FINAL TRANSACTION PROPOSAL:" in analysis_content and len(analysis_content.replace("FINAL TRANSACTION PROPOSAL:", "").strip()) < 150):
-            # Generate fallback comprehensive analysis
-            fallback_prompt = render_prompt(
-                "trader/trader_fallback_plan",
-                company_name=company_name,
-            )
-            
-            analysis_content = invoke_structured_or_freetext(
-                structured_llm,
-                llm,
-                fallback_prompt,
-                render_trader_proposal,
-                "Trader",
-            )
-        
-        # Ensure we have a final recommendation
-        if "FINAL TRANSACTION PROPOSAL:" not in analysis_content:
-            # Create final recommendation based on analysis
-            final_prompt = render_prompt(
+        # The first response is the analysis; it must stand on its own. A
+        # missing or empty result is a failure, never a reason to re-ask with
+        # a context-free prompt that would silently drop this round's
+        # evidence, position and mode context.
+        if not isinstance(analysis_content, str) or not analysis_content.strip():
+            raise ValueError("Trader returned empty or invalid analysis")
+
+        # Only a missing final action justifies exactly one bounded,
+        # context-preserving completion. The original messages (system
+        # context + investment plan) stay in place; the original analysis is
+        # replayed as the assistant turn so the model completes this
+        # decision, not a fresh one.
+        trading_mode = trading_context["mode"]
+        extracted_recommendation = extract_recommendation(analysis_content, trading_mode)
+
+        if not extracted_recommendation:
+            completion_prompt = render_prompt(
                 "trader/trader_final_decision",
                 company_name=company_name,
                 analysis_content=analysis_content,
                 final_format=final_format,
             )
-            
-            final_content = invoke_structured_or_freetext(
+            completion_messages = list(messages) + [
+                {"role": "assistant", "content": analysis_content},
+                {"role": "user", "content": completion_prompt},
+            ]
+            completion_content = invoke_structured_or_freetext(
                 structured_llm,
                 llm,
-                final_prompt,
+                completion_messages,
                 render_trader_proposal,
                 "Trader",
             )
-            
-            # Properly combine analysis with final proposal
-            combined_content = analysis_content + "\n\n---\n\n## Final Trading Decision\n\n" + final_content
-            analysis_content = combined_content
+            if not isinstance(completion_content, str) or not completion_content.strip():
+                raise ValueError("Trader final action unavailable after one contextual completion")
+            extracted_recommendation = extract_recommendation(completion_content, trading_mode)
+            if not extracted_recommendation:
+                raise ValueError("Trader final action unavailable after one contextual completion")
+            combined_content = (
+                analysis_content
+                + "\n\n---\n\n## Final Trading Decision\n\n"
+                + completion_content
+            )
+            analysis_content = ensure_final_transaction_proposal(
+                combined_content, extracted_recommendation, trading_mode
+            )
+        else:
+            analysis_content = ensure_final_transaction_proposal(
+                analysis_content, extracted_recommendation, trading_mode
+            )
 
         result = AIMessage(content=analysis_content)
 
-        # Extract the recommendation from the response
-        trading_mode = trading_context["mode"]
-        extracted_recommendation = extract_recommendation(result.content, trading_mode)
-        if not extracted_recommendation:
-            extracted_recommendation = "NEUTRAL" if trading_mode == "trading" else "HOLD"
-        
-        final_decision_content = ensure_final_transaction_proposal(
-            result.content, extracted_recommendation, trading_mode
-        )
-        result = AIMessage(content=final_decision_content)
-
         return {
             "messages": [result],
-            "trader_investment_plan": final_decision_content,
+            "trader_investment_plan": analysis_content,
             "sender": name,
             "trading_mode": trading_mode,
             "current_position": current_position,

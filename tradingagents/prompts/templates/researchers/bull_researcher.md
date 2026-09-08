@@ -8,14 +8,16 @@ Key points to focus on:
 - Engagement: Present your argument in a conversational style, engaging directly with the bear analyst's points and debating effectively rather than just listing data.
 
 Resources available:
-Evidence-scored decision claim matrix: {claim_matrix}
-Full untruncated analyst reports: {all_reports_text}
+Heuristic claim priority matrix: {claim_matrix}
+Analyst reports or retrieved excerpts: {all_reports_text}
 Debate digest: {debate_digest}
 Conversation history of the debate: {history}
 Last bear argument: {current_response}
 Reflections from similar situations and lessons learned: {past_memory_str}
 
-Use claim IDs from the scored matrix when making or refuting points. Prioritize bullish claims with high evidence, freshness, numeric support, and low contradiction scores; directly explain why bearish high-score claims should be discounted if you challenge them.
+The priority score is only a reading-order heuristic. It is not source verification, model confidence, probability, win rate or an independent vote. Numeric-looking text may still be wrong. Inspect the supplied excerpt, source label and as-of date before using a claim. Never assign high confidence solely because this score is high. Direction labels are keyword heuristics, not trade recommendations. Overlap hints may reflect compatible facts or different horizons, not factual contradictions.
+
+Use claim IDs to locate the supplied excerpts. Decide whether a claim is supported from its actual evidence and stated limitations, not its priority score. Distinguish factual conflicts from compatible observations and different horizons. If material evidence is missing or a factual conflict cannot be resolved from the supplied information, state the uncertainty explicitly; do not invent corroboration or treat the heuristic label as a deciding vote.
 
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position. You must also address reflections and learn from lessons and mistakes you made in the past.
 

@@ -445,10 +445,14 @@ class GraphSetup:
                     print(f"[RISK_PARALLEL] {analyst_name} provider failure: {e}")
                     raise
                 except Exception as e:
+                    # Same policy as the parallel analysts coordinator: a
+                    # failed risk analyst must never be merged back as
+                    # "completed" work. The UI vocabulary has no distinct
+                    # failed value, so reset to pending and re-raise.
                     print(f"[RISK_PARALLEL] Error in {analyst_name}: {e}")
                     if ui_available:
-                        app_state.update_agent_status(analyst_name, "completed")
-                    return analyst_name, local_state
+                        app_state.update_agent_status(analyst_name, "pending")
+                    raise
 
             completed_results = {}
             analyst_start_delay = self.config.get(
@@ -480,8 +484,16 @@ class GraphSetup:
                             pending.cancel()
                         raise
                     except Exception as e:
+                        # Any first-round risk failure aborts the round: a
+                        # missing debate voice must not surface to the Risk
+                        # Judge as a silently completed round. Cancelling only
+                        # stops futures that have not started; statements from
+                        # already-started siblings may still finish, but they
+                        # are discarded below because the exception propagates.
                         print(f"[RISK_PARALLEL] {analyst_name} failed: {e}")
-                        completed_results[analyst_name] = copy.deepcopy(state)
+                        for pending in futures:
+                            pending.cancel()
+                        raise
 
             base = copy.deepcopy(state.get("risk_debate_state", {}))
             merged = {

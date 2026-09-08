@@ -77,7 +77,11 @@ def create_safe_debator(llm, config=None):
 
         response = llm.invoke(prompt)
 
-        argument = f"Safe Analyst: {response.content}"
+        content = getattr(response, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Safe risk analyst returned empty or invalid content")
+
+        argument = f"Safe Analyst: {content}"
 
         # Store safe messages as a list for proper conversation display
         safe_messages = risk_debate_state.get("safe_messages", [])

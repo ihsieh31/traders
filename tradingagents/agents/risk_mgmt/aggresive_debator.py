@@ -77,7 +77,11 @@ def create_risky_debator(llm, config=None):
 
         response = llm.invoke(prompt)
 
-        argument = f"Risky Analyst: {response.content}"
+        content = getattr(response, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Risky risk analyst returned empty or invalid content")
+
+        argument = f"Risky Analyst: {content}"
 
         # Store risky messages as a list for proper conversation display
         risky_messages = risk_debate_state.get("risky_messages", [])

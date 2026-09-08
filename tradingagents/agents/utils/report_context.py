@@ -930,9 +930,9 @@ def _claim_lookup(context: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 def _render_claim_line(claim: Dict[str, Any], max_chars: int) -> str:
     scores = claim.get("scores", {})
     return (
-        f"[{claim['claim_id']} {claim['direction']} score={claim.get('confidence', 0):.2f} "
-        f"fresh={scores.get('freshness', 0):.2f} numeric={scores.get('numeric_support', 0):.2f} "
-        f"contradiction={scores.get('contradiction', 0):.2f}] "
+        f"[{claim['claim_id']} {claim['direction']} priority={claim.get('confidence', 0):.2f} "
+        f"date_hint={scores.get('freshness', 0):.2f} numeric_hint={scores.get('numeric_support', 0):.2f} "
+        f"overlap_hint={scores.get('contradiction', 0):.2f}] "
         f"{_truncate(claim.get('claim', ''), max_chars)}"
     )
 
@@ -948,27 +948,14 @@ def _render_evidence_scoreboard(
     claims_by_id = _claim_lookup(context)
 
     if not scoreboard or not context.get("evidence_claims"):
-        return "Evidence Scoreboard: No structured claims available."
+        return "Heuristic Claim Reading Guide: No structured claims available."
 
     lines: List[str] = []
-    lines.append("Evidence Scoreboard (heuristic reading-order priority, not confidence):")
-    lines.append(
-        "- Net: "
-        f"{scoreboard.get('net_direction', 'mixed').title()} "
-        f"({scoreboard.get('net_confidence', 'low')} confidence) | "
-        f"bull={scoreboard.get('bullish_score', 0):.2f}, "
-        f"bear={scoreboard.get('bearish_score', 0):.2f}, "
-        f"contradiction={scoreboard.get('contradiction_score', 0):.2f}, "
-        f"freshness={scoreboard.get('freshness_score', 0):.2f}, "
-        f"quant={scoreboard.get('quantitative_score', 0):.2f}"
-    )
-    guidance = scoreboard.get("manager_guidance")
-    if guidance:
-        lines.append(f"- Manager guidance: {guidance}")
+    lines.append("Heuristic Claim Reading Guide:")
 
     for label, key in (
-        ("Key bullish claims", "key_bullish_claim_ids"),
-        ("Key bearish claims", "key_bearish_claim_ids"),
+        ("Bullish-tagged excerpts (heuristic labels)", "key_bullish_claim_ids"),
+        ("Bearish-tagged excerpts (heuristic labels)", "key_bearish_claim_ids"),
     ):
         claim_ids = scoreboard.get(key, [])[:max_claims]
         if not claim_ids:
@@ -981,12 +968,12 @@ def _render_evidence_scoreboard(
 
     contradictions = scoreboard.get("major_contradictions", [])[:3]
     if contradictions:
-        lines.append("- Major contradictions:")
+        lines.append("- Potential claim overlaps to review (not verified contradictions):")
         for item in contradictions:
             shared_terms = ", ".join(item.get("shared_terms", [])) or "shared evidence terms"
             lines.append(
                 f"  - [{item['claim_a']}] vs [{item['claim_b']}] "
-                f"score={item.get('score', 0):.2f}; overlap: {shared_terms}"
+                f"overlap_score={item.get('score', 0):.2f}; overlap: {shared_terms}"
             )
 
     return "\n".join(lines).strip()
@@ -1004,6 +991,7 @@ def _render_decision_claim_matrix(
     lines.append("Heuristic Claim Priority Matrix (reading-order heuristic; NOT probability, confidence, win rate or verified evidence):")
     lines.append("Dates and numbers below are claims in generated reports, not independently verified facts. Repeated coverage across roles is not independent corroboration. Resolve claims against the linked original source; missing publication dates remain unknown.")
     lines.append("The priority score is only a reading-order heuristic. It is not source verification, model confidence, probability, win rate or an independent vote. Numeric-looking text may still be wrong. Inspect the supplied excerpt, source label and as-of date before using a claim. Never assign high confidence solely because this score is high.")
+    lines.append("Direction labels are keyword heuristics, not trade recommendations. Overlap hints may reflect compatible facts or different horizons, not factual contradictions.")
     lines.append(_render_evidence_scoreboard(context, config=config))
     lines.append("")
     lines.append("Claims by source:")
@@ -1023,16 +1011,12 @@ def _render_decision_claim_matrix(
             reverse=True,
         )[:max_points]
         if report_claims:
-            direction_scores = {"Bullish": 0.0, "Bearish": 0.0, "Mixed": 0.0}
             rendered_points: List[str] = []
             for claim in report_claims:
-                direction = str(claim.get("direction", "mixed")).title()
-                direction_scores[direction] += float(claim.get("confidence", 0.0))
                 rendered_points.append(_render_claim_line(claim, point_chars))
 
-            dominant = max(direction_scores, key=direction_scores.get)
             joined_points = " | ".join(rendered_points)
-            lines.append(f"- {report_meta['label']} [{dominant}]: {joined_points}")
+            lines.append(f"- {report_meta['label']}: {joined_points}")
             continue
 
         points = report_meta.get("coverage_points", [])[:max_points]
@@ -1040,16 +1024,12 @@ def _render_decision_claim_matrix(
             lines.append(f"- {report_meta['label']}: No usable claims.")
             continue
 
-        signal_votes = {"Bullish": 0, "Bearish": 0, "Mixed": 0}
         rendered_points: List[str] = []
         for point in points:
-            signal = _classify_signal(point)
-            signal_votes[signal] += 1
             rendered_points.append(_truncate(point, point_chars))
 
-        dominant = max(signal_votes, key=signal_votes.get)
         joined_points = " | ".join(rendered_points)
-        lines.append(f"- {report_meta['label']} [{dominant}]: {joined_points}")
+        lines.append(f"- {report_meta['label']}: {joined_points}")
 
     return "\n".join(lines).strip()
 
@@ -1500,17 +1480,6 @@ def _render_memory_context(
     global_overview = context.get("global_overview", "").strip()
     if global_overview:
         lines.append(global_overview)
-
-    scoreboard = context.get("evidence_scoreboard", {})
-    if scoreboard:
-        lines.append(
-            "Heuristic reading-order priority (not confidence): "
-            f"{scoreboard.get('net_direction', 'mixed')} "
-            f"({scoreboard.get('net_confidence', 'low')}) | "
-            f"bull={scoreboard.get('bullish_score', 0):.2f}, "
-            f"bear={scoreboard.get('bearish_score', 0):.2f}, "
-            f"contradiction={scoreboard.get('contradiction_score', 0):.2f}"
-        )
 
     for report_key, _ in REPORT_SPECS:
         report_meta = context.get("reports", {}).get(report_key)

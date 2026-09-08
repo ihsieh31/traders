@@ -623,6 +623,126 @@ class ParallelCoordinatorStopTests(unittest.TestCase):
         with self.assertRaises(ProviderFailure):
             coordinator(state)
 
+    # --- DMC-1 D02/D03: first-round risk failure must not masquerade as a
+    # completed round; only a full three-speaker round may merge. ---
+
+    def test_parallel_risk_generic_failure_propagates_per_role(self):
+        for failing in ("Risky", "Safe", "Neutral"):
+            with self.subTest(failing=failing):
+                setup = self._setup()
+
+                def broken(state):
+                    raise RuntimeError("debator exploded")
+
+                def ok(state):
+                    return {
+                        "risk_debate_state": {
+                            "current_risky_response": "Risky Analyst: bold",
+                            "current_safe_response": "Safe Analyst: careful",
+                            "current_neutral_response": "Neutral Analyst: balanced",
+                        }
+                    }
+
+                nodes = {"Risky": ok, "Safe": ok, "Neutral": ok}
+                nodes[failing] = broken
+                coordinator = setup._create_parallel_risk_round_one_coordinator(nodes)
+                state = {
+                    "company_of_interest": "NVDA",
+                    "risk_debate_state": {"count": 0},
+                }
+                with patch("webui.utils.state.app_state") as ui:
+                    with self.assertRaises(RuntimeError):
+                        coordinator(state)
+
+                # The failed role must never be presented as completed; the
+                # UI vocabulary has no failed value, so it is reset to pending.
+                name = f"{failing} Analyst"
+                statuses = [
+                    call.args[1]
+                    for call in ui.update_agent_status.call_args_list
+                    if call.args and call.args[0] == name
+                ]
+                self.assertNotIn("completed", statuses)
+                self.assertIn("pending", statuses)
+
+    def test_parallel_risk_all_success_merges_exactly_three_speakers(self):
+        setup = self._setup()
+
+        def risky(state):
+            return {"risk_debate_state": {"current_risky_response": "Risky Analyst: bold"}}
+
+        def safe(state):
+            return {"risk_debate_state": {"current_safe_response": "Safe Analyst: careful"}}
+
+        def neutral(state):
+            return {
+                "risk_debate_state": {
+                    "current_neutral_response": "Neutral Analyst: balanced"
+                }
+            }
+
+        coordinator = setup._create_parallel_risk_round_one_coordinator(
+            {"Risky": risky, "Safe": safe, "Neutral": neutral}
+        )
+        state = {"company_of_interest": "NVDA", "risk_debate_state": {"count": 0}}
+        result = coordinator(state)
+        merged = result["risk_debate_state"]
+        self.assertEqual(merged["count"], 3)
+        self.assertEqual(merged["latest_speaker"], "Neutral")
+        self.assertEqual(merged["risky_messages"], ["Risky Analyst: bold"])
+        self.assertEqual(merged["safe_messages"], ["Safe Analyst: careful"])
+        self.assertEqual(merged["neutral_messages"], ["Neutral Analyst: balanced"])
+        history_lines = [line for line in merged["history"].splitlines() if line.strip()]
+        self.assertEqual(
+            history_lines,
+            ["Risky Analyst: bold", "Safe Analyst: careful", "Neutral Analyst: balanced"],
+        )
+
+    def test_parallel_risk_provider_failure_preserves_type_and_detail(self):
+        setup = self._setup()
+        failure = ProviderFailure(
+            role="analysis", provider="openai", model="m", attempts=2,
+            category="transient", detail="429 upstream",
+        )
+
+        def broken(state):
+            raise failure
+
+        coordinator = setup._create_parallel_risk_round_one_coordinator(
+            {"Risky": broken, "Safe": broken, "Neutral": broken}
+        )
+        state = {"company_of_interest": "NVDA", "risk_debate_state": {"count": 0}}
+        with self.assertRaises(ProviderFailure) as ctx:
+            coordinator(state)
+        self.assertIs(ctx.exception, failure)
+        self.assertEqual(ctx.exception.detail, "429 upstream")
+
+    def test_sequential_risk_node_provider_failure_propagates(self):
+        from tradingagents.agents.risk_mgmt.aggresive_debator import (
+            create_risky_debator,
+        )
+
+        class BrokenLLM:
+            def invoke(self, prompt):
+                raise ProviderFailure(
+                    role="analysis", provider="openai", model="m", attempts=1,
+                    category="transient", detail="timeout",
+                )
+
+        node = create_risky_debator(BrokenLLM(), config={})
+        state = {
+            "company_of_interest": "NVDA",
+            "trader_investment_plan": "plan",
+            "risk_debate_state": {"count": 0, "history": ""},
+        }
+        with patch(
+            "tradingagents.agents.risk_mgmt.aggresive_debator.capture_agent_prompt",
+            side_effect=lambda *a, **k: None,
+        ):
+            with self.assertRaises(ProviderFailure) as ctx:
+                node(state)
+        self.assertEqual(ctx.exception.detail, "timeout")
+
 
 class SchedulerStopTests(unittest.TestCase):
     def test_provider_stop_clears_queue_and_halts_scheduling(self):

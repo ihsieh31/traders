@@ -1,6 +1,5 @@
-Based on the following swing trading analysis for {company_name}, provide your final trading decision.
-
-Analysis:
+Complete the final action format for {company_name} using the original evidence and account context above.
+Existing analysis:
 {analysis_content}
-
-Provide a brief justification (max 4 bullets) and conclude with: {final_format}
+Do not invent new prices, facts or execution capabilities to make the answer longer.
+Provide a brief justification only if necessary and end with exactly one valid action using: {final_format}

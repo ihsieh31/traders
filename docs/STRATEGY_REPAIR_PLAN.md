@@ -39,3 +39,28 @@
 ## 本輪驗證結果
 
 2026-09-07：23 個直接相關測試檔案，共 476 tests passed、114 subtests passed。涵蓋分析指標、來源時點、記憶隔離、訊號語意、保護單／到期退出、重啟恢復、曝險上限及排程整合。3 個警告均來自既有第三方套件的棄用通知。所有修改 Python 檔案 AST 語法檢查通過；依既有 CRLF 檔案慣例檢查 Git 差異，沒有新增空白格式錯誤。這些檢查驗證程式契約，不是策略收益實驗。
+
+## DMC-1 實作說明與限制（2026-09-08）
+
+本節依 `docs/05_DEBATE_MINIMAL_IMPLEMENTATION_PROMPT.md` 追加，記錄辯論與交易計畫最小一致性修復的實作範圍、驗證結果與仍未解決的限制。不改寫歷史章節。
+
+### 已實作（A–D）
+
+- **A（排序只作排序）**：`report_context.py` 渲染層改為 `Heuristic Claim Reading Guide:`／`Heuristic Claim Priority Matrix`；移除 rendered text 的 `Net: ... (confidence)` 聚合、bull/bear 聚合分數與 manager guidance 值；欄名改為 `priority=/date_hint=/numeric_hint=/overlap_hint=`；`Claims by source` 移除報告級 `[Bullish/Bearish/Mixed]` 總結；memory context 移除聚合方向段落。新增 direction labels 與 overlap hints 的否定說明。`_initial_claim_scores`、`_finalize_claim_score`、`_apply_contradiction_scores`、`_side_score`、`_confidence_label`、`_build_evidence_scoreboard` 的計算與 JSON keys（含 `net_direction`、`net_confidence`、`manager_guidance`）全部保留於 structured metadata，未當成新校準結果。researchers/risk/managers/trader_context 模板同步改名 `Heuristic claim priority matrix`、`Analyst reports or retrieved excerpts`，移除「依高分採信」「scoreboard mixed 降信心」「矛盾分數高等待」句子，改為依原始證據與實際衝突判斷。
+- **B（Trader 補寫有界且保留上下文）**：刪除首次回覆後因長度不足而以 `trader_fallback_plan` 無上下文補寫的整段。首次結果必須為 non-empty string，否則 `ValueError("Trader returned empty or invalid analysis")`。缺 final action 時改用既有 `extract_recommendation` 判斷；取得到則直接 `ensure_final_transaction_proposal`（零額外呼叫）；取不到才允許一次 contextual completion，傳入原 messages 拷貝 + assistant 原分析 + user 補全要求（`trader_final_decision.md` 新文案）；補全後仍無 action 則 `ValueError("Trader final action unavailable after one contextual completion")`，不默認 NEUTRAL/HOLD。ProviderFailure 任一處原型別向上傳播。正常 1 次、缺 action 最多 2 次 logical calls。
+- **C（持倉能力誠實界定）**：trader_context/investment/trading 模板不再要求系統 trail stops，明示 pipeline 不自動 trail/replace 保護單；trader_context 與 risk_manager 加入相同能力界線段（maintain 不加減碼/不更新保護單/不重置期限；advisory stop/target 不送單；未知舊停損/目標/論點/期限標記 unavailable、不由未實現損益推測；本路徑僅支援 maintain 或 full exit，partial resize 不可執行；full exit 仍受既有執行檢查）。position_logic 兩處「有利價位平倉」改為「請求完整平倉並受既有執行檢查」；trading 模式 NEUTRAL 說明改為本標的平倉或保持空手；新增 protected reversal 說明（需先核實退出再 fresh decision）；investment BUY/SELL 說明同方向維持、SELL 為完整退出。schemas/execution 無任何 diff。
+- **D（風險辯論失敗不可偽裝完成）**：三個 risk debator 在組字前檢查 LLM content 為 non-empty string，否則 `ValueError("<Role> risk analyst returned empty or invalid content")`；驗證通過才 append history/messages 並 count+1。`_create_parallel_risk_round_one_coordinator` 兩層 catch 修正：worker 一般例外改設 UI status `pending` 後 bare raise，不再回傳 local_state；`future.result()` 一般例外取消未開始 futures 後 bare raise，不再把 deepcopy(state) 併入 completed_results。ProviderFailure 仍原型別傳播，UI 同樣不標 completed。任何失敗不會走到 merged return；成功回合維持 Risky→Safe→Neutral 合併順序、count+3、latest=Neutral。
+
+### DMC-1 驗證結果
+
+- 指令：`.venv-p2/bin/python -B -m pytest -p no:cacheprovider tests/test_debate_minimal_consistency.py tests/test_report_context_scoring.py tests/test_prompt_templates.py tests/test_structured_decisions.py tests/test_phase_b_retry_stop.py tests/test_phase_b_position_context.py tests/test_decision_validation_integrity.py tests/test_strategy_consistency.py tests/test_trading_graph_mocked.py -q`
+- 結果：139 passed、167 subtests passed（2 個既有第三方套件棄用警告），退出碼 0。`git diff --check` 退出碼 0；改動 Python 全數通過 stdlib `ast.parse`（未產生 pyc）。
+- 新增 `tests/test_debate_minimal_consistency.py`（B01–B05、C02、D01 及 Trader 失敗的 graph integration：真實 Trader node 經真實 StateGraph 擲出 ValueError 時，Risky/Safe/Neutral/Risk Judge/execution spy 計數皆為 0）；A01/A02 併入 `test_report_context_scoring.py`；A03/C01 併入 `test_prompt_templates.py`；D02/D03 併入 `test_phase_b_retry_stop.py`。測試全部離線：fake LLM/memory、patch prompt capture、臨時隔離、socket blocker 保底；移除 `TRADINGAGENTS_PROMPT_DIR` override 以使用內建模板，原有 override 測試保留。
+
+### DMC-1 仍未解決的限制
+
+- 本輪不聲稱提高收益、資料已逐項查證、trailing 已實作，或已通過獨立驗收（驗收由 `docs/06_DEBATE_MINIMAL_ACCEPTANCE_PROMPT.md` 另行執行）。
+- READY 的非價格條件仍由 Risk Manager 依報告認證，不是逐項資料驗證；啟發式 priority score 仍不是來源驗證、機率或勝率。
+- Trader 對既有持倉的原始論點/停損/目標/期限若不在 supplied context 中，僅誠實標記 unavailable；完整持倉論點追蹤（thesis ledger/memory 接線）未實作。
+- 辯論結構（同模型、角色分工、輪數、路由）與因子權重/序列配置為可比較策略選擇，本輪未改動、未驗證其績效影響。
+- coordinator 取消只停止未開始的 futures；已開始的同輪模型呼叫可能完成，但任何失敗都會使該回合整體向上拋出、不會合併成成功決策。
