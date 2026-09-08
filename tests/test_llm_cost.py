@@ -111,6 +111,29 @@ class ScanRunCostsTests(unittest.TestCase):
         self.assertIsNone(records[0]["cost_usd"])
         self.assertEqual(records[0]["unpriced_tokens"], 42_000)
 
+    def test_mixed_attributed_and_unattributed_events_keep_all_tokens(self):
+        overrides = {"known-model": {"input": 1.0, "output": 2.0}}
+        with tempfile.TemporaryDirectory() as root:
+            _write_run(
+                root,
+                "AAPL",
+                "2026-07-03",
+                llm_calls=[
+                    (None, {"input_tokens": 3, "output_tokens": 4}),
+                    ("known-model", {"input_tokens": 6, "output_tokens": 4}),
+                ],
+                summary_tokens=17,
+            )
+            records = scan_run_costs(eval_results_dir=root, overrides=overrides)
+
+        record = records[0]
+        self.assertEqual(record["input_tokens"], 9)
+        self.assertEqual(record["output_tokens"], 8)
+        self.assertEqual(record["total_tokens"], 17)
+        self.assertEqual(record["unpriced_tokens"], 7)
+        self.assertEqual(set(record["models"]), {"known-model"})
+        self.assertAlmostEqual(record["cost_usd"], 0.000014)
+
     def test_missing_dir_returns_empty(self):
         self.assertEqual(scan_run_costs(eval_results_dir="does-not-exist-xyz"), [])
 

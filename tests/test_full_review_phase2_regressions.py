@@ -318,6 +318,23 @@ class F15UsageTests(_Isolated, unittest.TestCase):
         self.assertEqual(usage, {"input_tokens": 12, "output_tokens": 34, "total_tokens": 46})
         self.assertEqual(model, "claude-fake")
 
+    def test_usage_metadata_keeps_response_metadata_model_attribution(self):
+        from langchain_core.messages import AIMessage
+        from langchain_core.outputs import ChatGeneration, LLMResult
+        from tradingagents.llm_clients.usage import extract_langchain_usage
+
+        message = AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+            response_metadata={"model_name": "gemini-fake"},
+        )
+        usage, model = extract_langchain_usage(
+            LLMResult(generations=[[ChatGeneration(message=message)]])
+        )
+
+        self.assertEqual(usage["total_tokens"], 7)
+        self.assertEqual(model, "gemini-fake")
+
     def test_google_shaped_usage_normalized(self):
         from tradingagents.llm_clients.usage import normalize_usage_map
 

@@ -133,6 +133,8 @@ def scan_run_costs(
                 continue
 
         per_model: Dict[str, Dict[str, int]] = {}
+        unattributed_input = 0
+        unattributed_output = 0
         for event in payload.get("events") or []:
             if event.get("type") != "llm_call":
                 continue
@@ -141,16 +143,20 @@ def scan_run_costs(
             model = str(event_payload.get("model") or "").strip()
             input_tokens = int(usage.get("input_tokens", 0) or 0)
             output_tokens = int(usage.get("output_tokens", 0) or 0)
-            if not model or (input_tokens <= 0 and output_tokens <= 0):
+            if input_tokens <= 0 and output_tokens <= 0:
+                continue
+            if not model:
+                unattributed_input += input_tokens
+                unattributed_output += output_tokens
                 continue
             bucket = per_model.setdefault(model, {"input": 0, "output": 0})
             bucket["input"] += input_tokens
             bucket["output"] += output_tokens
 
-        input_total = sum(b["input"] for b in per_model.values())
-        output_total = sum(b["output"] for b in per_model.values())
+        input_total = sum(b["input"] for b in per_model.values()) + unattributed_input
+        output_total = sum(b["output"] for b in per_model.values()) + unattributed_output
         cost: Optional[float] = None
-        unpriced = 0
+        unpriced = unattributed_input + unattributed_output
         models: Dict[str, dict] = {}
         for model, bucket in per_model.items():
             model_cost = estimate_cost_usd(
@@ -167,7 +173,7 @@ def scan_run_costs(
                 cost = (cost or 0.0) + model_cost
 
         total_tokens = input_total + output_total
-        if not per_model:
+        if not per_model and not (unattributed_input or unattributed_output):
             # No attributable events: report the summary total as unpriced.
             total_tokens = int(
                 (payload.get("summary") or {}).get("total_llm_tokens", 0) or 0

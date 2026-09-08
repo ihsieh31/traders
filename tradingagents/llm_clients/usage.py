@@ -99,18 +99,18 @@ def extract_langchain_usage(response: Any) -> Tuple[Dict[str, int], Optional[str
         message = getattr(generation, "message", None)
         if message is None:
             continue
+        response_metadata = getattr(message, "response_metadata", None)
+        if isinstance(response_metadata, dict) and not model_name:
+            model_name = str(
+                response_metadata.get("model_name")
+                or response_metadata.get("model")
+                or ""
+            ).strip() or None
         usage_metadata = getattr(message, "usage_metadata", None)
         if usage_metadata:
             usage = normalize_usage_map(usage_metadata)
             break
-        response_metadata = getattr(message, "response_metadata", None)
         if isinstance(response_metadata, dict):
-            if not model_name:
-                model_name = str(
-                    response_metadata.get("model_name")
-                    or response_metadata.get("model")
-                    or ""
-                ).strip() or None
             for key in ("token_usage", "usage"):
                 if response_metadata.get(key):
                     usage = normalize_usage_map(response_metadata[key])
