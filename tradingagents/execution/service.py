@@ -356,6 +356,20 @@ def _get_execution_config() -> dict:
         return {}
 
 
+def _position_unchanged(after_qty: float, before_qty: float) -> bool:
+    """Same side and same absolute quantity (NEW-R1).
+
+    ``before_qty`` may be negative (SHORT); comparing the signed quantity
+    against ``abs(before)`` falsely reported every unchanged SHORT as
+    changed. Only a real quantity change or a side flip counts as changed.
+    """
+    before_qty = float(before_qty)
+    after_qty = float(after_qty)
+    same_side = (after_qty > 0) == (before_qty > 0)
+    same_qty = abs(abs(after_qty) - abs(before_qty)) <= 1e-8
+    return same_side and same_qty
+
+
 def _evaluate_opening_caps(
     *,
     symbol: str,
@@ -976,7 +990,9 @@ class ExecutionService:
                                 "note": "position closed during protection cancellation",
                                 "decision_id": prepared_outbox["decision_id"],
                             }
-                        if abs(after_cancel.qty - abs(close_position.qty)) > 1e-8:
+                        if not _position_unchanged(
+                            after_cancel.qty, close_position.qty
+                        ):
                             self._abandon_prepared_rows(prepared_outbox)
                             gap = self._evaluate_protection_gap(
                                 broker, snapshot, symbol_for_close,
@@ -2274,6 +2290,7 @@ class ExecutionService:
                 snapshot, reconciliation = self._recover_locked(broker, snapshot)
                 position = snapshot.position(sym)
                 side = "sell" if position and position.qty > 0 else "buy"
+                before_cancel_qty = float(position.qty) if position else None
                 committed_quantity = abs(position.qty) if position else None
                 prepared: Optional[dict[str, Any]] = None
                 if position is not None:
@@ -2343,7 +2360,7 @@ class ExecutionService:
                     return result
                 if prepared is not None and (
                     position is None
-                    or abs(position.qty - committed_quantity) > 1e-8
+                    or not _position_unchanged(position.qty, before_cancel_qty)
                 ):
                     # The position changed during cancellation: the durable
                     # close's fixed quantity is no longer provably safe.

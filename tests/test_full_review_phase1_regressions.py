@@ -1046,6 +1046,232 @@ class F04ProtectionGapTests(_GuardIsolated, unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# NEW-R1 — protected SHORT close must not false-positive "position changed"
+# ---------------------------------------------------------------------------
+
+
+class F04ShortCloseRegressionTests(_GuardIsolated, unittest.TestCase):
+    """NEW-R1: the F04 re-verification after protection cancellation used
+    ``abs(after - abs(before))``, which reads every unchanged SHORT as a
+    2x-qty change (abs(-5 - 5) = 10) and fail-closed a normal close into a
+    protection gap. A SHORT close must proceed when side and absolute
+    quantity are unchanged, and still fail closed on real changes."""
+
+    def _short_broker(self, *, reject_close=False, qty="-5", on_cancel=None):
+        stop = SimpleNamespace(
+            id="b-stop", client_order_id="ta-stop-1", symbol="AAPL",
+            side="buy", status="new", qty="5", notional=None, filled_qty="0",
+            filled_avg_price=None, updated_at=_now(),
+        )
+        submit_calls, cancel_calls = [], []
+        state = {
+            "positions": [
+                SimpleNamespace(symbol="AAPL", qty=qty, market_value="-500",
+                                avg_entry_price="100", unrealized_pl="0",
+                                current_price="100"),
+            ],
+            "orders": [stop],
+        }
+
+        def submit_order(request):
+            submit_calls.append(request)
+            get = request.get if isinstance(request, dict) else (
+                lambda n: getattr(request, n, None)
+            )
+            if reject_close:
+                raise RuntimeError("422 rejected: close failed")
+            order = SimpleNamespace(
+                id="b-close", client_order_id=get("client_order_id"),
+                symbol=str(get("symbol")),
+                side=str(getattr(get("side"), "value", get("side"))),
+                status="accepted", qty=str(get("qty") or 0), notional=None,
+                filled_qty="0", filled_avg_price=None, updated_at=_now(),
+            )
+            state["orders"].append(order)
+            return order
+
+        def cancel_order_by_id(oid):
+            cancel_calls.append(oid)
+            for o in state["orders"]:
+                if getattr(o, "id", None) == oid:
+                    o.status = "canceled"
+            if on_cancel is not None:
+                on_cancel(state)
+
+        def get_order_by_id(oid, filter=None):
+            if oid == "b-parent":
+                return SimpleNamespace(id="b-parent", legs=[SimpleNamespace(
+                    id="b-stop", client_order_id="ta-stop-1",
+                )])
+            raise BrokerAuthorityError("order lookup remains uncertain")
+
+        broker = SimpleNamespace(
+            get_account=lambda: SimpleNamespace(
+                id="paper-1", equity="100000", last_equity="100000",
+                cash="80000", buying_power="160000",
+            ),
+            get_all_positions=lambda: list(state["positions"]),
+            get_orders=lambda request=None: list(state["orders"]),
+            get_order_by_client_order_id=lambda cid: next(
+                (o for o in state["orders"] if o.client_order_id == cid), None),
+            get_order_by_id=get_order_by_id,
+            submit_order=submit_order,
+            cancel_order_by_id=cancel_order_by_id,
+            state=state,
+            _submit_calls=submit_calls,
+            _cancel_calls=cancel_calls,
+        )
+        return broker
+
+    def _seed_short_protected_position(self, svc, broker):
+        """A durable 5-share SHORT lot with a registered protective BUY stop."""
+        from tradingagents.execution.store import client_order_id_for
+
+        did = "dec-parent-short"
+        coid = client_order_id_for(did, "AAPL", "sell", role="open", seq=0)
+        intent_row, orders, _ = svc.store.create_outbox(
+            decision_id=did,
+            run_id=None,
+            symbol="AAPL",
+            action="SELL",
+            target_position="SHORT",
+            payload_json=json.dumps(
+                _buy_intent("AAPL", action="SELL", current="SHORT")),
+            orders=[{"client_order_id": coid, "symbol": "AAPL", "side": "sell",
+                     "quantity": 5, "notional": None}],
+        )
+        parent = orders[0]
+        svc.store.sync_order_from_broker(
+            parent["order_id"], "FILLED", broker_order_id="b-parent",
+            filled_qty=5,
+        )
+        # Register the broker-visible protective child (a BUY stop).
+        broker.state["orders"].append(SimpleNamespace(
+            id="b-stop", client_order_id="ta-stop-1", symbol="AAPL",
+            side="buy", status="new", qty="5", notional=None, filled_qty="0",
+            filled_avg_price=None, updated_at=_now(),
+        ))
+        child_view = SimpleNamespace(
+            id="b-stop", client_order_id="ta-stop-1", symbol="AAPL",
+            side="buy", qty=5, filled_qty=0, broker_order_id="b-stop",
+        )
+        svc.store.register_protective_child(
+            svc.store.get_order(parent["order_id"]), child_view,
+        )
+        return parent
+
+    def test_liquidate_short_unchanged_sends_buy_close(self):
+        """R1-A: protected SHORT qty=-5 unchanged after cancel → the close
+        MUST be submitted (BUY 5), never a false protection gap."""
+        broker = self._short_broker(reject_close=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = _service(tmp, broker)
+            self._seed_short_protected_position(svc, broker)
+            with _patch_caps(_caps_config()):
+                result = svc.liquidate("AAPL")
+            self.assertNotIn(
+                "liquidation position changed during protection cancellation",
+                str(result.get("error")),
+            )
+            self.assertNotEqual(
+                str(result.get("account_execution_state")), "PAUSED",
+                result,
+            )
+            self.assertFalse(result.get("protection_gap", False))
+            self.assertTrue(result.get("success"), result)
+            # Exactly one close POST, side BUY, quantity 5.
+            self.assertEqual(len(broker._submit_calls), 1)
+            close_request = broker._submit_calls[0]
+            self.assertEqual(
+                str(getattr(getattr(close_request, "side", None), "value",
+                            getattr(close_request, "side", ""))).lower(),
+                "buy",
+            )
+            self.assertEqual(float(getattr(close_request, "qty", 0)), 5.0)
+            self.assertEqual(len(broker._cancel_calls), 1)
+
+    def test_execute_short_close_unchanged_sends_buy_close(self):
+        """R1-A (execute path): a schema-valid close_short intent with the
+        position unchanged after cancellation must reach the broker."""
+        broker = self._short_broker(reject_close=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = _service(tmp, broker)
+            self._seed_short_protected_position(svc, broker)
+            with _patch_caps(_caps_config()):
+                result = svc.execute(
+                    trade_intent=_buy_intent("AAPL", action="SELL",
+                                             current="SHORT"),
+                )
+            self.assertNotIn(
+                "close position changed during protection cancellation",
+                str(result.get("error")),
+            )
+            self.assertFalse(result.get("protection_gap", False))
+            self.assertTrue(result.get("success"), result)
+            self.assertEqual(len(broker._submit_calls), 1)
+            close_request = broker._submit_calls[0]
+            self.assertEqual(
+                str(getattr(getattr(close_request, "side", None), "value",
+                            getattr(close_request, "side", ""))).lower(),
+                "buy",
+            )
+            self.assertEqual(float(getattr(close_request, "qty", 0)), 5.0)
+
+    def test_liquidate_short_qty_changed_fails_closed(self):
+        """R1-B: -5 → -3 during the cancellation race — the prepared 5-share
+        close must be abandoned (no broker POST) and the account must take
+        the protection-gap safe path."""
+        broker = self._short_broker(
+            reject_close=False,
+            on_cancel=lambda state: state["positions"][0].__setattr__(
+                "qty", "-3"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = _service(tmp, broker)
+            self._seed_short_protected_position(svc, broker)
+            with _patch_caps(_caps_config()):
+                result = svc.liquidate("AAPL")
+            self.assertEqual(len(broker._submit_calls), 0)
+            self.assertTrue(result.get("paused"))
+            self.assertTrue(result.get("protection_gap"))
+            state = svc.store.get_account_state("paper-1")
+            self.assertEqual(state["state"], "PAUSED")
+
+    def test_liquidate_short_side_flip_fails_closed(self):
+        """R1-C: -5 → +5 during the race — a side flip is never 'same qty';
+        the stale close must not be sent and the account must pause."""
+        broker = self._short_broker(
+            reject_close=False,
+            on_cancel=lambda state: state["positions"][0].__setattr__(
+                "qty", "5"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = _service(tmp, broker)
+            self._seed_short_protected_position(svc, broker)
+            with _patch_caps(_caps_config()):
+                result = svc.liquidate("AAPL")
+            self.assertEqual(len(broker._submit_calls), 0)
+            self.assertTrue(result.get("paused"))
+            self.assertTrue(result.get("protection_gap"))
+
+    def test_liquidate_short_closed_during_race_is_no_close_needed(self):
+        """R1-C companion: the position disappearing during the race keeps
+        the existing no-new-close-needed behavior (not a gap)."""
+        broker = self._short_broker(
+            reject_close=False,
+            on_cancel=lambda state: state.__setitem__("positions", []),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = _service(tmp, broker)
+            self._seed_short_protected_position(svc, broker)
+            with _patch_caps(_caps_config()):
+                result = svc.liquidate("AAPL")
+            self.assertTrue(result.get("success"))
+            self.assertTrue(result.get("no_close_needed"))
+            self.assertEqual(len(broker._submit_calls), 0)
+
+
+# ---------------------------------------------------------------------------
 # F05 — WebUI liquidation identity
 # ---------------------------------------------------------------------------
 

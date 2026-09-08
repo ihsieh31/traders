@@ -446,6 +446,120 @@ class F15UsageTests(_Isolated, unittest.TestCase):
         self.assertEqual(fake_client.responses.create.call_count, 1)
         self.assertEqual(fake_client.chat.completions.create.call_count, 0)
 
+    # -- F15 remediation: real nested LLMResult callback shapes ------------
+
+    def _nested_result(self, message, llm_output=None):
+        from langchain_core.outputs import ChatGeneration, LLMResult
+
+        return LLMResult(
+            generations=[[ChatGeneration(message=message)]],
+            llm_output=llm_output if llm_output is not None else {},
+        )
+
+    def test_nested_llm_result_generations_accounted(self):
+        """F15-A: the real on_llm_end shape is LLMResult.generations=[[gen]];
+        provider-reported usage must reach the budget with no active run."""
+        from langchain_core.messages import AIMessage
+        from tradingagents.llm_clients.usage import UsageAccountingCallback
+
+        message = AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": 30, "output_tokens": 50,
+                            "total_tokens": 80},
+        )
+        before = self._guard.llm_tokens_used()
+        UsageAccountingCallback().on_llm_end(self._nested_result(message))
+        self.assertEqual(self._guard.llm_tokens_used() - before, 80)
+
+    def test_nested_result_recorded_exactly_once_in_run(self):
+        """F15-B: under an active audit run the nested result increments the
+        budget exactly once, emits exactly one llm_call event, and the run
+        summary carries 80 (never 160)."""
+        import uuid
+        from langchain_core.messages import AIMessage
+        from tradingagents.llm_clients.usage import UsageAccountingCallback
+
+        message = AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": 30, "output_tokens": 50,
+                            "total_tokens": 80},
+        )
+        audit = self._logger()
+        run_id = audit.start_run(symbol="AAPL", trade_date="2026-09-08")
+        before = self._guard.llm_tokens_used()
+        UsageAccountingCallback().on_llm_end(
+            self._nested_result(message), run_id=uuid.uuid4())
+        self.assertEqual(self._guard.llm_tokens_used() - before, 80)
+        audit.finish_run(symbol="AAPL", run_id=run_id)
+
+        payloads = [
+            json.loads(p.read_text())
+            for p in Path("eval_results").glob(
+                "AAPL/TradingAgentsStrategy_logs/runs/*.json")
+        ]
+        events = [
+            e for p in payloads for e in p["events"]
+            if e["type"] == "llm_call"
+            and e["payload"].get("purpose") == "langchain_provider"
+        ]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["usage"]["total_tokens"], 80)
+        self.assertEqual(
+            sum(p["summary"]["total_llm_tokens"] for p in payloads), 80)
+
+    def test_adapter_marker_skips_nested_result(self):
+        """F15-C: the Responses-adapter marker must be honored inside the
+        nested shape — llm_output usage must not leak a second count."""
+        from langchain_core.messages import AIMessage
+        from tradingagents.llm_clients.usage import UsageAccountingCallback
+
+        message = AIMessage(
+            content="x",
+            additional_kwargs={"usage_accounted_by_adapter": True},
+            usage_metadata={"input_tokens": 30, "output_tokens": 50,
+                            "total_tokens": 80},
+        )
+        result = self._nested_result(
+            message,
+            llm_output={"token_usage": {"input_tokens": 30, "output_tokens": 50,
+                                        "total_tokens": 80}},
+        )
+        before = self._guard.llm_tokens_used()
+        UsageAccountingCallback().on_llm_end(result)
+        self.assertEqual(self._guard.llm_tokens_used(), before)
+
+    def test_google_shaped_nested_usage_accounted(self):
+        """F15-D: message.usage_metadata is the source for Google/Gemini
+        results; llm_output with only prompt_feedback must not lose tokens
+        and must not depend on llm_output['token_usage']."""
+        from langchain_core.messages import AIMessage
+        from tradingagents.llm_clients.usage import UsageAccountingCallback
+
+        message = AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": 10, "output_tokens": 15,
+                            "total_tokens": 25},
+        )
+        before = self._guard.llm_tokens_used()
+        UsageAccountingCallback().on_llm_end(self._nested_result(
+            message, llm_output={"prompt_feedback": {}}))
+        self.assertEqual(self._guard.llm_tokens_used() - before, 25)
+
+    def test_nested_usage_kept_without_model_attribution(self):
+        """F15: usage present but no model anywhere — tokens are still
+        counted; model attribution stays unknown and is never guessed."""
+        from langchain_core.messages import AIMessage
+        from tradingagents.llm_clients.usage import extract_langchain_usage
+
+        message = AIMessage(
+            content="ok",
+            usage_metadata={"input_tokens": 3, "output_tokens": 4,
+                            "total_tokens": 7},
+        )
+        usage, model = extract_langchain_usage(self._nested_result(message))
+        self.assertEqual(usage["total_tokens"], 7)
+        self.assertIsNone(model)
+
 
 # ---------------------------------------------------------------------------
 # F15.6 — long-run screening is attributed to the exact observation
@@ -640,6 +754,15 @@ class F19BudgetGateTests(_BudgetRoundFixture, unittest.TestCase):
         self._guard.record_llm_tokens(5)  # far over budget
         journal = lr.new_round_journal("2026-09-08", ["AAA"])
         journal["status"] = "RUNNING"
+        # A journal that reached symbol analysis always carries the persisted
+        # screening summary — the execution-only resume's proof of selection.
+        journal["screening"] = {
+            "selection_date": "2026-09-08", "as_of": "2026-09-08",
+            "cached": False, "top20": [{"symbol": "AAA", "rank": 1}],
+            "overlap_holdings": [], "extra_holdings": [],
+            "blocked_holdings": [], "deep_analysis_set": ["AAA"],
+            "description": "s",
+        }
         journal["symbols"]["AAA"] = {
             "status": "ANALYZED", "analysis_run_ref": "x", "signal": "BUY",
             "trade_intent": {"symbol": "AAA", "action": "BUY",
@@ -672,6 +795,239 @@ class F19BudgetGateTests(_BudgetRoundFixture, unittest.TestCase):
             runtime=lr.build_runtime_config(self._cfg()), deps=deps)
         self.assertEqual(out["symbols"]["AAA"]["status"], "DONE")
         self.assertEqual(len(graph.calls), 1)
+
+
+class _ScreeningForbidden:
+    """screening_fn/graph that must never be reached on an execution-only
+    resume (F19 remediation)."""
+
+    def _forbidden_screening(self, config, refresh=False):
+        raise AssertionError("screening must not run on execution-only resume")
+
+    def _forbidden_graph_factory(self, config):
+        raise AssertionError("no LLM analysis may run on execution-only resume")
+
+
+class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
+                                  unittest.TestCase):
+    def _journal_with_screening(self, run_id, status, intent):
+        lr = self._lr
+        journal = lr.new_round_journal("2026-09-08", ["AAA"])
+        journal["status"] = "RUNNING"
+        journal["screening"] = {
+            "selection_date": "2026-09-08", "as_of": "2026-09-08",
+            "cached": False, "top20": [{"symbol": "AAA", "rank": 1}],
+            "overlap_holdings": [], "extra_holdings": [],
+            "blocked_holdings": [], "deep_analysis_set": ["AAA"],
+            "description": "s",
+        }
+        journal["symbols"]["AAA"] = {
+            "status": status, "analysis_run_ref": "x", "signal": "BUY",
+            "trade_intent": intent, "execution_result_summary": None,
+        }
+        lr.save_round_journal(run_id, journal)
+        return journal
+
+    def _intent(self, symbol="AAA"):
+        return {"symbol": symbol, "action": "BUY",
+                "target_position": "LONG"}
+
+    def test_analyzed_only_resume_skips_screening_pipeline(self):
+        """F19-A: ANALYZED-only resume must not call screening_fn nor the
+        analysis graph; the persisted intent still reaches execution."""
+        self._setup_long_run()
+        lr = self._lr
+        self._guard.config["daily_llm_token_budget"] = 0  # budget exhausted
+        self._guard.record_llm_tokens(1_000_000)
+        self._journal_with_screening(
+            "run-resume-a", "ANALYZED", self._intent())
+        graph_calls = []
+
+        class _Graph:
+            def propagate(self, symbol, trade_date):
+                graph_calls.append(symbol)
+                raise AssertionError("no LLM analysis on execution-only resume")
+
+        service = _FakeBudgetService()
+        deps = self._lr.LongRunDeps(
+            screening_fn=self._forbidden_screening,
+            graph_factory=self._forbidden_graph_factory,
+            execution_service_factory=lambda: service,
+            broker_client_factory=lambda: _FakeBrokerForBudget(),
+            alert_fn=lambda subject, body, runtime: {"sent": False},
+            sleep_fn=lambda seconds: None,
+        )
+        out = lr.run_daily_round(
+            run_id="run-resume-a", session_date="2026-09-08",
+            long_cfg=self._cfg(),
+            runtime=lr.build_runtime_config(self._cfg()), deps=deps)
+        self.assertEqual(out["symbols"]["AAA"]["status"], "DONE")
+        self.assertEqual(len(service.execute_calls), 1)
+        self.assertEqual(graph_calls, [])
+        # The persisted screening summary was not rewritten/replaced.
+        self.assertEqual(
+            out["screening"]["top20"], [{"symbol": "AAA", "rank": 1}])
+
+    def test_executing_only_resume_skips_screening_and_recovers(self):
+        """F19-B: EXECUTING-only resume goes straight to startup recovery +
+        deterministic execution re-entry, with zero screening/analysis."""
+        self._setup_long_run()
+        lr = self._lr
+        self._guard.config["daily_llm_token_budget"] = 0
+        self._guard.record_llm_tokens(1_000_000)
+        self._journal_with_screening(
+            "run-resume-b", "EXECUTING", self._intent())
+        service = _FakeBudgetService()
+        deps = self._lr.LongRunDeps(
+            screening_fn=self._forbidden_screening,
+            graph_factory=self._forbidden_graph_factory,
+            execution_service_factory=lambda: service,
+            broker_client_factory=lambda: _FakeBrokerForBudget(),
+            alert_fn=lambda subject, body, runtime: {"sent": False},
+            sleep_fn=lambda seconds: None,
+        )
+        out = lr.run_daily_round(
+            run_id="run-resume-b", session_date="2026-09-08",
+            long_cfg=self._cfg(),
+            runtime=lr.build_runtime_config(self._cfg()), deps=deps)
+        self.assertEqual(out["symbols"]["AAA"]["status"], "DONE")
+        self.assertEqual(len(service.execute_calls), 1)
+
+    def test_execution_only_resume_with_exhausted_budget_and_no_cache(self):
+        """F19-C: budget exhausted AND no selection cache anywhere — the
+        journal itself authorizes the resume; screening must never run."""
+        self._setup_long_run()
+        lr = self._lr
+        self._guard.config["daily_llm_token_budget"] = 1
+        self._guard.record_llm_tokens(50)
+        self._journal_with_screening(
+            "run-resume-c", "ANALYZED", self._intent())
+        service = _FakeBudgetService()
+        deps = self._lr.LongRunDeps(
+            screening_fn=lambda config, refresh=False: (_ for _ in ()).throw(
+                AssertionError("screening must not run")),
+            graph_factory=self._forbidden_graph_factory,
+            execution_service_factory=lambda: service,
+            broker_client_factory=lambda: _FakeBrokerForBudget(),
+            alert_fn=lambda subject, body, runtime: {"sent": False},
+            sleep_fn=lambda seconds: None,
+        )
+        out = lr.run_daily_round(
+            run_id="run-resume-c", session_date="2026-09-08",
+            long_cfg=self._cfg(),
+            runtime=lr.build_runtime_config(self._cfg()), deps=deps)
+        self.assertEqual(out["symbols"]["AAA"]["status"], "DONE")
+        self.assertEqual(len(service.execute_calls), 1)
+
+    def test_pending_resume_with_exhausted_budget_still_gated(self):
+        """F19-D: a journal that still needs fresh analysis (PENDING) is
+        never skipped — exhausted budget stops with LLM_BUDGET_EXHAUSTED,
+        zero screening and zero analysis requests."""
+        self._setup_long_run()
+        lr = self._lr
+        self._guard.config["daily_llm_token_budget"] = 1
+        self._guard.record_llm_tokens(50)
+        journal = lr.new_round_journal("2026-09-08", ["AAA"])
+        journal["status"] = "RUNNING"
+        journal["screening"] = {
+            "selection_date": "2026-09-08", "as_of": "2026-09-08",
+            "cached": False, "top20": [{"symbol": "AAA", "rank": 1}],
+            "overlap_holdings": [], "extra_holdings": [],
+            "blocked_holdings": [], "deep_analysis_set": ["AAA"],
+            "description": "s",
+        }
+        journal["symbols"]["AAA"] = {
+            "status": "PENDING", "analysis_run_ref": None, "signal": None,
+            "trade_intent": None, "execution_result_summary": None,
+        }
+        lr.save_round_journal("run-resume-d", journal)
+        screening_calls = []
+
+        def _counting_screening(config, refresh=False):
+            screening_calls.append(config)
+            return self._plan(["AAA"])
+
+        graph = _SilentGraph()
+        deps = self._lr.LongRunDeps(
+            screening_fn=_counting_screening,
+            graph_factory=lambda config: graph,
+            execution_service_factory=lambda: _FakeBudgetService(),
+            broker_client_factory=lambda: _FakeBrokerForBudget(),
+            alert_fn=lambda subject, body, runtime: {"sent": False},
+            sleep_fn=lambda seconds: None,
+        )
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.run_daily_round(
+                run_id="run-resume-d", session_date="2026-09-08",
+                long_cfg=self._cfg(),
+                runtime=lr.build_runtime_config(self._cfg()), deps=deps)
+        self.assertEqual(ctx.exception.code, "LLM_BUDGET_EXHAUSTED")
+        self.assertEqual(len(screening_calls), 0)
+        self.assertEqual(len(graph.calls), 0)
+
+    def test_journal_without_screening_summary_never_skips(self):
+        """Fail-closed: a journal lacking its screening summary cannot prove
+        the round selection; resume must re-enter screening behind the
+        budget gate (exhausted here → LLM_BUDGET_EXHAUSTED)."""
+        self._setup_long_run()
+        lr = self._lr
+        self._guard.config["daily_llm_token_budget"] = 1
+        self._guard.record_llm_tokens(50)
+        journal = lr.new_round_journal("2026-09-08", ["AAA"])
+        journal["status"] = "RUNNING"
+        journal["screening"] = {}
+        journal["symbols"]["AAA"] = {
+            "status": "ANALYZED", "analysis_run_ref": "x", "signal": "BUY",
+            "trade_intent": self._intent(),
+            "execution_result_summary": None,
+        }
+        lr.save_round_journal("run-resume-e", journal)
+        service = _FakeBudgetService()
+        deps = self._lr.LongRunDeps(
+            screening_fn=self._forbidden_screening,
+            graph_factory=self._forbidden_graph_factory,
+            execution_service_factory=lambda: service,
+            broker_client_factory=lambda: _FakeBrokerForBudget(),
+            alert_fn=lambda subject, body, runtime: {"sent": False},
+            sleep_fn=lambda seconds: None,
+        )
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.run_daily_round(
+                run_id="run-resume-e", session_date="2026-09-08",
+                long_cfg=self._cfg(),
+                runtime=lr.build_runtime_config(self._cfg()), deps=deps)
+        self.assertEqual(ctx.exception.code, "LLM_BUDGET_EXHAUSTED")
+        self.assertEqual(len(service.execute_calls), 0)
+
+    def test_fresh_round_still_runs_screening(self):
+        """Gate B: the skip is resume-only — a fresh round still screens and
+        analyzes normally."""
+        self._setup_long_run()
+        lr = self._lr
+        plan = self._plan(["AAA"])
+        screening_calls = []
+
+        def _counting_screening(config, refresh=False):
+            screening_calls.append(config)
+            return plan
+
+        graph = _CountingGraph()
+        service = _FakeBudgetService()
+        deps = self._lr.LongRunDeps(
+            screening_fn=_counting_screening,
+            graph_factory=lambda config: graph,
+            execution_service_factory=lambda: service,
+            broker_client_factory=lambda: _FakeBrokerForBudget(),
+            alert_fn=lambda subject, body, runtime: {"sent": False},
+            sleep_fn=lambda seconds: None,
+        )
+        out = lr.run_daily_round(
+            run_id="run-fresh-1", session_date="2026-09-08",
+            long_cfg=self._cfg(),
+            runtime=lr.build_runtime_config(self._cfg()), deps=deps)
+        self.assertEqual(len(screening_calls), 1)
+        self.assertEqual(len(graph.calls), 1)
+        self.assertEqual(out["symbols"]["AAA"]["status"], "DONE")
 
 
 # ---------------------------------------------------------------------------

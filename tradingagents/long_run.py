@@ -1242,35 +1242,52 @@ def run_daily_round(
     # symbols) must pass the gate before any screening invocation; a resume
     # whose remaining work is only ANALYZED/EXECUTING execution consumes no
     # tokens and proceeds under the execution/recovery safety rules.
-    try:
-        from tradingagents.safety import get_safety_guard
+    needs_new_llm_work = journal is None or any(
+        (entry or {}).get("status") in (SYMBOL_PENDING, SYMBOL_ANALYZING)
+        for entry in (journal.get("symbols") or {}).values()
+    )
 
-        needs_new_llm_work = journal is None or any(
-            (entry or {}).get("status") in (SYMBOL_PENDING, SYMBOL_ANALYZING)
-            for entry in (journal.get("symbols") or {}).values()
-        )
-        if needs_new_llm_work:
+    # F19: an execution-only resume whose journal already proves the round's
+    # selection (a persisted screening summary) and holds no PENDING/ANALYZING
+    # symbol must not re-enter the screening pipeline — a lost, expired or
+    # unreadable selection cache would otherwise issue fresh Screening LLM
+    # requests even under an exhausted budget. The journal's own
+    # screening/symbols/trade_intent state is the resume authority; the
+    # execution below still passes the unchanged Phase C entry gate.
+    # A journal whose screening summary is missing is never trusted: it
+    # re-enters screening behind the same budget gate below.
+    resume_without_new_llm = (
+        journal is not None
+        and bool(journal.get("screening"))
+        and not needs_new_llm_work
+    )
+
+    if not resume_without_new_llm:
+        try:
+            from tradingagents.safety import get_safety_guard
+
             verdict = get_safety_guard().check_llm_budget()
             if not verdict.allowed:
                 raise LongRunStop(
                     "LLM_BUDGET_EXHAUSTED",
                     f"before screening: {'; '.join(verdict.reasons)}",
                 )
-    except LongRunStop:
-        raise
-    except Exception as exc:
-        raise LongRunStop(
-            "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {exc}"
+        except LongRunStop:
+            raise
+        except Exception as exc:
+            raise LongRunStop(
+                "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {exc}"
+            )
+        plan = _screening_with_audit_scope(
+            screening_fn, runtime, run_id, session_date
         )
-
-    plan = _screening_with_audit_scope(
-        screening_fn, runtime, run_id, session_date
-    )
-    if getattr(plan, "stopped", False):
-        raise LongRunStop(
-            "SCREENING_STOPPED",
-            f"screening stopped the round: {plan.stop_reason_text()}",
-        )
+        if getattr(plan, "stopped", False):
+            raise LongRunStop(
+                "SCREENING_STOPPED",
+                f"screening stopped the round: {plan.stop_reason_text()}",
+            )
+    else:
+        plan = None
 
     if journal is None:
         journal = new_round_journal(
@@ -1282,32 +1299,37 @@ def run_daily_round(
     if not journal.get("started_at"):
         journal["started_at"] = utc_now_iso()
 
-    # Step 4 — persist screening summary (metadata only, no second cache).
-    top20 = getattr(plan, "top20", []) or []
-    journal["screening"] = {
-        "selection_date": getattr(plan, "selection_date", None),
-        "as_of": getattr(plan, "as_of", None),
-        "cached": bool(getattr(plan, "cached", False)),
-        "top20": [
-            {"symbol": e.get("symbol"), "rank": e.get("rank"),
-             "score": e.get("screening_score"), "reason": e.get("short_reason")}
-            for e in top20 if isinstance(e, dict)
-        ],
-        "overlap_holdings": list(getattr(plan, "overlap_holdings", []) or []),
-        "extra_holdings": list(getattr(plan, "extra_holdings", []) or []),
-        "blocked_holdings": list(getattr(plan, "blocked_holdings", []) or []),
-        "deep_analysis_set": list(getattr(plan, "deep_analysis_set", []) or []),
-        "description": sanitize_for_log(getattr(plan, "screening_description", "")),
-    }
-    for symbol in journal["screening"]["deep_analysis_set"]:
-        journal["symbols"].setdefault(symbol, {
-            "status": SYMBOL_PENDING, "analysis_run_ref": None, "signal": None,
-            "trade_intent": None, "execution_result_summary": None,
-        })
-    save_round_journal(run_id, journal)
-    log_event(run_id, "round_screening",
-              {"session": session_date, "cached": journal["screening"]["cached"],
-               "universe": len(journal["screening"]["deep_analysis_set"])})
+    if plan is None:
+        # Execution-only resume: the persisted screening summary stays the
+        # authority; never rewrite it from a re-run selection.
+        save_round_journal(run_id, journal)
+    else:
+        # Step 4 — persist screening summary (metadata only, no second cache).
+        top20 = getattr(plan, "top20", []) or []
+        journal["screening"] = {
+            "selection_date": getattr(plan, "selection_date", None),
+            "as_of": getattr(plan, "as_of", None),
+            "cached": bool(getattr(plan, "cached", False)),
+            "top20": [
+                {"symbol": e.get("symbol"), "rank": e.get("rank"),
+                 "score": e.get("screening_score"), "reason": e.get("short_reason")}
+                for e in top20 if isinstance(e, dict)
+            ],
+            "overlap_holdings": list(getattr(plan, "overlap_holdings", []) or []),
+            "extra_holdings": list(getattr(plan, "extra_holdings", []) or []),
+            "blocked_holdings": list(getattr(plan, "blocked_holdings", []) or []),
+            "deep_analysis_set": list(getattr(plan, "deep_analysis_set", []) or []),
+            "description": sanitize_for_log(getattr(plan, "screening_description", "")),
+        }
+        for symbol in journal["screening"]["deep_analysis_set"]:
+            journal["symbols"].setdefault(symbol, {
+                "status": SYMBOL_PENDING, "analysis_run_ref": None, "signal": None,
+                "trade_intent": None, "execution_result_summary": None,
+            })
+        save_round_journal(run_id, journal)
+        log_event(run_id, "round_screening",
+                  {"session": session_date, "cached": journal["screening"]["cached"],
+                   "universe": len(journal["screening"]["deep_analysis_set"])})
 
     # Steps 5-6 — serial per-symbol analysis + shared auto-trade execution.
     graph_config = _build_graph_config(runtime, long_cfg, run_id=run_id)

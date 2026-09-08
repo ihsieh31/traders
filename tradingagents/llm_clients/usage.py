@@ -41,6 +41,21 @@ def _positive_int(value: Any) -> int:
     return number if number > 0 else 0
 
 
+def _iter_generations(response: Any):
+    """Yield generations from both supported LangChain result shapes.
+
+    ``ChatResult.generations`` is flat (``[ChatGeneration]``) while the real
+    ``LLMResult.generations`` handed to ``on_llm_end`` is one nested list per
+    prompt (``[[ChatGeneration]]``). No recursive traversal beyond that.
+    """
+    for item in getattr(response, "generations", None) or []:
+        if isinstance(item, (list, tuple)):
+            for generation in item:
+                yield generation
+        else:
+            yield item
+
+
 def normalize_usage_map(raw: Any) -> Dict[str, int]:
     """Normalize one provider usage object/dict into the common shape.
 
@@ -80,7 +95,7 @@ def extract_langchain_usage(response: Any) -> Tuple[Dict[str, int], Optional[str
     usage: Dict[str, int] = {}
     model_name: Optional[str] = None
 
-    for generation in (getattr(response, "generations", None) or []):
+    for generation in _iter_generations(response):
         message = getattr(generation, "message", None)
         if message is None:
             continue
@@ -140,7 +155,7 @@ class UsageAccountingCallback(BaseCallbackHandler):
         # F15: Responses-adapter results are accounted by the adapter itself
         # (its custom invoke bypasses the callback manager); never count a
         # call twice.
-        for generation in (getattr(response, "generations", None) or []):
+        for generation in _iter_generations(response):
             message = getattr(generation, "message", None)
             if message is not None and getattr(
                 getattr(message, "additional_kwargs", None), "get", lambda *_: None
