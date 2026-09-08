@@ -24,7 +24,7 @@ verified close's freed value credited deterministically from the snapshot.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 # Broker order statuses that can still add exposure. Anything terminal
 # (filled/canceled/rejected/expired) consumes no headroom; unknown-but-live
@@ -60,6 +60,7 @@ def outstanding_increasing_notional(
     snapshot: Any,
     *,
     symbols: Optional[set[str]] = None,
+    reference_prices: Optional[Mapping[str, float]] = None,
     reference_price: Optional[float] = None,
 ) -> tuple[float, bool]:
     """Sum live exposure-adding open-order notional from the snapshot.
@@ -69,9 +70,27 @@ def outstanding_increasing_notional(
     Returns (total, fully_estimated): ``fully_estimated`` is False when any
     counted order's value had to be guessed, which callers must treat as
     "refuse the increase" rather than trusting the partial sum.
+
+    Quantity-only orders are valued with their OWN symbol's validated quote
+    from ``reference_prices``. A single scalar ``reference_price`` (kept for
+    backward compatibility) applies only to the candidate symbol — it must
+    never be used as a global fallback, because a $1,000 stock valued at a
+    $10 candidate price understates outstanding exposure by 100x.
     """
     total = 0.0
     fully_estimated = True
+    price_map: dict[str, float] = {}
+    if reference_prices:
+        for sym, price in reference_prices.items():
+            if sym is None or price is None:
+                continue
+            key = str(sym).upper().replace("/", "")
+            try:
+                value = float(price)
+            except (TypeError, ValueError):
+                continue
+            if key and value > 0:
+                price_map[key] = value
     for order in snapshot.orders:
         if not _is_live(order.status):
             continue
@@ -93,8 +112,9 @@ def outstanding_increasing_notional(
         qty = float(order.qty or 0) - float(order.filled_qty or 0)
         if qty <= 0:
             continue
-        if reference_price and reference_price > 0:
-            total += qty * float(reference_price)
+        own_price = price_map.get(order.symbol)
+        if own_price is not None and own_price > 0:
+            total += qty * float(own_price)
         else:
             fully_estimated = False
     return total, fully_estimated
@@ -110,6 +130,7 @@ def evaluate_opening_exposure(
     proposed_notional: float,
     snapshot: Any,
     quote_price: Optional[float] = None,
+    reference_prices: Optional[Mapping[str, float]] = None,
     symbol_cap_pct: float = 25.0,
     sector_cap_pct: Optional[float] = 30.0,
     gross_cap_pct: Optional[float] = 100.0,
@@ -122,9 +143,23 @@ def evaluate_opening_exposure(
     close leg in the same intent (close-then-open flip) so only the truly
     increasing part is clipped; verified reducing exits themselves never
     pass through this evaluator.
+
+    Quantity-based outstanding orders are valued with their own symbol's
+    validated quote from ``reference_prices``. The scalar ``quote_price`` is
+    the candidate symbol's execution quote and only ever populates that one
+    symbol's entry — it is never a global fallback price.
     """
     sector_mapping = dict(sector_mapping or {})
     normalized = (symbol or "").upper().replace("/", "")
+
+    price_map: dict[str, float] = dict(reference_prices or {})
+    if quote_price is not None:
+        try:
+            candidate_price = float(quote_price)
+        except (TypeError, ValueError):
+            candidate_price = None
+        if candidate_price is not None and candidate_price > 0:
+            price_map.setdefault(normalized, candidate_price)
 
     # A positive, explicit per-symbol cap is required for automatic
     # execution. The legacy 0/"uncapped" value is a configuration error here
@@ -169,7 +204,7 @@ def evaluate_opening_exposure(
     symbol_outstanding, symbol_estimated = outstanding_increasing_notional(
         snapshot,
         symbols={normalized},
-        reference_price=quote_price,
+        reference_prices=price_map,
     )
 
     # --- sector accounting (fail closed on unknown mappings) ---
@@ -215,18 +250,18 @@ def evaluate_opening_exposure(
         sector_outstanding, sector_estimated = outstanding_increasing_notional(
             snapshot,
             symbols=same_sector_symbols,
-            reference_price=quote_price,
+            reference_prices=price_map,
         )
 
     all_outstanding, all_estimated = outstanding_increasing_notional(
-        snapshot, reference_price=quote_price
+        snapshot, reference_prices=price_map
     )
 
     if not symbol_estimated:
         return _rejection(
             f"cannot reliably estimate the notional of an outstanding buy "
-            f"order on {normalized} (no notional and no reference price); "
-            "refusing to add risk instead of reusing headroom",
+            f"order on {normalized} (no notional and no validated quote for "
+            "its own symbol); refusing to add risk instead of reusing headroom",
         )
     if sector_cap_applicable and not sector_estimated:
         return _rejection(

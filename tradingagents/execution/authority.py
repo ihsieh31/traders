@@ -200,14 +200,17 @@ def validate_freshness(
     return stamp
 
 
-def _orders_request() -> Any:
+API_ORDER_LIMIT = 500
+
+
+def _recent_all_orders_request() -> Any:
     try:
         from alpaca.common.enums import Sort
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
         return GetOrdersRequest(
-            status=QueryOrderStatus.ALL, limit=500, direction=Sort.DESC, nested=False
+            status=QueryOrderStatus.ALL, limit=API_ORDER_LIMIT, direction=Sort.DESC, nested=False
         )
     except Exception as exc:
         # Never silently degrade to an open-only listing: closed/canceled/
@@ -216,6 +219,72 @@ def _orders_request() -> Any:
         raise BrokerAuthorityError(
             f"cannot build broker ALL-orders request: {exc}"
         ) from exc
+
+
+def _open_orders_request() -> Any:
+    try:
+        from alpaca.common.enums import Sort
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        return GetOrdersRequest(
+            status=QueryOrderStatus.OPEN, limit=API_ORDER_LIMIT, direction=Sort.DESC, nested=False
+        )
+    except Exception as exc:
+        raise BrokerAuthorityError(
+            f"cannot build broker OPEN-orders request: {exc}"
+        ) from exc
+
+
+def _merge_raw_orders(raw_recent: Any, raw_open: Any) -> list[Any]:
+    """Merge recent all-status history with authoritative current OPEN orders.
+
+    Deduplicate by broker order ID. Duplicate occurrences must agree on
+    client order ID, symbol, side, and status compatibility; conflicting
+    identity is an authority failure, never a silent overwrite. Every OPEN
+    order survives the merge even when it was absent from the recent ALL
+    list (500 newer terminal orders can hide an older live order otherwise).
+    """
+    STATUS_INCOMPATIBLE = (
+        lambda a, b: str(a).lower() != str(b).lower()
+        and "partial" not in str(a).lower() + str(b).lower()
+    )
+    merged: dict[str, Any] = {}
+
+    def _add(raw: Any, *, require_live: bool) -> None:
+        broker_id = str(_value(raw, "id", "broker_order_id") or "").strip()
+        if not broker_id:
+            return
+        existing = merged.get(broker_id)
+        if existing is None:
+            merged[broker_id] = raw
+            return
+        # Verify the duplicate occurrence agrees on identity facts.
+        for field_name in ("client_order_id", "symbol", "side"):
+            left = _value(existing, field_name)
+            right = _value(raw, field_name)
+            if str(left or "").lower() != str(right or "").lower():
+                raise BrokerAuthorityError(
+                    f"conflicting broker order identity for {broker_id}: "
+                    f"{field_name} {left!r} vs {right!r}"
+                )
+        left_status = _value(existing, "status")
+        right_status = _value(raw, "status")
+        if left_status is not None and right_status is not None and STATUS_INCOMPATIBLE(
+            left_status, right_status
+        ):
+            # The order moved between the two reads (e.g. filled just after
+            # the OPEN listing). Keep the more recent occurrence as-is: the
+            # reconciler judges facts, we only refuse silent identity swaps.
+            merged[broker_id] = raw
+            return
+        merged[broker_id] = raw
+
+    for raw in raw_open or []:
+        _add(raw, require_live=True)
+    for raw in raw_recent or []:
+        _add(raw, require_live=False)
+    return list(merged.values())
 
 
 def capture_broker_snapshot(
@@ -281,10 +350,24 @@ def capture_broker_snapshot(
             )
         )
 
-    request = _orders_request()
+    # Two bounded GETs prove current live orders (F09): the recent ALL list
+    # alone can hide an older still-live order behind 500 newer terminal
+    # rows, so the authoritative OPEN listing is fetched too. A full OPEN
+    # page means completeness is unprovable and the snapshot fails closed.
+    raw_open = get_with_retry(
+        lambda: broker.get_orders(_open_orders_request()), sleep=sleep
+    )
+    if raw_open is None:
+        raise BrokerAuthorityError("broker OPEN orders are unavailable")
+    if len(list(raw_open)) >= API_ORDER_LIMIT:
+        raise BrokerAuthorityError(
+            "open order list reached API limit; completeness cannot be proven"
+        )
+    request = _recent_all_orders_request()
     raw_orders = get_with_retry(lambda: broker.get_orders(request), sleep=sleep)
     if raw_orders is None:
         raise BrokerAuthorityError("broker orders are unavailable")
+    raw_orders = _merge_raw_orders(raw_orders, raw_open)
 
     orders: list[BrokerOrder] = []
     fills: list[BrokerFill] = []

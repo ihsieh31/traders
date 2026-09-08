@@ -1,6 +1,7 @@
 from typing import Optional
 
 from .base_client import BaseLLMClient
+from .usage import ensure_usage_callback
 
 
 _OPENAI_COMPATIBLE = (
@@ -18,6 +19,10 @@ _OPENAI_COMPATIBLE = (
 
 def create_llm_client(provider: str, model: str, base_url: Optional[str] = None, **kwargs) -> BaseLLMClient:
     provider_lower = (provider or "openai").lower()
+    # F15: every constructed LLM carries exactly one usage-accounting
+    # callback (in addition to any caller/UI callbacks) so provider-reported
+    # token usage reaches the audit log and the daily safety budget once.
+    kwargs["callbacks"] = ensure_usage_callback(kwargs.get("callbacks"))
 
     if provider_lower in _OPENAI_COMPATIBLE:
         from .openai_client import OpenAIClient

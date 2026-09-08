@@ -42,7 +42,7 @@ setup(
     entry_points={
         "console_scripts": [
             "tradingagents=cli.main:app",
-            "tradingagents-web=web_ui:main",
+            "tradingagents-web=webui.cli:main",
         ],
     },
     classifiers=[

@@ -471,6 +471,10 @@ class DailyRoundTest(IsolatedTest):
         (runs_dir / "r1.json").write_text(json.dumps({
             "run_id": "r1", "symbol": "AAA", "trade_date": SESSION_A,
             "status": "completed", "started_at": f"{SESSION_A}T15:00:00+00:00",
+            # F12: long-run run logs carry their observation identity;
+            # recovery only accepts an exact metadata match.
+            "metadata": {"source": "long_run",
+                         "long_run_observation_id": "run-4"},
             "snapshots": {"final_state": {"final_trade_intent":
                                           _buy_intent("AAA")}},
             "summary": {},
@@ -587,7 +591,14 @@ class FakeClockSimulationTest(IsolatedTest):
         lr.save_active_state(state)
         times = [
             _ET.localize(datetime(2026, 9, 8, 11, 0)).astimezone(timezone.utc),
+            # F10 checkpoints read now_fn three times inside the round
+            # (pre-screening, per-symbol loop, pre-execution); they must all
+            # land inside the window.
+            _ET.localize(datetime(2026, 9, 8, 11, 2)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 8, 11, 3)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 8, 11, 4)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 8, 11, 5)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 8, 11, 6)).astimezone(timezone.utc),
             started + lr.timedelta(days=30, hours=1),
         ]
         calls = {"n": 0}
@@ -645,7 +656,12 @@ class FakeClockSimulationTest(IsolatedTest):
         lr.save_active_state(state)
         times = [
             _ET.localize(datetime(2026, 9, 8, 11, 0)).astimezone(timezone.utc),
+            # F10 intra-round checkpoint reads must stay inside the window.
+            _ET.localize(datetime(2026, 9, 8, 11, 2)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 8, 11, 3)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 8, 11, 4)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 8, 11, 5)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 8, 11, 6)).astimezone(timezone.utc),
             started + lr.timedelta(days=30, hours=1),
         ]
         calls = {"n": 0}
@@ -798,6 +814,12 @@ class LateResumeTest(IsolatedTest):
         times = [
             _ET.localize(datetime(2026, 9, 10, 10, 0)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 0)).astimezone(timezone.utc),
+            # F10 intra-round checkpoint reads must stay inside the window:
+            # pre-screening, per-symbol loop, post-analysis, pre-execution.
+            _ET.localize(datetime(2026, 9, 10, 11, 2)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 10, 11, 3)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 10, 11, 4)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 10, 11, 5)).astimezone(timezone.utc),
             started + lr.timedelta(days=30, hours=1),
         ]
         calls = {"n": 0}
@@ -1028,9 +1050,13 @@ class FinalReportMathTest(IsolatedTest):
         snapshots_path = lr.run_dir("run-math") / "account_snapshots.jsonl"
         equities = [100000, 110000, 105000, 90000, 95000, 120000]
         with open(snapshots_path, "w", encoding="utf-8") as handle:
-            for equity in equities:
+            for index, equity in enumerate(equities):
+                # F14: the last snapshot carries phase="final" so the report's
+                # ending equity keeps coming from a fresh end-of-observation
+                # capture; the others are round boundaries.
+                phase = "final" if index == len(equities) - 1 else "pre_round"
                 handle.write(json.dumps({
-                    "at": "2026-10-15T00:00:00+00:00", "phase": "pre_round",
+                    "at": "2026-10-15T00:00:00+00:00", "phase": phase,
                     "session": dates[0], "equity": float(equity),
                     "cash": 0.0,
                 }) + "\n")

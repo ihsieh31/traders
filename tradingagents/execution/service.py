@@ -27,6 +27,7 @@ from tradingagents.execution.authority import (
     BrokerAuthorityError,
     BrokerSnapshot,
     Reconciler,
+    ReconciliationResult,
     broker_status_to_local,
     capture_broker_snapshot,
     capture_quote,
@@ -41,7 +42,7 @@ __all__ = [
     "is_valid_order_transition",
 ]
 
-_DEFAULT_DB = os.getenv("TRADINGAGENTS_EXECUTION_DB", "eval_results/execution.db")
+_DEFAULT_DB = "eval_results/execution.db"
 
 _TIMEOUT_MARKERS = (
     "timeout",
@@ -59,8 +60,24 @@ def _is_ambiguous_error(exc: BaseException) -> bool:
     return any(m in text for m in _TIMEOUT_MARKERS)
 
 
+def resolve_execution_db_path(explicit: Optional[str | Path] = None) -> str:
+    """Single execution-DB path resolver (F13): service and reports share it.
+
+    Precedence: 1) explicit caller/runtime path, 2) the current
+    ``TRADINGAGENTS_EXECUTION_DB`` environment value read at call time
+    (never frozen at import), 3) the literal default. No default DB is
+    created or opened here — callers decide when to open the store.
+    """
+    if explicit:
+        return str(explicit)
+    env_value = os.getenv("TRADINGAGENTS_EXECUTION_DB", "").strip()
+    if env_value:
+        return env_value
+    return "eval_results/execution.db"
+
+
 def _default_db_path() -> str:
-    return _DEFAULT_DB
+    return resolve_execution_db_path()
 
 
 def validate_trade_intent(trade_intent: Any) -> tuple[Optional[dict[str, Any]], Optional[str]]:
@@ -346,14 +363,22 @@ def _evaluate_opening_caps(
     snapshot: Any,
     quote: Any,
     intent_dict: dict[str, Any],
+    quote_factory: Optional[Callable[[str], Any]] = None,
 ):
     """Run the Phase B deterministic exposure evaluator for opening legs.
 
     A verified close leg in the same intent (close-then-open flip) credits
     its freed market value so only the increasing part is clipped.
-    Quantity-based legs are valued with the execution quote.
+    Quantity-based legs of the candidate are valued with the execution
+    quote; every OTHER symbol that has a quantity-only outstanding order is
+    valued with its own validated quote. A missing/invalid quote for any
+    such symbol fails the evaluation closed (zero broker calls) instead of
+    guessing a price from the candidate.
     """
-    from tradingagents.risk.exposure import evaluate_opening_exposure
+    from tradingagents.risk.exposure import (
+        evaluate_opening_exposure,
+        outstanding_increasing_notional,
+    )
 
     config = _get_execution_config()
     quote_price = float(quote.price) if quote is not None else None
@@ -372,11 +397,47 @@ def _evaluate_opening_caps(
             quantity = spec.get("quantity")
             if quantity is not None and abs(float(quantity)) >= abs(position.qty) - 1e-9:
                 planned_close_reduction += abs(float(position.market_value))
+
+    # F03: determine which distinct symbols need their own price because a
+    # live increasing order carries a quantity but no notional. The
+    # candidate's validated quote seeds the map; every other required symbol
+    # gets its own validated quote or the whole evaluation fails closed.
+    reference_prices: dict[str, float] = {}
+    if quote_price is not None:
+        reference_prices[(symbol or "").upper().replace("/", "")] = quote_price
+    needs_price = {
+        order.symbol
+        for order in snapshot.orders
+        if order.notional is None
+        and float(order.qty or 0) - float(order.filled_qty or 0) > 0
+    }
+    for required in sorted(needs_price):
+        if required in reference_prices:
+            continue
+        if quote_factory is None:
+            total, fully_estimated = outstanding_increasing_notional(snapshot)
+            if not fully_estimated:
+                raise BrokerAuthorityError(
+                    f"cannot obtain a validated quote for outstanding-order "
+                    f"symbol {required}; refusing to add exposure on a "
+                    "guessed price"
+                )
+            continue
+        try:
+            required_quote = validate_quote(quote_factory(required), required)
+            reference_prices[required] = float(required_quote.price)
+        except Exception as exc:
+            raise BrokerAuthorityError(
+                f"cannot obtain a validated quote for outstanding-order "
+                f"symbol {required}: {exc}; refusing to add exposure"
+            ) from exc
+
     return evaluate_opening_exposure(
         symbol=symbol,
         proposed_notional=proposed_notional,
         snapshot=snapshot,
         quote_price=quote_price,
+        reference_prices=reference_prices,
         symbol_cap_pct=float(config.get("max_symbol_concentration_pct", 25.0) or 0),
         sector_cap_pct=config.get("max_sector_exposure_pct", 30.0),
         gross_cap_pct=config.get("portfolio_max_gross_exposure_pct", 100.0),
@@ -442,11 +503,54 @@ class ExecutionService:
 
         return get_alpaca_trading_client()
 
+    def _verify_owned_close_protections(self, broker, snapshot, symbol):
+        """Validate that a symbol's live orders are proven owned protections.
+
+        Raises without touching the broker when ownership cannot be proven.
+        This is the pre-cancellation check (no mutation); the canceling
+        variant reuses it before issuing cancel calls.
+        """
+        position = snapshot.position(symbol)
+        if position is None:
+            return
+        orders = [o for o in snapshot.orders if o.symbol == position.symbol and broker_status_to_local(o.status) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}]
+        if not orders:
+            return
+        side = "sell" if position.qty > 0 else "buy"
+        for order in orders:
+            local = self._store.get_order_by_client(order.client_order_id)
+            if (not local or local.get("broker_order_id") != order.broker_order_id
+                    or not self._store.protective_parent(local["order_id"]) or order.side != side):
+                raise BrokerAuthorityError("Exit conflicts with an order not proven to be its protection")
+
+    def _abandon_prepared_rows(self, prepared: dict[str, Any]) -> None:
+        """Mark a durably-committed close intent CANCELED without a broker call.
+
+        Used when the position proved closed/changed during the protection
+        cancellation race, so the committed rows cannot be replayed later as
+        a new submit against facts that no longer hold.
+        """
+        order_rows = prepared.get("order_rows") or []
+        intent_row = prepared.get("intent_row") or {}
+        for row in order_rows:
+            status = str((row.get("status") or "")).upper()
+            if status == "PENDING":
+                try:
+                    self._store.transition_order(row["order_id"], "CANCELED")
+                except Exception:
+                    pass
+        try:
+            self._store.update_intent_state(intent_row["intent_id"], "CANCELED")
+        except Exception:
+            pass
+
     def _cancel_owned_close_protections(self, broker, snapshot, symbol):
         """Cancel proven protections before an explicit full-position exit.
 
         Manual or ambiguous orders are never canceled. A pending cancellation
-        is still rejected by the subsequent verified-exit check.
+        is still rejected by the subsequent verified-exit check. The caller
+        must already hold a durably-committed close (F04 sequencing) before
+        invoking this mutation.
         """
         position = snapshot.position(symbol)
         if position is None:
@@ -483,6 +587,138 @@ class ExecutionService:
         refreshed = capture_broker_snapshot(broker, expected_account_id=snapshot.account_id)
         self._reconcile_snapshot(broker, refreshed)
         return refreshed, len(orders)
+
+    # -- protection-gap invariant (F04) ------------------------------------
+
+    def _program_owned_live_reducing_qty(
+        self, snapshot: BrokerSnapshot, symbol: str, reducing_side: str
+    ) -> float:
+        """Remaining qty of live program-owned reducing orders for a symbol.
+
+        Program-owned means the durable ledger knows the row (submitted
+        orders and registered protective children both qualify). Manual or
+        unknown broker orders never prove protection.
+        """
+        covered = 0.0
+        for order in snapshot.orders:
+            if order.symbol != symbol or order.side != reducing_side:
+                continue
+            if broker_status_to_local(order.status) in {
+                "FILLED", "CANCELED", "REJECTED", "EXPIRED",
+            }:
+                continue
+            local = self._store.get_order_by_client(order.client_order_id)
+            if not local or local.get("broker_order_id") != order.broker_order_id:
+                continue
+            covered += max(0.0, float(order.qty or 0) - float(order.filled_qty or 0))
+        return covered
+
+    def _evaluate_protection_gap(
+        self,
+        broker: Any,
+        snapshot: BrokerSnapshot,
+        symbol: str,
+        *,
+        canceled_protections: int,
+    ) -> Optional[dict[str, Any]]:
+        """Fail-closed PAUSED when our close attempt left a live position bare.
+
+        After this program canceled proven protections, one of these must be
+        provable from broker facts before the account may stay CLEAN:
+
+        - the broker position is gone; or
+        - a program-owned, broker-visible, live exposure-reducing close for
+          the remaining quantity exists; or
+        - broker-visible program-owned protection still exists.
+
+        Otherwise the durable account state becomes PAUSED with a stable
+        ``PROTECTION_GAP:`` reason, and every subsequent opening exposure is
+        blocked until recovery/operator action proves safety.
+        """
+        if canceled_protections <= 0:
+            return None
+        position = snapshot.position(symbol)
+        if position is None or abs(position.qty) <= 1e-9:
+            return None  # position closed: gap impossible
+        reducing_side = "sell" if position.qty > 0 else "buy"
+        covered = self._program_owned_live_reducing_qty(
+            snapshot, position.symbol, reducing_side
+        )
+        if covered >= abs(position.qty) - 1e-8:
+            return None  # a live close/protection still covers the position
+        reason = (
+            f"PROTECTION_GAP: {symbol} remains exposed after a close attempt "
+            f"canceled its protections: no proven live close or protection "
+            f"covers the {abs(position.qty):g}-share position; operator "
+            "review required"
+        )
+        self._store.save_account_state(
+            account_id=snapshot.account_id,
+            state="PAUSED",
+            reasons=(reason,),
+            snapshot_version=snapshot.version,
+            baseline_positions={p.symbol: p.qty for p in snapshot.positions},
+        )
+        return {
+            "paused": True,
+            "fail_closed": True,
+            "protection_gap": True,
+            "account_execution_state": "PAUSED",
+            "reconciliation_reasons": [reason],
+            "error": reason,
+        }
+
+    def _recover_persisted_protection_gaps(
+        self, snapshot: BrokerSnapshot, result: Any, prior_reasons: list[str],
+    ) -> Any:
+        """Keep a persisted PROTECTION_GAP pause until broker facts prove safety.
+
+        On every reconciliation: if durable account state carried a
+        PROTECTION_GAP reason (captured BEFORE reconcile overwrote it) and
+        the broker still holds that position with neither a proven
+        protection nor a proven live close, remain PAUSED. When later facts
+        prove the position closed or protected/closing, normal
+        reconciliation may clear the pause.
+        """
+        gap_reasons = [
+            r for r in prior_reasons
+            if isinstance(r, str) and r.startswith("PROTECTION_GAP:")
+        ]
+        if not gap_reasons:
+            return result
+        still_gapped: list[str] = []
+        for reason in gap_reasons:
+            parts = reason.split(":", 1)[1].strip().split(" ", 1)
+            symbol = (parts[0] or "").upper()
+            if not symbol:
+                still_gapped.append(reason)
+                continue
+            position = snapshot.position(symbol)
+            if position is None or abs(position.qty) <= 1e-9:
+                continue  # broker proves the position closed: may clear
+            reducing_side = "sell" if position.qty > 0 else "buy"
+            covered = self._program_owned_live_reducing_qty(
+                snapshot, position.symbol, reducing_side
+            )
+            if covered >= abs(position.qty) - 1e-8:
+                continue  # protected/closing: may clear
+            still_gapped.append(reason)
+        if not still_gapped:
+            return result
+        if result.clean:
+            # Re-persist PAUSED: the gap outlives this reconcile pass.
+            self._store.save_account_state(
+                account_id=snapshot.account_id,
+                state="PAUSED",
+                reasons=tuple(dict.fromkeys(still_gapped)),
+                snapshot_version=snapshot.version,
+                baseline_positions={p.symbol: p.qty for p in snapshot.positions},
+            )
+        return ReconciliationResult(
+            state="PAUSED",
+            reasons=tuple(dict.fromkeys(list(result.reasons) + still_gapped)),
+            snapshot_version=result.snapshot_version,
+        )
 
     def enforce_exit_deadlines(self) -> dict[str, Any]:
         """Exit due, fill-proven positions on scheduled checks under the account lock.
@@ -542,6 +778,20 @@ class ExecutionService:
                                    and broker_status_to_local(o.status) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}]
                     if any(o.broker_order_id not in owned_children or o.side != closing_side for o in conflicting):
                         raise BrokerAuthorityError("Deadline exit conflicts with an order not proven to be its protection")
+                    # F04 sequencing: durably commit the deadline close BEFORE
+                    # canceling any protection, so a crash after cancellation
+                    # leaves a recorded intent to complete the exit.
+                    prepared_outbox = self._prepare_liquidation_outbox(
+                        symbol,
+                        decision_id=due["decision_id"],
+                        quantity=abs(position.qty),
+                        side=closing_side,
+                    )
+                    if not prepared_outbox.get("ok"):
+                        raise BrokerAuthorityError(
+                            f"deadline close durable commit failed: "
+                            f"{prepared_outbox.get('error')}"
+                        )
                     for order in conflicting:
                         cancellation_calls += 1
                         broker.cancel_order_by_id(order.broker_order_id)
@@ -553,14 +803,19 @@ class ExecutionService:
                     self._reconcile_snapshot(broker, snapshot)
                     refreshed = due_positions(self._store, utc_now()).get(symbol)
                     if current is None:
+                        # Position closed during cancellation: nothing to close.
+                        self._abandon_prepared_rows(prepared_outbox)
                         continue
                     if not refreshed or abs(current.qty - refreshed["qty"]) > 1e-8:
                         raise BrokerAuthorityError("Deadline position changed during protection cancellation")
+                    if abs(current.qty - abs(float(prepared_outbox["order_rows"][0]["quantity"] or 0))) > 1e-8:
+                        raise BrokerAuthorityError("Deadline close quantity no longer matches the position")
                     spec = [{"role": "close", "side": closing_side, "quantity": abs(current.qty)}]
                     if not self._verified_reducing_exit(snapshot, symbol, spec):
                         raise BrokerAuthorityError("Deadline close not yet safe; protection cancellation may be pending")
                     result = self._liquidate_core(symbol, decision_id=due["decision_id"], _broker=broker,
-                                                   _quantity=abs(current.qty), _side=closing_side)
+                                                   _quantity=abs(current.qty), _side=closing_side,
+                                                   _outbox=prepared_outbox)
                     results.append(result)
                     snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
                     post = self._reconcile_snapshot(broker, snapshot)
@@ -674,9 +929,65 @@ class ExecutionService:
                 if not reconciliation.clean and opening:
                     return self._paused_result(snapshot, reconciliation.reasons)
                 canceled_protections = 0
+                prepared_outbox: Optional[dict[str, Any]] = None
                 if closing_specs and not opening:
+                    symbol_for_close = intent_dict.get("symbol", "")
+                    close_position = snapshot.position(symbol_for_close)
+                    if close_position is not None:
+                        # F04 sequencing: verify ownership, durably commit the
+                        # close, and only then cancel proven protections. A
+                        # durable commit failure leaves protections untouched.
+                        self._verify_owned_close_protections(broker, snapshot, symbol_for_close)
+                        close_side = "sell" if close_position.qty > 0 else "buy"
+                        prepared_outbox = self._prepare_liquidation_outbox(
+                            symbol_for_close,
+                            # Must equal _execute_core's identity so the
+                            # durable commit dedupes instead of duplicating.
+                            decision_id=decision_id or canonical_decision_id(intent_dict),
+                            run_id=run_id,
+                            quantity=abs(close_position.qty),
+                            side=close_side,
+                        )
+                        if not prepared_outbox.get("ok"):
+                            return {
+                                "success": False,
+                                "fail_closed": True,
+                                "broker_attempted": False,
+                                "broker_calls": 0,
+                                "error": prepared_outbox.get(
+                                    "error", "durable commit failed"
+                                ),
+                            }
                     snapshot, canceled_protections = self._cancel_owned_close_protections(
-                        broker, snapshot, intent_dict.get("symbol", ""))
+                        broker, snapshot, symbol_for_close
+                    )
+                    if prepared_outbox is not None:
+                        after_cancel = snapshot.position(symbol_for_close)
+                        if after_cancel is None:
+                            # Position closed during the cancellation race:
+                            # no new close is needed and this is not a gap.
+                            self._abandon_prepared_rows(prepared_outbox)
+                            return {
+                                "success": True,
+                                "hold": True,
+                                "no_close_needed": True,
+                                "broker_attempted": False,
+                                "broker_calls": canceled_protections,
+                                "note": "position closed during protection cancellation",
+                                "decision_id": prepared_outbox["decision_id"],
+                            }
+                        if abs(after_cancel.qty - abs(close_position.qty)) > 1e-8:
+                            self._abandon_prepared_rows(prepared_outbox)
+                            gap = self._evaluate_protection_gap(
+                                broker, snapshot, symbol_for_close,
+                                canceled_protections=canceled_protections,
+                            )
+                            if gap is not None:
+                                return gap
+                            return self._paused_result(
+                                snapshot,
+                                ["close position changed during protection cancellation"],
+                            )
                 if closing_specs and not self._verified_reducing_exit(
                     snapshot, intent_dict.get("symbol", ""), closing_specs
                 ):
@@ -757,6 +1068,22 @@ class ExecutionService:
                     result["account_execution_state"] = "PAUSED"
                     result["reconciliation_reasons"] = [str(exc)]
                     result["paused"] = True
+                # F04: enforce the protection-gap invariant on fresh facts
+                # when this call canceled protections.
+                if canceled_protections > 0 and result.get("status") != "UNKNOWN":
+                    try:
+                        gap_snapshot = capture_broker_snapshot(
+                            broker, expected_account_id=snapshot.account_id
+                        )
+                        self._reconcile_snapshot(broker, gap_snapshot)
+                    except BrokerAuthorityError:
+                        gap_snapshot = snapshot
+                    gap = self._evaluate_protection_gap(
+                        broker, gap_snapshot, intent_dict.get("symbol", ""),
+                        canceled_protections=canceled_protections,
+                    )
+                    if gap is not None:
+                        result.update(gap)
                 return result
         except AccountLockBusy as exc:
             return {
@@ -991,6 +1318,7 @@ class ExecutionService:
                 snapshot=_snapshot,
                 quote=_quote,
                 intent_dict=intent_dict,
+                quote_factory=self._quote_factory,
             )
             if not cap_result.approved:
                 return {
@@ -1463,7 +1791,10 @@ class ExecutionService:
                     snapshot=snapshot,
                     quote=quote,
                     intent_dict={"symbol": local["symbol"]},
+                    quote_factory=self._quote_factory,
                 )
+            except BrokerAuthorityError:
+                raise
             except Exception as exc:
                 raise BrokerAuthorityError(
                     f"recovery exposure cap evaluation failed: {exc}"
@@ -1589,12 +1920,31 @@ class ExecutionService:
                         raise BrokerAuthorityError("Protective child does not match its parent's exposure")
                     self._store.register_protective_child(local, child)
                     unknown.pop(child.broker_order_id)
-        return Reconciler(self._store).reconcile(snapshot)
+        # F04: capture the durable gap reasons BEFORE reconcile overwrites
+        # the account state, then re-check them against fresh broker facts.
+        try:
+            prior_state = self._store.get_account_state(snapshot.account_id)
+            prior_reasons = (
+                json.loads(prior_state["reasons_json"]) if prior_state else []
+            )
+        except Exception:
+            prior_reasons = []
+        result = Reconciler(self._store).reconcile(snapshot)
+        return self._recover_persisted_protection_gaps(
+            snapshot, result, prior_reasons
+        )
 
     def _recover_locked(
         self, broker: Any, snapshot: BrokerSnapshot
     ) -> tuple[BrokerSnapshot, Any]:
-        """Resolve durable nonterminal rows before permitting new exposure."""
+        """Resolve durable nonterminal rows before permitting new exposure.
+
+        After every recovery action that changed broker or ledger state, the
+        authority snapshot is refreshed and re-reconciled so the NEXT
+        recoverable order evaluates caps against live facts — a prior
+        resubmit/adoption must never be invisible to the following cap check
+        (F02). A failed refresh stops recovery fail-closed on the old facts.
+        """
         initial = self._reconcile_snapshot(broker, snapshot)
         recoverable_reasons = (
             "unresolved PENDING order:",
@@ -1602,10 +1952,13 @@ class ExecutionService:
         )
         if any(not reason.startswith(recoverable_reasons) for reason in initial.reasons):
             return snapshot, initial
-        broker_clients = {order.client_order_id for order in snapshot.orders}
+
+        def _broker_clients(current: BrokerSnapshot) -> set[str]:
+            return {order.client_order_id for order in current.orders}
+
         changed = False
-        for local in self._store.list_recoverable_orders():
-            if local["client_order_id"] in broker_clients:
+        for local in list(self._store.list_recoverable_orders()):
+            if local["client_order_id"] in _broker_clients(snapshot):
                 continue
             if self._store.protective_parent(local["order_id"]):
                 raise BrokerAuthorityError("Missing protective child must be reconciled; never resubmit it as a market order")
@@ -1620,10 +1973,21 @@ class ExecutionService:
             else:
                 # SUBMITTING/PARTIAL without a broker fact is not safe to replay.
                 continue
+            # Refresh authority immediately after the adoption/resubmit above
+            # so the next iteration's cap evaluation sees it.
+            try:
+                snapshot = capture_broker_snapshot(
+                    broker, expected_account_id=snapshot.account_id
+                )
+                self._reconcile_snapshot(broker, snapshot)
+            except Exception as exc:
+                raise BrokerAuthorityError(
+                    f"broker snapshot refresh failed during recovery; "
+                    f"stopping before further mutations: {exc}"
+                ) from exc
         if not changed:
             return snapshot, initial
-        refreshed = capture_broker_snapshot(broker, expected_account_id=snapshot.account_id)
-        return refreshed, self._reconcile_snapshot(broker, refreshed)
+        return snapshot, self._reconcile_snapshot(broker, snapshot)
 
     def startup_recover(self) -> dict[str, Any]:
         """Scheduler/startup gate: recover first; only CLEAN may auto-trade."""
@@ -1886,7 +2250,14 @@ class ExecutionService:
     def liquidate(
         self, symbol: str, *, decision_id: Optional[str] = None, run_id: Optional[str] = None
     ) -> dict[str, Any]:
-        """Execute a broker-verified, exposure-reducing close under the account lock."""
+        """Execute a broker-verified, exposure-reducing close under the account lock.
+
+        F04 sequencing: verify ownership → durable close outbox commit →
+        cancel proven protections → refresh/re-verify → submit the already
+        durable close → reconcile → enforce the protection-gap invariant.
+        A durable commit failure returns with the original protections
+        untouched.
+        """
         sym = (symbol or "").upper()
         if not sym:
             return {
@@ -1901,51 +2272,109 @@ class ExecutionService:
                     broker, expected_account_id=identity.account_id
                 )
                 snapshot, reconciliation = self._recover_locked(broker, snapshot)
-                snapshot, canceled_protections = self._cancel_owned_close_protections(broker, snapshot, sym)
                 position = snapshot.position(sym)
                 side = "sell" if position and position.qty > 0 else "buy"
-                spec = [{"role": "close", "side": side, "quantity": abs(position.qty) if position else None}]
-                if not self._verified_reducing_exit(snapshot, sym, spec):
-                    reasons = list(reconciliation.reasons) + [
-                        "liquidation requires a fresh broker position and no conflicting close order"
-                    ]
-                    return self._paused_result(snapshot, reasons)
-                try:
-                    from tradingagents.safety import get_safety_guard
+                committed_quantity = abs(position.qty) if position else None
+                prepared: Optional[dict[str, Any]] = None
+                if position is not None:
+                    # Step 1: verify ownership/conflicts WITHOUT canceling.
+                    # (The protection itself is a live same-side order, so the
+                    # full verified-exit check can only pass AFTER cancel.)
+                    self._verify_owned_close_protections(broker, snapshot, sym)
+                    try:
+                        from tradingagents.safety import get_safety_guard
 
-                    guard = get_safety_guard()
-                    verdict = (
-                        guard.check_order(
-                            sym,
-                            abs(position.market_value),
-                            account={
-                                "equity": snapshot.equity,
-                                "last_equity": snapshot.last_equity,
-                            },
-                            position_value=abs(position.market_value),
-                            risk_reducing=True,
+                        guard = get_safety_guard()
+                        verdict = (
+                            guard.check_order(
+                                sym,
+                                abs(position.market_value),
+                                account={
+                                    "equity": snapshot.equity,
+                                    "last_equity": snapshot.last_equity,
+                                },
+                                position_value=abs(position.market_value),
+                                risk_reducing=True,
+                            )
+                            if getattr(guard, "enabled", True)
+                            else None
                         )
-                        if getattr(guard, "enabled", True)
-                        else None
+                    except Exception as exc:
+                        return self._paused_result(
+                            snapshot, [f"liquidation safety policy unavailable: {exc}"]
+                        )
+                    if verdict is not None and not verdict.allowed:
+                        result = self._paused_result(
+                            snapshot,
+                            list(getattr(verdict, "reasons", ())) or ["liquidation blocked by safety policy"],
+                        )
+                        result["safety_blocked"] = True
+                        return result
+                    # Step 2: durable close outbox BEFORE canceling protection.
+                    prepared = self._prepare_liquidation_outbox(
+                        sym, decision_id=decision_id, run_id=run_id,
+                        quantity=committed_quantity, side=side,
                     )
-                except Exception as exc:
-                    return self._paused_result(
-                        snapshot, [f"liquidation safety policy unavailable: {exc}"]
-                    )
-                if verdict is not None and not verdict.allowed:
-                    result = self._paused_result(
-                        snapshot,
-                        list(getattr(verdict, "reasons", ())) or ["liquidation blocked by safety policy"],
-                    )
-                    result["safety_blocked"] = True
+                    if not prepared.get("ok"):
+                        # Durable commit failed: protections stay untouched.
+                        return {
+                            "success": False,
+                            "fail_closed": True,
+                            "broker_attempted": False,
+                            "broker_calls": 0,
+                            "error": prepared.get("error", "durable commit failed"),
+                        }
+                # Step 3: cancel only the proven owned protections.
+                snapshot, canceled_protections = self._cancel_owned_close_protections(broker, snapshot, sym)
+                # Step 4: refresh already done; re-verify the position.
+                position = snapshot.position(sym)
+                if prepared is not None and position is None:
+                    # The position closed during the cancellation race: no
+                    # new close is needed and this is not a gap.
+                    self._abandon_prepared_rows(prepared)
+                    result = {
+                        "success": True,
+                        "status": "FILLED",
+                        "broker_attempted": False,
+                        "broker_calls": canceled_protections,
+                        "no_close_needed": True,
+                        "note": "position closed during protection cancellation",
+                    }
                     return result
+                if prepared is not None and (
+                    position is None
+                    or abs(position.qty - committed_quantity) > 1e-8
+                ):
+                    # The position changed during cancellation: the durable
+                    # close's fixed quantity is no longer provably safe.
+                    self._abandon_prepared_rows(prepared)
+                    gap = self._evaluate_protection_gap(
+                        broker, snapshot, sym, canceled_protections=canceled_protections,
+                    )
+                    if gap is not None:
+                        gap["broker_calls"] = canceled_protections
+                        return gap
+                    return self._paused_result(
+                        snapshot,
+                        ["liquidation position changed during protection cancellation"],
+                    )
+                if prepared is not None and not self._verified_reducing_exit(
+                    snapshot, sym,
+                    [{"role": "close", "side": side, "quantity": abs(position.qty)}],
+                ):
+                    self._abandon_prepared_rows(prepared)
+                    return self._paused_result(
+                        snapshot,
+                        ["liquidation requires a fresh broker position and no conflicting close order"],
+                    )
                 result = self._liquidate_core(
                     sym,
                     decision_id=decision_id,
                     run_id=run_id,
                     _broker=broker,
-                    _quantity=abs(position.qty),
+                    _quantity=abs(position.qty) if position else None,
                     _side=side,
+                    _outbox=prepared,
                 )
                 result["broker_calls"] = result.get("broker_calls", 0) + canceled_protections
                 try:
@@ -1962,6 +2391,20 @@ class ExecutionService:
                     result["account_execution_state"] = "PAUSED"
                     result["reconciliation_reasons"] = [str(exc)]
                     result["paused"] = True
+                # Step 7: enforce the protection-gap invariant on fresh facts.
+                if result.get("status") != "UNKNOWN":
+                    try:
+                        gap_snapshot = capture_broker_snapshot(
+                            broker, expected_account_id=snapshot.account_id
+                        )
+                        self._reconcile_snapshot(broker, gap_snapshot)
+                    except BrokerAuthorityError:
+                        gap_snapshot = snapshot
+                    gap = self._evaluate_protection_gap(
+                        broker, gap_snapshot, sym, canceled_protections=canceled_protections,
+                    )
+                    if gap is not None:
+                        result.update(gap)
                 return result
         except AccountLockBusy as exc:
             return {
@@ -1975,6 +2418,71 @@ class ExecutionService:
                 "error": f"broker authority unavailable: {exc}",
             }
 
+    def _prepare_liquidation_outbox(
+        self,
+        symbol: str,
+        *,
+        decision_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        quantity: Optional[float] = None,
+        side: str = "sell",
+    ) -> dict[str, Any]:
+        """Durably commit the close intent BEFORE any protection is canceled.
+
+        F04 sequencing: if this durable commit fails, the caller must return
+        with the original protections untouched — a close that only exists
+        in memory must never be allowed to strip a position's stop first.
+        """
+        sym = (symbol or "").upper()
+        # Each liquidation is its own operator decision: without an explicit
+        # decision_id the default is per-call, so a later legitimate exit of
+        # the same symbol is never silently deduped against an older one.
+        # Repeat/concurrent safety comes from _verified_reducing_exit (fresh
+        # broker position + no conflicting live close order), not from ID reuse.
+        did = decision_id or f"liq-{sym}-{utc_now().strftime('%Y%m%dT%H%M%S%f')}"
+        client_oid = client_order_id_for(did, sym, side, role="close", seq=0)
+        try:
+            intent_row, order_rows, created = self._store.create_outbox(
+                decision_id=did,
+                run_id=run_id,
+                symbol=sym,
+                action="SELL" if side == "sell" else "BUY",
+                target_position="NEUTRAL",
+                payload_json=json.dumps(
+                    {
+                        "symbol": sym,
+                        "action": "SELL" if side == "sell" else "BUY",
+                        "kind": "liquidation",
+                    },
+                    sort_keys=True,
+                ),
+                orders=[
+                    {
+                        "client_order_id": client_oid,
+                        "symbol": sym,
+                        "side": side,
+                        "quantity": quantity,
+                        "notional": None,
+                    }
+                ],
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "fail_closed": True,
+                "broker_attempted": False,
+                "broker_calls": 0,
+                "error": f"durable commit failed: {exc}",
+            }
+        return {
+            "ok": True,
+            "decision_id": did,
+            "client_order_id": client_oid,
+            "intent_row": intent_row,
+            "order_rows": order_rows,
+            "created": created,
+        }
+
     def _liquidate_core(
         self,
         symbol: str,
@@ -1984,8 +2492,13 @@ class ExecutionService:
         _broker: Any = None,
         _quantity: Optional[float] = None,
         _side: str = "sell",
+        _outbox: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Risk-reducing exit through the same durable boundary."""
+        """Risk-reducing exit through the same durable boundary.
+
+        When ``_outbox`` is supplied (the F04 pre-cancel durable commit), the
+        already-committed intent is submitted instead of creating another.
+        """
         sym = (symbol or "").upper()
         if not sym:
             return {
@@ -1995,46 +2508,23 @@ class ExecutionService:
                 "broker_calls": 0,
                 "error": "missing symbol for liquidation",
             }
-        # Each liquidation is its own operator decision: without an explicit
-        # decision_id the default is per-call, so a later legitimate exit of
-        # the same symbol is never silently deduped against an older one.
-        # Repeat/concurrent safety comes from _verified_reducing_exit (fresh
-        # broker position + no conflicting live close order), not from ID reuse.
-        did = decision_id or f"liq-{sym}-{utc_now().strftime('%Y%m%dT%H%M%S%f')}"
-        client_oid = client_order_id_for(did, sym, _side, role="close", seq=0)
-        try:
-            intent_row, order_rows, created = self._store.create_outbox(
-                decision_id=did,
-                run_id=run_id,
-                symbol=sym,
-                action="SELL" if _side == "sell" else "BUY",
-                target_position="NEUTRAL",
-                payload_json=json.dumps(
-                    {
-                        "symbol": sym,
-                        "action": "SELL" if _side == "sell" else "BUY",
-                        "kind": "liquidation",
-                    },
-                    sort_keys=True,
-                ),
-                orders=[
-                    {
-                        "client_order_id": client_oid,
-                        "symbol": sym,
-                        "side": _side,
-                        "quantity": _quantity,
-                        "notional": None,
-                    }
-                ],
-            )
-        except Exception as exc:
+        prepared = _outbox or self._prepare_liquidation_outbox(
+            sym, decision_id=decision_id, run_id=run_id,
+            quantity=_quantity, side=_side,
+        )
+        if not prepared.get("ok"):
             return {
                 "success": False,
                 "fail_closed": True,
                 "broker_attempted": False,
                 "broker_calls": 0,
-                "error": f"durable commit failed: {exc}",
+                "error": prepared.get("error", "durable commit failed"),
             }
+        did = prepared["decision_id"]
+        client_oid = prepared["client_order_id"]
+        intent_row = prepared["intent_row"]
+        order_rows = prepared["order_rows"]
+        created = prepared["created"]
         if not created:
             existing = self._store.list_orders_for_intent(intent_row["intent_id"])
             if existing and all(

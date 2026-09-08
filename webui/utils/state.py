@@ -45,6 +45,11 @@ class AppState:
         self.trade_amount = 1000
         self.trade_occurred = False
 
+        # F10: one universal stop flag for ALL stop actions (single/loop/
+        # market-hour). Only an explicit new Start clears it. Every queue
+        # loop and the pre-trade boundary check this before proceeding.
+        self.stop_requested = False
+
         # Phase B: set when an LLM provider failure stops a run. Auto
         # dispatch (loop/market-hour) checks this and halts until the
         # operator explicitly restarts the analysis.
@@ -107,8 +112,14 @@ class AppState:
         usage=None,
         status="success",
         error_message=None,
+        write_audit=True,
     ):
-        """Register an LLM call for accurate UI counting."""
+        """Register an LLM call for accurate UI counting.
+
+        ``write_audit=False`` is for callers that already emitted the token-
+        bearing ``llm_call`` audit event themselves (F15 exactly-once rule);
+        the UI counters still update.
+        """
         import datetime
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         payload = {
@@ -126,6 +137,8 @@ class AppState:
         self.llm_calls_log.append((timestamp, "LLM_CALL", payload))
         self.llm_calls_count = len([call for call in self.llm_calls_log if call[1] == "LLM_CALL"])
         self.needs_ui_update = True
+        if not write_audit:
+            return
         try:
             from tradingagents.run_logger import get_run_audit_logger
             symbol = self.analyzing_symbol or self.current_symbol
@@ -497,11 +510,15 @@ class AppState:
         self.loop_symbols = symbols
         self.loop_config = config
         self.stop_loop = False
+        # F10: an explicit operator Start is the ONLY thing that clears the
+        # universal stop flag; reset_for_loop must never clear it.
+        self.stop_requested = False
         print(f"[STATE] Starting loop mode with {len(symbols)} symbols, interval: {self.loop_interval_minutes} minutes")
 
     def stop_loop_mode(self):
         """Stop the looping mode."""
         self.stop_loop = True
+        self.stop_requested = True  # F10: universal stop, not just scheduling
         self.loop_enabled = False
         self.analysis_running = False
         print("[STATE] Stopping loop mode")
@@ -513,15 +530,26 @@ class AppState:
         self.market_hour_config = config
         self.market_hours = hours
         self.stop_market_hour = False
+        self.stop_requested = False  # F10: explicit Start clears the flag
         print(f"[STATE] Starting market hour mode with {len(symbols)} symbols, hours: {hours}")
 
     def stop_market_hour_mode(self):
         """Stop the market hour trading mode."""
         self.stop_market_hour = True
+        self.stop_requested = True  # F10: universal stop, not just scheduling
         self.market_hour_enabled = False
         self.analysis_running = False
         print("[STATE] Stopping market hour mode")
-    
+
+    def request_stop(self):
+        """F10: universal stop for every mode (single/loop/market-hour)."""
+        self.stop_requested = True
+        self.stop_loop = True
+        self.stop_market_hour = True
+
+    def is_stop_requested(self) -> bool:
+        return bool(getattr(self, "stop_requested", False))
+
     def start_new_session_for_symbol(self, symbol):
         """Start a new analysis session for an existing symbol."""
         import time

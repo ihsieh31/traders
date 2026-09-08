@@ -98,12 +98,20 @@ def estimate_cost_usd(
 def scan_run_costs(
     eval_results_dir: str = "eval_results",
     overrides: Optional[Dict[str, Dict[str, float]]] = None,
+    metadata_match: Optional[Dict[str, Any]] = None,
 ) -> List[dict]:
     """One cost record per persisted run, model-attributed where possible.
 
     Token counts come from each run's llm_call events (which carry the
     model name and usage); runs without usable events fall back to the
     summary totals as unpriced tokens.
+
+    When ``metadata_match`` is supplied, a run is included only when every
+    requested metadata key/value matches the run's persisted metadata
+    exactly — e.g. ``{"long_run_observation_id": run_id}`` scopes a final
+    report to one observation (F13). Identity is the metadata, never a
+    filename prefix or a time window. With no filter the global-report
+    behavior is unchanged.
     """
     root = Path(eval_results_dir)
     if not root.is_dir():
@@ -116,6 +124,13 @@ def scan_run_costs(
                 payload = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
+
+        if metadata_match is not None:
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict) or not all(
+                metadata.get(key) == value for key, value in metadata_match.items()
+            ):
+                continue
 
         per_model: Dict[str, Dict[str, int]] = {}
         for event in payload.get("events") or []:

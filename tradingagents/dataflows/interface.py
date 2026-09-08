@@ -42,6 +42,7 @@ from tradingagents.openai_model_registry import (
     is_responses_model,
     normalize_model_params,
 )
+from tradingagents.llm_clients.usage import record_direct_openai_usage
 
 
 def _cap_headline_sections(
@@ -1215,6 +1216,7 @@ def get_stock_news_openai(ticker, curr_date):
                 model_params=model_params,
             )
             response = _create_response_with_output_cap_fallback(client, api_params)
+            record_direct_openai_usage(response, model=model, purpose="tool:stock_news_openai")
         else:
             # Use standard chat completions API for GPT-4 and other models
             chat_model_params = get_model_params(model, max_tokens_value=max_output_tokens)
@@ -1237,6 +1239,7 @@ def get_stock_news_openai(ticker, curr_date):
                 ],
                 **chat_model_params
             )
+            record_direct_openai_usage(response, model=model, purpose="tool:stock_news_openai")
 
         content = _strip_trailing_interactive_followup(extract_responses_text(response))
         
@@ -1358,6 +1361,7 @@ def get_global_news_openai(curr_date, ticker_context=None):
                 model_params=model_params,
             )
             response = _create_response_with_output_cap_fallback(client, api_params)
+            record_direct_openai_usage(response, model=model, purpose="tool:global_news_openai")
         else:
             # Use standard chat completions API for GPT-4 and other models
             chat_model_params = get_model_params(model, max_tokens_value=max_output_tokens)
@@ -1375,6 +1379,7 @@ def get_global_news_openai(curr_date, ticker_context=None):
                 ],
                 **chat_model_params
             )
+            record_direct_openai_usage(response, model=model, purpose="tool:global_news_openai")
 
         content = extract_responses_text(response)
 
@@ -1466,6 +1471,7 @@ def get_fundamentals_openai(ticker, curr_date):
                 include_reasoning=True,
             )
             response = _create_response_with_output_cap_fallback(client, api_params)
+            record_direct_openai_usage(response, model=model, purpose="tool:fundamentals_openai")
         else:
             # Use standard chat completions API for GPT-4 and other models
             chat_model_params = get_model_params(model, max_tokens_value=max_output_tokens)
@@ -1492,6 +1498,7 @@ def get_fundamentals_openai(ticker, curr_date):
                 ],
                 **chat_model_params
             )
+            record_direct_openai_usage(response, model=model, purpose="tool:fundamentals_openai")
 
         content = _strip_trailing_interactive_followup(extract_responses_text(response))
         if not content or not content.strip():

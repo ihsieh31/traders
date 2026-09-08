@@ -223,9 +223,29 @@ class RunAuditLogger:
         run_id: Optional[str] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
+        # F15: the daily safety budget is fed BEFORE run attribution. A
+        # provider-reported token count must increment SafetyGuard even when
+        # no per-symbol run is active (e.g. screening, preflight probes,
+        # dataflow web-search tools). Exactly one increment happens here;
+        # callers must not also call record_llm_tokens themselves.
+        if event_type == "llm_call":
+            usage = (payload or {}).get("usage", {}) or {}
+            try:
+                total_tokens = int(usage.get("total_tokens", 0) or 0)
+            except (TypeError, ValueError):
+                total_tokens = 0
+            if total_tokens > 0:
+                try:
+                    from tradingagents.safety import get_safety_guard
+
+                    get_safety_guard().record_llm_tokens(total_tokens)
+                except Exception:
+                    pass
+
         with self._lock:
             resolved_run_id = self._resolve_run_id(run_id, symbol)
             if not resolved_run_id:
+                # No active run: safety accounting above still happened.
                 return
 
             run_data = self._active_runs.get(resolved_run_id)
@@ -272,15 +292,6 @@ class RunAuditLogger:
                 )
                 total_tokens = int(usage.get("total_tokens", 0) or 0)
                 run_data["summary"]["total_llm_tokens"] += total_tokens
-                if total_tokens:
-                    # Feed the safety layer's daily LLM token budget; logging
-                    # must never fail because the guard is unavailable.
-                    try:
-                        from tradingagents.safety import get_safety_guard
-
-                        get_safety_guard().record_llm_tokens(total_tokens)
-                    except Exception:
-                        pass
             elif event_type == "agent_output":
                 run_data["summary"]["agent_output_events"] += 1
             elif event_type == "node_execution":
@@ -437,12 +448,18 @@ def load_final_state_snapshot(
     symbol: str,
     trade_date: str,
     eval_results_dir: str = "eval_results",
+    metadata_match: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return the final_state snapshot of the newest completed run for a date.
 
     Lets outcome-time consumers (reflection, evaluation) recover the exact
     market situation a past decision was made in, without keeping every run
     in process memory. Returns None when no matching completed run exists.
+
+    When ``metadata_match`` is supplied, every key/value must match the run's
+    persisted metadata exactly and there is NO fallback to an unscoped run:
+    a crash-recovery consumer must never borrow a decision that belongs to a
+    manual/WebUI/other-observation run (F12).
     """
     runs_dir = (
         Path(eval_results_dir)
@@ -465,6 +482,12 @@ def load_final_state_snapshot(
             continue
         if str(payload.get("trade_date")) != str(trade_date):
             continue
+        if metadata_match is not None:
+            metadata = payload.get("metadata") or {}
+            if not isinstance(metadata, dict) or not all(
+                metadata.get(key) == value for key, value in metadata_match.items()
+            ):
+                continue
         final_state = (payload.get("snapshots") or {}).get("final_state")
         if not isinstance(final_state, dict):
             continue

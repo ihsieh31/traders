@@ -181,6 +181,9 @@ def build_screening_llm(resolved: Dict[str, Any], config: Dict[str, Any]) -> Ret
         base_url=spec.backend_url,
         api_key=api_key,
         model_role="quick",
+        # F08: the Screening role honors the same configured per-request
+        # timeout as every other production LLM path.
+        timeout=(config or {}).get("llm_request_timeout_seconds", 120.0),
         **params,
     )
     from tradingagents.default_config import DEFAULT_CONFIG

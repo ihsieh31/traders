@@ -34,6 +34,21 @@ def parse_analysis_date(value: str):
     return parsed
 
 
+def current_analysis_date(now: datetime | None = None) -> str:
+    """F17: the real-time analysis date is the America/New_York calendar date.
+
+    Validation already uses Eastern time; the WebUI and CLI must generate
+    "today" the same way, or a machine east of UTC (e.g. Taipei after
+    midnight) produces a date the parser rejects as future. Test-injected
+    ``now`` must be timezone-aware; naive values are rejected.
+    """
+    if now is None:
+        now = datetime.now(_EASTERN_TZ)
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    return now.astimezone(_EASTERN_TZ).date().isoformat()
+
+
 def analysis_date_mode(value: str, *, now: datetime | None = None) -> AnalysisDateMode:
     """Compare value with today's America/New_York date."""
     if now is None:

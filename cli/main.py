@@ -433,8 +433,11 @@ def get_user_selections():
     )
     selected_ticker = get_ticker()
 
-    # Step 2: Use current date for real-time analysis
-    current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    # Step 2: Use current date for real-time analysis. F17: the analysis
+    # date is the America/New_York calendar date, matching validation.
+    from tradingagents.dataflows.interface_utils import current_analysis_date
+
+    current_date = current_analysis_date()
     console.print(
         f"[green]Using current date for real-time analysis:[/green] {current_date}"
     )
@@ -1697,6 +1700,17 @@ def long_run():
         console.print("Not authorized; no observation was created.")
         raise typer.Exit(code=1)
 
+    # Authorized: mandatory recovery gate BEFORE any observation exists.
+    # Preflight above was genuinely read-only (F06); only now may recovery
+    # resubmit a missing PENDING/UNKNOWN order. Failure exits without
+    # creating an active observation.
+    try:
+        recovery = lr.run_post_authorization_recovery(lr.LongRunDeps())
+    except lr.LongRunStop as exc:
+        console.print(f"[bold red]Execution recovery failed: {exc.code}: {exc.detail}[/bold red]")
+        raise typer.Exit(code=1)
+    console.print("[green]Post-authorization execution recovery CLEAN.[/green]")
+
     # Authoritative session list for the window, then create state + RUNNING.
     eastern = lr.eastern_now()
     start_day = eastern.date()
@@ -1715,7 +1729,7 @@ def long_run():
     }
     lr.atomic_write_json(lr.run_dir(state["run_id"]) / "manifest.json", manifest)
     lr.append_jsonl(lr.run_dir(state["run_id"]) / "account_snapshots.jsonl",
-                    {"phase": "startup", **preflight["snapshot"]})
+                    {"phase": "startup", **recovery["snapshot"]})
     lr.log_event(state["run_id"], "observation_created",
                  {"expected_sessions": len(expected)})
     lr.save_active_state(state)

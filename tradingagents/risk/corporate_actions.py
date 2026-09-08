@@ -28,6 +28,17 @@ from typing import Any, Callable, Optional
 
 VALID_REASONS = ("split", "ticker_change", "delisting", "non_tradable")
 
+
+class QuarantineStateError(RuntimeError):
+    """The persisted quarantine ledger exists but cannot be trusted.
+
+    Fail-closed contract: only a MISSING file means an empty ledger. An
+    existing-but-unreadable file must block new exposure until an operator
+    resolves it — silently replacing corrupt durable state with an empty
+    ledger would release a known quarantine exactly when its records are
+    needed most.
+    """
+
 REASON_LABELS = {
     "split": "share split / reverse split (adjusted and unadjusted price data must not be mixed)",
     "ticker_change": "ticker symbol change (order routing under the old symbol must stop)",
@@ -73,14 +84,42 @@ class QuarantineStore:
     # -- persistence ------------------------------------------------------
 
     def _load(self) -> None:
+        """Load the ledger; fail closed on any existing-but-untrusted state.
+
+        FileNotFoundError is the ONLY path that yields an empty ledger.
+        Permission/read errors, invalid JSON, a non-dict top level, or a
+        malformed per-symbol shape raise QuarantineStateError so callers
+        refuse new exposure instead of trading on missing quarantines.
+        """
+        if not self.path.exists():
+            self._records = {}
+            return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                self._records = {str(k): list(v) for k, v in raw.items()}
-                return
-        except (OSError, ValueError):
-            pass
-        self._records = {}
+        except OSError as exc:
+            raise QuarantineStateError(
+                f"quarantine state at {self.path} is unreadable: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise QuarantineStateError(
+                f"quarantine state at {self.path} is not valid JSON: {exc}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise QuarantineStateError(
+                f"quarantine state at {self.path} must be a dict of symbol -> "
+                f"record list, got {type(raw).__name__}"
+            )
+        records: dict[str, list[dict]] = {}
+        for key, value in raw.items():
+            if not isinstance(value, list) or not all(
+                isinstance(record, dict) for record in value
+            ):
+                raise QuarantineStateError(
+                    f"quarantine state for {key!r} in {self.path} is malformed: "
+                    "expected a list of record dicts"
+                )
+            records[str(key)] = list(value)
+        self._records = records
 
     def reload(self) -> None:
         """Re-read the persisted ledger before judging active state.

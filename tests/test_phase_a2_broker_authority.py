@@ -171,11 +171,18 @@ class SnapshotAndRetryTests(unittest.TestCase):
             get_with_retry(lambda: (_ for _ in ()).throw(ConnectionError("down")), sleep=lambda _: None)
 
     def test_orders_request_covers_all_status_never_open_only(self):
-        from tradingagents.execution.authority import _orders_request
+        from tradingagents.execution.authority import _recent_all_orders_request
 
-        request = _orders_request()
+        request = _recent_all_orders_request()
         status = getattr(request, "status", None)
         self.assertEqual(getattr(status, "value", status), "all")
+
+    def test_open_request_covers_open_status(self):
+        from tradingagents.execution.authority import _open_orders_request
+
+        request = _open_orders_request()
+        status = getattr(request, "status", None)
+        self.assertEqual(getattr(status, "value", status), "open")
 
     def test_snapshot_passes_all_request_to_broker(self):
         seen: dict = {}
@@ -184,9 +191,12 @@ class SnapshotAndRetryTests(unittest.TestCase):
             def get_orders(self, request=None):
                 seen["request"] = request
                 status = getattr(request, "status", None)
-                if getattr(status, "value", status) != "all":
+                # The snapshot proves live orders with both the recent ALL
+                # listing and the authoritative OPEN listing (F09); neither
+                # may be dropped.
+                if getattr(status, "value", status) not in ("all", "open"):
                     raise AssertionError(
-                        f"snapshot must request ALL orders, got {request!r}"
+                        f"snapshot must request ALL/OPEN orders, got {request!r}"
                     )
                 return list(self.orders)
 

@@ -190,9 +190,10 @@ only the explicit paper endpoint is allowed.
 Phase B additions: `analysis_provider/model/backend_url` and
 `decision_provider/model/backend_url` (all empty = legacy quick/deep),
 `llm_max_retries` (0-3, validated at startup), `llm_request_timeout_seconds`
-(applied to the legacy quick/deep clients; in roles mode the Analysis/Decision
-clients use their provider SDK's default per-request timeout — retry count and
-backoff caps still bound every request in both modes),
+(applied to every production LLM client path: legacy quick/deep, the
+Analysis/Decision role clients and their Analysis fallback, Screening, and the
+GPT-5 Responses adapter including its bound clones; retry count and backoff
+caps still bound every request in both modes),
 `sec_ir_*` and `company_ir_pages` for primary sources,
 `corporate_action_events` for the manual quarantine feed,
 `auto_screening_enabled` + `screening_provider/model/backend_url` for the

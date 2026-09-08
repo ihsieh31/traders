@@ -1080,6 +1080,10 @@ def register_control_callbacks(app):
 
         # Handle stop action
         if is_stop_action:
+            # F10: EVERY stop action sets the universal stop flag regardless
+            # of mode, so the currently running analysis can finish but must
+            # not trade or dispatch another symbol.
+            app_state.request_stop()
             if app_state.loop_enabled:
                 app_state.stop_loop_mode()
                 return "Loop analysis stopped.", dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
@@ -1207,6 +1211,10 @@ def register_control_callbacks(app):
 
         num_symbols = len(symbols)
 
+        # F10: an explicit operator Start (any mode) is the ONLY thing that
+        # clears the universal stop flag.
+        app_state.stop_requested = False
+
         # Phase C: whether this run uses the screening pipeline for its
         # symbol selection (derives the round symbols per round).
         auto_screening_on = bool(provider_settings.get("auto_screening_enabled"))
@@ -1306,6 +1314,9 @@ def register_control_callbacks(app):
                     app_state.add_symbols_to_queue(round_symbols)
 
                     while app_state.analysis_queue and not app_state.stop_market_hour:
+                        # F10: the universal stop flag gates the next symbol.
+                        if app_state.stop_requested:
+                            break
                         symbol = app_state.get_next_symbol()
                         if symbol:
                             print(f"[MARKET_HOUR] Analyzing {symbol} at {next_hour}:00 with current market data...")
@@ -1381,6 +1392,9 @@ def register_control_callbacks(app):
 
                     # Run analysis for all symbols
                     while app_state.analysis_queue and not app_state.stop_loop:
+                        # F10: the universal stop flag gates the next symbol.
+                        if app_state.stop_requested:
+                            break
                         symbol = app_state.get_next_symbol()
                         if symbol:
                             print(f"[LOOP] Analyzing {symbol} with current market data...")
@@ -1429,6 +1443,10 @@ def register_control_callbacks(app):
                     app_state.add_symbols_to_queue(round_symbols)
 
                     while app_state.analysis_queue:
+                        # F10: single-run mode checks the universal stop flag
+                        # before taking the next symbol too.
+                        if app_state.stop_requested:
+                            break
                         symbol = app_state.get_next_symbol()
                         if symbol:
                             print(f"[SINGLE] Analyzing {symbol} with current market data...")

@@ -162,6 +162,22 @@ def _fallback_asset_results() -> List[Dict[str, Any]]:
     return results
 
 
+def _apply_read_timeout(client, timeout=(3.05, 10.0)):
+    """Wrap the client's requests session with fixed connect/read timeouts.
+
+    The execution TradingClient already owns this pattern; historical data
+    clients get the same finite bound so a stalled market-data GET cannot
+    freeze a synchronous loop indefinitely. Returns True when the installed
+    alpaca-py shape allowed enforcement, False otherwise.
+    """
+    session = getattr(client, "_session", None)
+    request = getattr(session, "request", None)
+    if session is None or not callable(request):
+        return False
+    session.request = partial(request, timeout=timeout)
+    return True
+
+
 def get_alpaca_stock_client() -> StockHistoricalDataClient:
     api_key = get_api_key("alpaca_api_key", "ALPACA_API_KEY")
     api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")
@@ -169,10 +185,17 @@ def get_alpaca_stock_client() -> StockHistoricalDataClient:
         print(f"Warning: Missing Alpaca API credentials. API key: {'present' if api_key else 'missing'}, Secret: {'present' if api_secret else 'missing'}")
         raise ValueError("Alpaca API key or secret not found. Please set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
     try:
-        return StockHistoricalDataClient(api_key, api_secret)
+        client = StockHistoricalDataClient(api_key, api_secret)
     except Exception as e:
         print(f"Error creating Alpaca stock client: {e}")
         raise
+    if not _apply_read_timeout(client):
+        # A historical client without an enforceable timeout can stall the
+        # synchronous screening/analysis loop forever; refuse it instead.
+        raise RuntimeError(
+            "Installed alpaca-py cannot enforce finite historical-data timeouts"
+        )
+    return client
 
 
 def get_alpaca_crypto_client() -> CryptoHistoricalDataClient:
@@ -180,9 +203,14 @@ def get_alpaca_crypto_client() -> CryptoHistoricalDataClient:
     api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")
     # Crypto calls work without keys, but keys raise rate limits
     if api_key and api_secret:
-        return CryptoHistoricalDataClient(api_key, api_secret)
+        client = CryptoHistoricalDataClient(api_key, api_secret)
     else:
-        return CryptoHistoricalDataClient()
+        client = CryptoHistoricalDataClient()
+    if not _apply_read_timeout(client):
+        raise RuntimeError(
+            "Installed alpaca-py cannot enforce finite crypto-historical timeouts"
+        )
+    return client
 
 
 PAPER_API_BASE_URL = "https://paper-api.alpaca.markets"

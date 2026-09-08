@@ -206,9 +206,11 @@ def run_analysis(
     current_date = None
 
     try:
-        # Always use current date for real-time analysis
-        from datetime import datetime
-        current_date = datetime.now().strftime("%Y-%m-%d")
+        # Always use current date for real-time analysis. F17: the analysis
+        # date is the America/New_York calendar date, matching validation.
+        from tradingagents.dataflows.interface_utils import current_analysis_date
+
+        current_date = current_analysis_date()
 
         print(f"Starting real-time analysis for {ticker} with current date: {current_date}")
         current_state = app_state.get_state(ticker)
@@ -370,6 +372,13 @@ def run_analysis(
         print(f"[TRADE]   - trade_enabled: {trade_enabled}")
         print(f"[TRADE]   - trade_amount: {trade_amount}")
         print(f"[TRADE]   - allow_shorts: {allow_shorts}")
+
+        # F10: the operator pressed Stop while this analysis was running.
+        # The analysis result stays visible, but no trade is executed and no
+        # further symbol is dispatched.
+        if getattr(app_state, 'stop_requested', False):
+            print(f"[TRADE] Stop requested during {ticker}'s analysis; trade suppressed.")
+            return
 
         if trade_enabled:
             print(f"[TRADE] Trading enabled for {ticker}, executing trade with ${trade_amount}")

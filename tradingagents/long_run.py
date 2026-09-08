@@ -901,8 +901,11 @@ def run_preflight(
                 "PREFLIGHT_FAILED", f"llm_probe:{role_name}: {type(exc).__name__}: {exc}"
             )
 
-    # Alpaca read-only preflight: paper client, account, positions, calendar,
-    # then execution recovery. No test order is ever placed.
+    # Alpaca read-only preflight: paper client, account, positions, calendar.
+    # No test order is ever placed and NO recovery mutation happens here
+    # (F06): preflight runs BEFORE the explicit 30-day authorization
+    # question, so startup_recover() — which may resubmit a missing
+    # PENDING/UNKNOWN order — must not run until the user has authorized.
     try:
         broker_factory = deps.broker_client_factory or _default_broker_client
         client = broker_factory()
@@ -920,15 +923,6 @@ def run_preflight(
         checks.append({"name": "alpaca_calendar", "ok": True, "detail": "authoritative ok"})
     except Exception as exc:
         raise LongRunStop("PREFLIGHT_FAILED", f"alpaca_calendar: {exc}")
-    try:
-        service_factory = deps.execution_service_factory or _default_execution_service
-        recovery = service_factory().startup_recover()
-        ok = bool(recovery.get("success"))
-        _check("execution_recovery", ok, str(recovery.get("reconciliation_reasons")))
-    except LongRunStop:
-        raise
-    except Exception as exc:
-        raise LongRunStop("PREFLIGHT_FAILED", f"execution_recovery: {exc}")
 
     # Optional data sources are degraded-source status, never hard dependencies.
     try:
@@ -948,6 +942,45 @@ def run_preflight(
     snapshot = capture_account_snapshot(client)
     return {"ok": True, "checks": checks, "snapshot": snapshot,
             "optional_sources": optional}
+
+
+def run_post_authorization_recovery(
+    deps: Optional["LongRunDeps"] = None,
+) -> Dict[str, Any]:
+    """Mandatory recovery gate between authorization and observation creation.
+
+    F06: run_preflight is genuinely read-only (no startup_recover, no broker
+    submit/cancel). After the user authorizes — but BEFORE any observation
+    state/manifest/RUNNING exists — this gate recovers durable nonterminal
+    orders and requires a CLEAN authority state. On failure nothing is
+    created and the process exits.
+    """
+    deps = deps or LongRunDeps()
+    service_factory = deps.execution_service_factory or _default_execution_service
+    try:
+        service = service_factory()
+        recovery = service.startup_recover()
+    except LongRunStop:
+        raise
+    except Exception as exc:
+        raise LongRunStop(
+            "PREFLIGHT_FAILED", f"post-authorization execution_recovery: {exc}"
+        )
+    ok = bool(recovery.get("success"))
+    if not ok:
+        raise LongRunStop(
+            "PREFLIGHT_FAILED",
+            "execution_recovery: "
+            + str(recovery.get("reconciliation_reasons") or recovery.get("error")),
+        )
+    try:
+        broker_factory = deps.broker_client_factory or _default_broker_client
+        fresh_snapshot = capture_account_snapshot(broker_factory())
+    except Exception as exc:
+        raise LongRunStop(
+            "PREFLIGHT_FAILED", f"post-recovery account snapshot: {exc}"
+        )
+    return {"recovery": recovery, "snapshot": fresh_snapshot}
 
 
 # ---------------------------------------------------------------------------
@@ -1014,16 +1047,61 @@ def _normalize_intent(intent: Any) -> Optional[Dict[str, Any]]:
     return json.loads(json.dumps(data, default=str))
 
 
-def _recover_intent_from_run_log(symbol: str, session_date: str) -> Optional[Dict[str, Any]]:
+def _recover_intent_from_run_log(
+    symbol: str, session_date: str, *, observation_id: str, results_dir: str,
+) -> Optional[Dict[str, Any]]:
+    """Recover a crashed analysis intent, bound to THIS observation only.
+
+    The run log must be a completed ``long_run`` analysis whose
+    ``long_run_observation_id`` metadata matches exactly. Without a match the
+    caller re-runs the analysis; a manual/WebUI/other-observation result is
+    never borrowed (F12).
+    """
     try:
         from tradingagents.run_logger import load_final_state_snapshot
 
-        final_state = load_final_state_snapshot(symbol, session_date)
+        final_state = load_final_state_snapshot(
+            symbol,
+            session_date,
+            eval_results_dir=results_dir,
+            metadata_match={
+                "source": "long_run",
+                "long_run_observation_id": observation_id,
+            },
+        )
     except Exception:
         return None
     if not isinstance(final_state, dict):
         return None
     return _normalize_intent(final_state.get("final_trade_intent"))
+
+
+# -- F10 cooperative stop/window checkpoints ------------------------------
+# A stop (SIGTERM) or window end cannot interrupt an in-flight SDK call;
+# finite timeouts (F07) bound those. These checkpoints guarantee that once
+# control returns, no NEW analysis or broker order begins after the stop/
+# cutoff is observed.
+
+STOP_REASON_NONE = None
+STOP_REASON_STOP_REQUESTED = "STOP_REQUESTED"
+STOP_REASON_WINDOW_ENDED = "WINDOW_ENDED"
+
+
+def _control_stop_reason(
+    deps: LongRunDeps,
+    ends_at: Optional[datetime],
+) -> Optional[str]:
+    """Return why the round must stop now, or None when trading may proceed."""
+    if _stop_requested:
+        return STOP_REASON_STOP_REQUESTED
+    if ends_at is not None:
+        now = deps.now_fn()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        cutoff = ends_at if ends_at.tzinfo is not None else ends_at.replace(tzinfo=timezone.utc)
+        if now >= cutoff:
+            return STOP_REASON_WINDOW_ENDED
+    return None
 
 
 def summarize_execution_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -1048,9 +1126,16 @@ def summarize_execution_result(result: Dict[str, Any]) -> Dict[str, Any]:
     return summary
 
 
-def _build_graph_config(runtime: Dict[str, Any], long_cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _build_graph_config(
+    runtime: Dict[str, Any], long_cfg: Dict[str, Any], run_id: Optional[str] = None
+) -> Dict[str, Any]:
     config = dict(runtime)
     config["_long_run_analysts"] = list(long_cfg.get("analysts") or [])
+    if run_id:
+        # F12: bind every long-run analysis log to this exact observation so
+        # crash recovery can never borrow another run's decision.
+        config["_long_run_observation_id"] = run_id
+        config["_analysis_source"] = "long_run"
     try:
         from tradingagents.dataflows.config import set_config
 
@@ -1068,8 +1153,15 @@ def run_daily_round(
     runtime: Dict[str, Any],
     schedule_info: Optional[Dict[str, Any]] = None,
     deps: Optional[LongRunDeps] = None,
+    ends_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """One trading-day round: recover → snapshot → screen → analyze → trade."""
+    """One trading-day round: recover → snapshot → screen → analyze → trade.
+
+    ``ends_at`` (timezone-aware) enables the F10 cooperative window check:
+    at every broker-mutation boundary a round whose window already ended
+    stops before starting new analysis or submitting a new order. Existing
+    direct unit callers may omit it.
+    """
     from tradingagents.agents.schemas import trade_intent_action
     from tradingagents.llm_clients.retry import ProviderFailure
 
@@ -1079,6 +1171,8 @@ def run_daily_round(
     graph_factory = deps.graph_factory or _default_graph_factory
     broker_factory = deps.broker_client_factory or _default_broker_client
     service = service_factory()
+    if ends_at is not None and ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=timezone.utc)
     # Journal gate (fail-closed, before anything touches the broker): a
     # settled session is never re-run — re-running a MISSED round would
     # submit a stale order, and an unreadable journal must not be silently
@@ -1136,7 +1230,42 @@ def run_daily_round(
                  {"phase": "pre_round", "session": session_date, **pre_snapshot})
 
     # Step 3 — Phase C screening (fail-closed; a stop ends the observation).
-    plan = screening_fn(runtime, False)
+    # F10 checkpoint 1: before screening/model work, re-check stop/window.
+    control = _control_stop_reason(deps, ends_at)
+    if control:
+        # Signal-stop: yield to the outer loop (it records INTERRUPTED).
+        # Window-end: the outer loop finalizes the observation normally.
+        return journal  # may be None; nothing was mutated beyond recovery
+
+    # F19: the daily LLM budget gates NEW LLM work, not already-authorized
+    # broker execution. A fresh round (or one still holding PENDING/ANALYZING
+    # symbols) must pass the gate before any screening invocation; a resume
+    # whose remaining work is only ANALYZED/EXECUTING execution consumes no
+    # tokens and proceeds under the execution/recovery safety rules.
+    try:
+        from tradingagents.safety import get_safety_guard
+
+        needs_new_llm_work = journal is None or any(
+            (entry or {}).get("status") in (SYMBOL_PENDING, SYMBOL_ANALYZING)
+            for entry in (journal.get("symbols") or {}).values()
+        )
+        if needs_new_llm_work:
+            verdict = get_safety_guard().check_llm_budget()
+            if not verdict.allowed:
+                raise LongRunStop(
+                    "LLM_BUDGET_EXHAUSTED",
+                    f"before screening: {'; '.join(verdict.reasons)}",
+                )
+    except LongRunStop:
+        raise
+    except Exception as exc:
+        raise LongRunStop(
+            "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {exc}"
+        )
+
+    plan = _screening_with_audit_scope(
+        screening_fn, runtime, run_id, session_date
+    )
     if getattr(plan, "stopped", False):
         raise LongRunStop(
             "SCREENING_STOPPED",
@@ -1181,11 +1310,26 @@ def run_daily_round(
                "universe": len(journal["screening"]["deep_analysis_set"])})
 
     # Steps 5-6 — serial per-symbol analysis + shared auto-trade execution.
-    graph_config = _build_graph_config(runtime, long_cfg)
+    graph_config = _build_graph_config(runtime, long_cfg, run_id=run_id)
     notional = float(long_cfg.get("base_trade_notional_usd") or 0)
     graph = None
+    stop_reason: Optional[str] = None
 
-    def _execute_symbol(symbol: str, intent: Dict[str, Any]) -> None:
+    def _execute_symbol(symbol: str, intent: Dict[str, Any], *, _reentry: bool = False) -> None:
+        # F10 checkpoint 6: immediately before broker execution. A stop that
+        # became observable while the analysis ran must prevent the order.
+        control = _control_stop_reason(deps, ends_at)
+        if control:
+            nonlocal stop_reason
+            if control == STOP_REASON_WINDOW_ENDED and not _reentry:
+                journal["symbols"][symbol]["execution_result_summary"] = {
+                    "no_trade": True, "error": "WINDOW_ENDED_DURING_ROUND",
+                }
+                journal["stop_reason"] = "WINDOW_ENDED_DURING_ROUND"
+                journal["symbols"][symbol]["status"] = SYMBOL_DONE  # analyzed, not traded
+                save_round_journal(run_id, journal)
+            stop_reason = control
+            return
         journal["symbols"][symbol]["status"] = SYMBOL_EXECUTING
         save_round_journal(run_id, journal)
         try:
@@ -1210,9 +1354,20 @@ def run_daily_round(
         if status == SYMBOL_FAILED:
             continue
 
+        # F10 checkpoint 2: before starting each symbol's work.
+        control = _control_stop_reason(deps, ends_at)
+        if control:
+            stop_reason = control
+            break
+
         # Case D (resume): re-enter execution with the identical decision
         # identity; the durable outbox dedupes without a second broker POST.
         if status == SYMBOL_EXECUTING:
+            # F10 checkpoint 5: before re-entering EXECUTING recovery.
+            control = _control_stop_reason(deps, ends_at)
+            if control:
+                stop_reason = control
+                break
             intent = entry.get("trade_intent")
             if not intent:
                 entry["status"] = SYMBOL_FAILED
@@ -1243,14 +1398,34 @@ def run_daily_round(
             if not intent:
                 entry["status"] = SYMBOL_PENDING
             else:
+                # F10 checkpoint 4: a persisted ANALYZED intent must be
+                # re-checked before executing on resume.
+                control = _control_stop_reason(deps, ends_at)
+                if control:
+                    if control == STOP_REASON_WINDOW_ENDED:
+                        entry["execution_result_summary"] = {
+                            "no_trade": True, "error": "WINDOW_ENDED_DURING_ROUND",
+                        }
+                        entry["status"] = SYMBOL_DONE
+                        journal["stop_reason"] = "WINDOW_ENDED_DURING_ROUND"
+                        save_round_journal(run_id, journal)
+                        stop_reason = STOP_REASON_WINDOW_ENDED
+                        break
+                    stop_reason = control
+                    break
                 _execute_symbol(symbol, intent)
                 continue
 
         # Case B: ANALYZING means the previous process died before writing
         # ANALYZED. Broker execution is forbidden before ANALYZED, so reuse a
-        # provably completed run or safely re-run the analysis.
+        # provably completed run — of THIS observation only (F12) — or safely
+        # re-run the analysis.
         if status == SYMBOL_ANALYZING:
-            recovered = _recover_intent_from_run_log(symbol, session_date)
+            recovered = _recover_intent_from_run_log(
+                symbol, session_date,
+                observation_id=run_id,
+                results_dir=str(runtime.get("results_dir") or "eval_results"),
+            )
             if recovered:
                 entry["trade_intent"] = recovered
                 entry["signal"] = trade_intent_action(recovered)
@@ -1265,13 +1440,57 @@ def run_daily_round(
         # Case A: analyze normally (PENDING, or ANALYZING without proof).
         if entry.get("status") != SYMBOL_PENDING:
             continue
+        # F19 checkpoint: earlier symbols may have consumed the rest of the
+        # day's budget, so every fresh analysis re-checks before new LLM work.
+        try:
+            from tradingagents.safety import get_safety_guard
+
+            verdict = get_safety_guard().check_llm_budget()
+            if not verdict.allowed:
+                raise LongRunStop(
+                    "LLM_BUDGET_EXHAUSTED",
+                    f"{symbol}: {'; '.join(verdict.reasons)}",
+                )
+        except LongRunStop:
+            raise
+        except Exception as exc:
+            raise LongRunStop(
+                "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {exc}"
+            )
         entry["status"] = SYMBOL_ANALYZING
-        save_round_journal(run_id, journal)
         symbol_started = utc_now_iso()
+        # Persist the analysis-start marker BEFORE propagate so a crash leaves
+        # an explicit start identity/time. It alone never claims completion.
+        entry["analysis_run_ref"] = symbol_started
+        save_round_journal(run_id, journal)
         try:
             if graph is None:
                 graph = graph_factory(graph_config)
             final_state, _signal = graph.propagate(symbol, session_date)
+            # F10 checkpoint 3: immediately after analysis returns, BEFORE
+            # persisting a tradeable intent or starting broker execution.
+            control = _control_stop_reason(deps, ends_at)
+            if control:
+                if control == STOP_REASON_WINDOW_ENDED:
+                    # Keep the analysis result for audit, but never trade it:
+                    # the authorized window ended while this symbol ran.
+                    entry["trade_intent"] = _normalize_intent(
+                        (final_state or {}).get("final_trade_intent")
+                    )
+                    entry["signal"] = None
+                    entry["execution_result_summary"] = {
+                        "no_trade": True, "error": "WINDOW_ENDED_DURING_ROUND",
+                    }
+                    journal["stop_reason"] = "WINDOW_ENDED_DURING_ROUND"
+                    save_round_journal(run_id, journal)
+                    log_event(run_id, "symbol_window_ended", {"symbol": symbol})
+                    stop_reason = STOP_REASON_WINDOW_ENDED
+                    break
+                # STOP_REQUESTED: persist resume-safe journal state and yield
+                # to the outer loop without marking remaining symbols FAILED.
+                save_round_journal(run_id, journal)
+                stop_reason = STOP_REASON_STOP_REQUESTED
+                break
             intent = _normalize_intent((final_state or {}).get("final_trade_intent"))
             if not intent:
                 from tradingagents.execution.service import validate_trade_intent
@@ -1310,6 +1529,27 @@ def run_daily_round(
 
         # Fresh ANALYZED → execute immediately (same pass, no re-loop needed).
         _execute_symbol(symbol, entry["trade_intent"])
+        if stop_reason:
+            break
+
+    # F10: a stop observed at a checkpoint yields to the outer loop without
+    # finalizing this round. The journal keeps its partial evidence and the
+    # remaining symbols stay PENDING (never FAILED), so a later resume
+    # continues exactly where this process stopped. A window end is recorded
+    # on the journal for the final report; the outer loop may still finalize
+    # the observation COMPLETED because its window ended normally.
+    if stop_reason == STOP_REASON_STOP_REQUESTED:
+        journal["status"] = "RUNNING"
+        save_round_journal(run_id, journal)
+        log_event(run_id, "round_interrupted", {"session": session_date,
+                                                "reason": "STOP_REQUESTED"})
+        return journal
+    if stop_reason == STOP_REASON_WINDOW_ENDED:
+        journal["status"] = "RUNNING"
+        journal["stop_reason"] = journal.get("stop_reason") or "WINDOW_ENDED_DURING_ROUND"
+        save_round_journal(run_id, journal)
+        log_event(run_id, "round_window_ended", {"session": session_date})
+        return journal
 
     # Step 8 — post-round account snapshot.
     try:
@@ -1345,6 +1585,70 @@ def run_daily_round(
     save_round_journal(run_id, journal)
     log_event(run_id, "round_completed", {"session": session_date})
     return journal
+
+
+SCREENING_AUDIT_SYMBOL = "__SCREENING__"
+
+
+def _screening_with_audit_scope(
+    screening_fn: Callable[..., Any],
+    runtime: Dict[str, Any],
+    run_id: str,
+    session_date: str,
+) -> Any:
+    """F15: run one screening round inside a normal audit-run scope.
+
+    Screening happens before any per-symbol run exists, so its token usage
+    would otherwise be lost from both the daily budget attribution and the
+    final cost report. The scope is a regular RunAuditLogger run tagged
+    ``source="long_run_screening"`` with the exact observation id, so F13's
+    metadata filter can attribute it; no new persistence format.
+    """
+    from tradingagents.run_logger import get_run_audit_logger
+
+    audit = get_run_audit_logger()
+    scope_started = False
+    try:
+        audit.start_run(
+            symbol=SCREENING_AUDIT_SYMBOL,
+            trade_date=session_date,
+            config=runtime,
+            metadata={
+                "source": "long_run_screening",
+                "long_run_observation_id": run_id,
+            },
+        )
+        scope_started = True
+    except Exception as exc:
+        # The audit scope must never block the actual screening work.
+        print(f"[RUN_LOG] Screening audit scope unavailable: {exc}")
+
+    try:
+        plan = screening_fn(runtime, False)
+    except Exception as exc:
+        if scope_started:
+            try:
+                audit.finish_run(
+                    symbol=SCREENING_AUDIT_SYMBOL,
+                    status="failed",
+                    error_message=str(exc)[:300],
+                )
+            except Exception:
+                pass
+        raise
+
+    if scope_started:
+        status = "stopped" if getattr(plan, "stopped", False) else "completed"
+        error_message = plan.stop_reason_text() if getattr(plan, "stopped", False) else None
+        try:
+            audit.finish_run(
+                symbol=SCREENING_AUDIT_SYMBOL,
+                status=status,
+                error_message=error_message,
+            )
+        except Exception:
+            pass
+    return plan
 
 
 def _execute_intent(deps, service, symbol, intent, notional, *, run_id, session_date):
@@ -1560,6 +1864,7 @@ def run_observation_loop(
                 runtime=runtime,
                 schedule_info=target,
                 deps=deps,
+                ends_at=ends_at,
             )
         except LongRunStop as exc:
             journal = load_round_journal(run_id, target["session_date"])
@@ -1662,7 +1967,19 @@ def aggregate_final_report(
 
     equities = [float(s.get("equity") or 0) for s in snapshots]
     start_equity = equities[0] if equities else None
-    end_equity = equities[-1] if equities else None
+    # F14: ending values come ONLY from a fresh phase="final" snapshot taken
+    # at observation end. The last post_round snapshot can be days stale; a
+    # missing/failed final capture is reported as unknown, never labeled
+    # with the stale round value.
+    final_snapshot = next(
+        (s for s in reversed(snapshots) if s.get("phase") == "final"), None,
+    )
+    last_observed_equity = next(
+        (float(s.get("equity")) for s in reversed(snapshots)
+         if s.get("phase") == "post_round" and s.get("equity") is not None),
+        None,
+    )
+    end_equity = final_snapshot.get("equity") if final_snapshot else None
     total_return = (
         (end_equity - start_equity) / start_equity
         if start_equity not in (None, 0) and end_equity is not None else None
@@ -1671,10 +1988,8 @@ def aggregate_final_report(
     starting_positions = next(
         (s.get("positions") for s in snapshots if s.get("phase") == "pre_round"), None,
     )
-    ending_positions = next(
-        (s.get("positions") for s in reversed(snapshots)
-         if s.get("phase") == "post_round"), None,
-    )
+    ending_positions = final_snapshot.get("positions") if final_snapshot else None
+    ending_snapshot_available = final_snapshot is not None
 
     # Decisions from round journals (authoritative for the observation) plus
     # the normal run logs for token/error detail.
@@ -1754,6 +2069,8 @@ def aggregate_final_report(
                 pass
 
     # LLM operations from existing cost aggregation (best-effort, no estimates).
+    # F13: scoped to THIS observation's exact run-log metadata so manual,
+    # old, or concurrent-observation runs can never enter these totals.
     llm_ops: Dict[str, Any] = {"available": False}
     try:
         from tradingagents.llm_cost import aggregate_costs, scan_run_costs
@@ -1761,6 +2078,7 @@ def aggregate_final_report(
         records = scan_run_costs(
             eval_results_dir=runtime.get("results_dir", "eval_results"),
             overrides=runtime.get("llm_pricing_per_million"),
+            metadata_match={"long_run_observation_id": run_id},
         )
         totals = aggregate_costs(records)
         llm_ops = {"available": True, "totals": totals.get("totals", {}),
@@ -1770,11 +2088,15 @@ def aggregate_final_report(
         llm_ops = {"available": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
 
     # Execution DB tallies (best-effort reference; journals stay primary).
+    # F13: same resolver as ExecutionService, so the report and execution
+    # can never point at different files (env read at call time).
     exec_db: Dict[str, Any] = {"available": False}
     try:
-        from tradingagents.execution import ExecutionStore
+        from tradingagents.execution import ExecutionStore, resolve_execution_db_path
 
-        store = ExecutionStore(runtime.get("execution_db_path", "eval_results/execution.db"))
+        store = ExecutionStore(
+            resolve_execution_db_path(runtime.get("execution_db_path"))
+        )
         orders = store.list_all_orders()
         by_status: Dict[str, int] = {}
         for order in orders:
@@ -1846,7 +2168,11 @@ def aggregate_final_report(
             "peak_equity": drawdown["peak"], "trough_equity": drawdown["trough"],
             "max_drawdown": drawdown["max_drawdown"],
             "starting_cash": snapshots[0].get("cash") if snapshots else None,
-            "ending_cash": snapshots[-1].get("cash") if snapshots else None,
+            # F14: final cash comes from the phase="final" snapshot too; the
+            # last observed round value is kept separately for diagnostics.
+            "ending_cash": final_snapshot.get("cash") if final_snapshot else None,
+            "last_observed_equity": last_observed_equity,
+            "ending_snapshot_available": ending_snapshot_available,
             "starting_positions": starting_positions,
             "ending_positions": ending_positions,
             "ending_unrealized_pl": _sum_unrealized(ending_positions),
@@ -1962,6 +2288,12 @@ def render_final_markdown(report: Dict[str, Any]) -> str:
         f"- absolute P/L: {_fmt_usd(acct['absolute_pl'])}",
         f"- total return: {_fmt_pct(acct['total_return'])}",
     ]
+    if not acct.get("ending_snapshot_available", False):
+        lines.append(
+            "- ending snapshot: unavailable (final broker snapshot failed; "
+            f"last post-round equity {_fmt_usd(acct.get('last_observed_equity'))} "
+            "is diagnostic only, not final)"
+        )
     if acct.get("return_kind"):
         lines.append(f"- return kind: {acct['return_kind']}")
     for limitation in acct.get("return_limitations") or []:
@@ -2177,6 +2509,26 @@ def finalize_observation(
         "baseline_commit": state.get("baseline_commit"),
         "config": state.get("config"),
     }))
+    # F14: one read-only fresh account snapshot at observation end. The last
+    # post-round snapshot can be days old; without this, ending equity and
+    # positions would silently misrepresent the final state. If the capture
+    # fails, ending values are reported as unavailable instead of being
+    # labeled with stale data; no broker mutation happens either way.
+    try:
+        broker_factory = deps.broker_client_factory or _default_broker_client
+        final_snapshot = capture_account_snapshot(broker_factory())
+        append_jsonl(
+            run_dir(run_id) / "account_snapshots.jsonl",
+            {"phase": "final", **final_snapshot},
+        )
+    except Exception as exc:
+        log_event(
+            run_id,
+            "final_snapshot_unavailable",
+            {"error": f"{type(exc).__name__}: {exc}"[:300]},
+        )
+        print(f"[Phase-D] Final snapshot unavailable: {exc}")
+
     report = aggregate_final_report(state, long_cfg, runtime)
     md_path, json_path = write_final_report(report)
     log_event(run_id, "observation_finalized",

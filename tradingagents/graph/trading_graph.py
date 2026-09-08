@@ -127,8 +127,13 @@ class TradingAgentsGraph:
             )
         except ValueError as exc:
             raise ValueError(f"Invalid LLM retry configuration: {exc}") from exc
-        timeout_seconds = self.config.get("llm_request_timeout_seconds", 120.0)
-        base_llm_kwargs.setdefault("timeout", timeout_seconds)
+        self.llm_request_timeout_seconds = float(
+            self.config.get("llm_request_timeout_seconds", 120.0)
+        )
+        # F08: one configuration key, same finite timeout, every production
+        # LLM client path (legacy quick/deep, Analysis/Decision roles,
+        # fallback, Screening, GPT-5 Responses adapter).
+        base_llm_kwargs.setdefault("timeout", self.llm_request_timeout_seconds)
 
         self.role_resolution = resolve_role_config(self.config)
         self.llm_max_retries = llm_max_retries
@@ -273,6 +278,9 @@ class TradingAgentsGraph:
         # Per-role kwargs: explicit model params win over the provider-level
         # switches so OpenAI reasoning never leaks into Google/Anthropic.
         merged_kwargs = {**provider_kwargs, **params}
+        # F08: role clients honor the same configured request timeout as the
+        # legacy quick/deep path (overridable by explicit model params).
+        merged_kwargs.setdefault("timeout", self.llm_request_timeout_seconds)
         client = create_llm_client(
             provider=provider,
             model=spec.model,
@@ -533,11 +541,21 @@ class TradingAgentsGraph:
         )
         args = self._graph_args_for_run(company_name, str(trade_date))
         graph, checkpointer_ctx = self._graph_for_run(company_name, str(trade_date))
+        # F12: long-run analyses carry their observation identity in the run
+        # log's metadata. Crash recovery requires an exact metadata match, so
+        # an unattended observation can never borrow a decision written by a
+        # manual/WebUI run or a different observation. Manual CLI/WebUI runs
+        # keep their own source metadata.
+        metadata = {"debug": self.debug}
+        for marker in ("_long_run_observation_id", "_analysis_source"):
+            value = self.config.get(marker)
+            if value:
+                metadata[marker.lstrip("_")] = value
         run_logger.start_run(
             symbol=company_name,
             trade_date=str(trade_date),
             config=self.config,
-            metadata={"debug": self.debug},
+            metadata=metadata,
         )
         run_logger.log_state_snapshot(
             stage="initial_state",

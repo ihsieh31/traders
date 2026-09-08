@@ -127,9 +127,12 @@ def register_trading_callbacks(app):
             symbol = message.split(" in ")[1].split("?")[0]
 
             # Liquidation through the single execution entry (durable + paper-only).
-            result = ExecutionService().liquidate(
-                symbol, decision_id=f"ui-liquidate-{symbol}-{submit_n_clicks}"
-            )
+            # No WebUI-specific decision_id: Dash click counters restart on page
+            # reload, and a reused ID could dedupe a NEW liquidation against an
+            # old position lifecycle (F05). The service generates a unique
+            # per-call identity; repeat/concurrent safety comes from fresh
+            # position + live-close verification inside the execution entry.
+            result = ExecutionService().liquidate(symbol)
 
             if result.get("success"):
                 order_ref = result.get("broker_order_id") or result.get("order_id", "N/A")

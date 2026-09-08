@@ -10,6 +10,8 @@ from openai import OpenAI
 import json
 import time
 
+from pydantic import BaseModel
+
 from tradingagents.openai_model_registry import (
     apply_responses_model_params,
     describe_model_params as describe_registry_model_params,
@@ -17,6 +19,114 @@ from tradingagents.openai_model_registry import (
     is_responses_model,
     normalize_model_params,
 )
+
+
+class ToolBindingError(ValueError):
+    """A bound tool/schema could not be converted to a Responses API function tool.
+
+    Raised at bind/invoke time instead of silently omitting the tool: a
+    structured Screening/Risk schema that disappears would turn every
+    decision into unusable free text.
+    """
+
+
+def _to_responses_function_tool(tool: Any, *, strict: Optional[bool] = None) -> Dict[str, Any]:
+    """Convert one bound tool into a Responses API function-tool dict.
+
+    Supported inputs:
+      - Pydantic ``BaseModel`` subclasses (ScreeningOutput, RiskDecision, ...):
+        name = class name, parameters = model_json_schema(), description =
+        class docstring or schema description.
+      - LangChain-style tools with ``.name`` / ``.description`` / ``.args_schema``.
+      - Already-normalized ``{"type": "function", "name": ...}`` dict schemas.
+    """
+    if isinstance(tool, type) and issubclass(tool, BaseModel):
+        name = getattr(tool, "__name__", None)
+        if not name:
+            raise ToolBindingError(f"Pydantic schema {tool!r} has no __name__")
+        try:
+            parameters = tool.model_json_schema()
+        except Exception as exc:
+            raise ToolBindingError(
+                f"cannot build a Responses function schema from {name}: {exc}"
+            ) from exc
+        description = (tool.__doc__ or "").strip()
+        if not description:
+            description = str(parameters.get("description") or f"Tool: {name}")
+        schema: Dict[str, Any] = {
+            "type": "function",
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        }
+        if strict is not None:
+            schema["strict"] = bool(strict)
+        return schema
+
+    if isinstance(tool, dict):
+        if str(tool.get("type") or "").lower() == "function" and tool.get("name"):
+            normalized = dict(tool)
+            if strict is not None and "strict" not in normalized:
+                normalized["strict"] = bool(strict)
+            return normalized
+        raise ToolBindingError(f"unsupported bound tool dict (needs type=function and name): {tool!r}")
+
+    tool_name = getattr(tool, "name", None)
+    if not tool_name:
+        func = getattr(tool, "func", None)
+        tool_name = getattr(func, "__name__", None)
+    if not tool_name:
+        raise ToolBindingError(
+            f"cannot convert bound tool to a Responses function schema: {tool!r}"
+        )
+    description = getattr(tool, "description", None)
+    if not description:
+        description = (getattr(getattr(tool, "func", None), "__doc__", None) or f"Tool: {tool_name}")
+    parameters: Any = {"type": "object", "properties": {}}
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None:
+        try:
+            parameters = args_schema.schema()
+        except Exception as exc:
+            raise ToolBindingError(
+                f"cannot build parameters for bound tool {tool_name}: {exc}"
+            ) from exc
+    schema = {
+        "type": "function",
+        "name": tool_name,
+        "description": description,
+        "parameters": parameters,
+    }
+    if strict is not None:
+        schema["strict"] = bool(strict)
+    return schema
+
+
+def _normalize_responses_tool_choice(tool_choice: Any) -> Any:
+    """Map Chat Completions tool_choice values to Responses API shapes."""
+    if tool_choice is None:
+        return None
+    if isinstance(tool_choice, str):
+        lowered = tool_choice.strip().lower()
+        if lowered == "any":
+            return "required"
+        if lowered in ("auto", "none", "required"):
+            return lowered
+        # A bare string names a specific function.
+        return {"type": "function", "name": tool_choice}
+    if isinstance(tool_choice, dict):
+        if tool_choice.get("type") == "function":
+            inner = tool_choice.get("function")
+            name = (
+                tool_choice.get("name")
+                or (inner.get("name") if isinstance(inner, dict) else None)
+            )
+            if name:
+                return {"type": "function", "name": str(name)}
+            return tool_choice
+        if tool_choice.get("type") in ("auto", "none", "required", "allowed_tools"):
+            return tool_choice
+    raise ToolBindingError(f"unsupported tool_choice for the Responses API: {tool_choice!r}")
 
 
 # Some third-party OpenAI-compatible routers/WAFs block the OpenAI SDK's
@@ -375,7 +485,10 @@ class GPT5ChatModel(BaseChatModel):
                 "error_message": error_message,
             }
 
-            logged_to_state = False
+            # F15: UI counters update without re-emitting an audit event; the
+            # single token-bearing llm_call audit event is emitted here so
+            # Responses-model usage reaches the daily budget exactly once
+            # (the common usage callback skips adapter-marked results).
             try:
                 from webui.utils.state import app_state
 
@@ -390,59 +503,47 @@ class GPT5ChatModel(BaseChatModel):
                     usage=payload["usage"],
                     status=status,
                     error_message=error_message,
+                    write_audit=False,
                 )
-                logged_to_state = True
             except Exception:
                 pass
 
-            if not logged_to_state:
-                try:
-                    from tradingagents.run_logger import get_run_audit_logger
-                    get_run_audit_logger().log_event(event_type="llm_call", payload=payload)
-                except Exception:
-                    pass
+            if not (usage or {}).get("total_tokens"):
+                return
+            try:
+                from tradingagents.run_logger import get_run_audit_logger
+
+                get_run_audit_logger().log_event(event_type="llm_call", payload=payload)
+            except Exception:
+                pass
         
-        # Handle tool calls if present
-        tools = kwargs.get("tools", [])
+        # Bound-tool options (stored by bind_tools) apply when the caller
+        # does not override them, so with_structured_output keeps its forced
+        # tool choice and timeout across the clone.
+        bound_tools = getattr(self, "_bound_tools", None)
+        tools = kwargs.pop("tools", None)
+        if tools is None:
+            tools = bound_tools or []
         if tools:
-            # Convert LangChain tools to OpenAI function format for GPT-5
-            openai_tools = []
-            for tool in tools:
-                tool_name = None
-                tool_description = None
-                tool_parameters = None
-                
-                # Try to get tool info from different possible attributes
-                if hasattr(tool, 'name'):
-                    tool_name = tool.name
-                elif hasattr(tool, 'func') and hasattr(tool.func, '__name__'):
-                    tool_name = tool.func.__name__
-                
-                if hasattr(tool, 'description'):
-                    tool_description = tool.description
-                elif hasattr(tool, 'func') and hasattr(tool.func, '__doc__'):
-                    tool_description = tool.func.__doc__ or "No description"
-                
-                if hasattr(tool, 'args_schema') and tool.args_schema:
-                    try:
-                        tool_parameters = tool.args_schema.schema()
-                    except Exception:
-                        tool_parameters = {"type": "object", "properties": {}}
-                else:
-                    tool_parameters = {"type": "object", "properties": {}}
-                
-                # Only add tools that have a valid name
-                if tool_name:
-                    tool_schema = {
-                        "type": "function",
-                        "name": tool_name,  # GPT-5 expects name at top level
-                        "description": tool_description or f"Tool: {tool_name}",
-                        "parameters": tool_parameters
-                    }
-                    openai_tools.append(tool_schema)
-            
-            if openai_tools:
-                api_params["tools"] = openai_tools
+            # Convert every bound tool to the Responses API function format.
+            # An unconvertible schema fails here instead of silently
+            # disappearing from the request.
+            openai_tools = [
+                _to_responses_function_tool(tool, strict=kwargs.get("strict"))
+                for tool in tools
+            ]
+            api_params["tools"] = openai_tools
+
+        tool_choice = kwargs.pop("tool_choice", None) or getattr(self, "_bound_tool_choice", None)
+        if tool_choice is not None:
+            normalized_choice = _normalize_responses_tool_choice(tool_choice)
+            if normalized_choice is not None:
+                api_params["tool_choice"] = normalized_choice
+        parallel_calls = kwargs.pop("parallel_tool_calls", None)
+        if parallel_calls is None and tools:
+            parallel_calls = self.parallel_tool_calls
+        if parallel_calls is not None:
+            api_params["parallel_tool_calls"] = bool(parallel_calls)
         
         try:
             # Make the API call
@@ -503,11 +604,19 @@ class GPT5ChatModel(BaseChatModel):
             additional_kwargs = {}
             if tool_calls:
                 additional_kwargs["tool_calls"] = tool_calls
-            
+            # F15: mark adapter-accounted results so the common usage
+            # callback never double counts this call.
+            additional_kwargs["usage_accounted_by_adapter"] = True
+
             # Also add tool_calls attribute for LangChain compatibility
             ai_message = AIMessage(
                 content=content,
-                additional_kwargs=additional_kwargs
+                additional_kwargs=additional_kwargs,
+                usage_metadata=dict(usage_dict)
+                if (usage_dict.get("total_tokens") or usage_dict.get("input_tokens")
+                    or usage_dict.get("output_tokens"))
+                else None,
+                response_metadata={"model_name": self.model},
             )
             
             # Set tool_calls attribute directly for better compatibility
@@ -546,8 +655,13 @@ class GPT5ChatModel(BaseChatModel):
             raise
     
     def bind_tools(self, tools: List[Any], **kwargs) -> "GPT5ChatModel":
-        """Bind tools to the model for function calling."""
-        # Create a new instance with tools stored
+        """Bind tools to the model for function calling.
+
+        The clone preserves tool_choice/strict plus every generation
+        parameter, the client timeout, and the construction callbacks, so
+        with_structured_output keeps its forced tool binding instead of
+        silently dropping it.
+        """
         new_model = GPT5ChatModel(
             model=self.model,
             api_key=self.api_key,
@@ -559,10 +673,25 @@ class GPT5ChatModel(BaseChatModel):
             max_output_tokens=self.max_output_tokens,
             store=self.store,
             parallel_tool_calls=self.parallel_tool_calls,
+            timeout=self.timeout,
+            callbacks=self.callbacks,
         )
-        new_model._bound_tools = tools
+        new_model._bound_tools = list(tools or [])
+        if "tool_choice" in kwargs:
+            new_model._bound_tool_choice = kwargs["tool_choice"]
+        if "strict" in kwargs:
+            new_model._bound_strict = kwargs["strict"]
+        # Fail fast at bind time when nothing here can become a Responses
+        # function tool; waiting until invoke would hide the misconfiguration.
+        try:
+            for tool in new_model._bound_tools:
+                _to_responses_function_tool(
+                    tool, strict=kwargs.get("strict"),
+                )
+        except ToolBindingError:
+            raise
         return new_model
-    
+
     def invoke(self, input: Any, config: Optional[Dict] = None, **kwargs) -> AIMessage:
         """Invoke the model with input."""
         # Handle string input
@@ -572,11 +701,7 @@ class GPT5ChatModel(BaseChatModel):
             messages = input
         else:
             messages = [HumanMessage(content=str(input))]
-        
-        # Add bound tools if present
-        if hasattr(self, '_bound_tools'):
-            kwargs['tools'] = self._bound_tools
-        
+
         result = self._generate(messages, **kwargs)
         return result.generations[0].message
 
@@ -590,6 +715,10 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
     """Factory function to get the appropriate chat model."""
     base_url = kwargs.pop("base_url", None)
     model_role = kwargs.pop("model_role", "deep")
+    # F08: the configured finite request timeout must survive into the
+    # Responses adapter (and its bound clones), not just the ChatOpenAI path.
+    timeout = kwargs.pop("timeout", None)
+    callbacks = kwargs.pop("callbacks", None)
 
     if is_responses_model(model_name):
         params = normalize_model_params(model_name, kwargs, role=model_role)
@@ -611,6 +740,8 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
             max_output_tokens=max_output_tokens,
             store=store,
             parallel_tool_calls=parallel_tool_calls,
+            timeout=timeout,
+            callbacks=callbacks,
         )
     else:
         from langchain_openai import ChatOpenAI
@@ -629,6 +760,8 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
             kwargs.pop(unsupported, None)
         # Phase B: SDK retries pinned to 0; single retry owner owns the cap.
         kwargs["max_retries"] = 0
+        if callbacks:
+            kwargs["callbacks"] = callbacks
         chat_kwargs = {"model": model_name, **kwargs}
         if api_key is not None:
             chat_kwargs["openai_api_key"] = api_key
