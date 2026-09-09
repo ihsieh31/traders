@@ -17,6 +17,7 @@ from tradingagents.openai_model_registry import (
     apply_responses_model_params,
     describe_model_params as describe_registry_model_params,
     get_default_model_params,
+    get_model_spec,
     is_responses_model,
     normalize_model_params,
 )
@@ -128,6 +129,26 @@ def _normalize_responses_tool_choice(tool_choice: Any) -> Any:
         if tool_choice.get("type") in ("auto", "none", "required", "allowed_tools"):
             return tool_choice
     raise ToolBindingError(f"unsupported tool_choice for the Responses API: {tool_choice!r}")
+
+
+def _endpoint_compatible_tool_choice(model_name: str, tool_choice: Any) -> Any:
+    """Clamp a normalized tool_choice to what the model's endpoint accepts.
+
+    Some OpenAI-compatible upstreams (OpenCode Zen's muse models) accept only
+    ``"auto"``: a forced choice ("required" or a named function, which is what
+    structured-output bindings emit) fails the whole request with a 400. For
+    such models the forced value degrades to "auto" — the model still sees
+    the bound tool, it just decides whether to call it. "none" stays "none":
+    an explicit no-tools request is equally valid on auto-only endpoints.
+    """
+    modes = get_model_spec(model_name).get("tool_choice_modes") or (
+        "auto", "none", "required", "named",
+    )
+    if isinstance(tool_choice, str):
+        return tool_choice if tool_choice in modes else "auto"
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        return tool_choice if "named" in modes else "auto"
+    return tool_choice
 
 
 # Some third-party OpenAI-compatible routers/WAFs block the OpenAI SDK's
@@ -561,7 +582,11 @@ class GPT5ChatModel(BaseChatModel):
         if tool_choice is not None:
             normalized_choice = _normalize_responses_tool_choice(tool_choice)
             if normalized_choice is not None:
-                api_params["tool_choice"] = normalized_choice
+                normalized_choice = _endpoint_compatible_tool_choice(
+                    self.model, normalized_choice
+                )
+                if normalized_choice is not None:
+                    api_params["tool_choice"] = normalized_choice
         parallel_calls = kwargs.pop("parallel_tool_calls", None)
         if parallel_calls is None and tools:
             parallel_calls = self.parallel_tool_calls

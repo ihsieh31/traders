@@ -65,6 +65,7 @@ def _reasoning_spec(
     roles: Iterable[str] = ("quick", "deep"),
     visible: bool = True,
     price_hint: str = "",
+    tool_choice_modes: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     return {
         "id": model_id,
@@ -85,6 +86,11 @@ def _reasoning_spec(
         "supports_max_output_tokens": True,
         "supports_store": True,
         "supports_parallel_tool_calls": True,
+        # tool_choice values the endpoint accepts. Defaults to the full
+        # OpenAI Responses set; an endpoint that only honors "auto" (e.g.
+        # OpenCode Zen's muse upstream) narrows this so forced choices
+        # degrade to "auto" instead of failing the request with a 400.
+        "tool_choice_modes": tuple(tool_choice_modes) if tool_choice_modes else ("auto", "none", "required", "named"),
         "role_defaults": {
             role: {
                 "reasoning_effort": defaults.get("reasoning_effort", "low"),
@@ -307,6 +313,10 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "deep": {"reasoning_effort": "high", "text_verbosity": "medium"},
         },
         price_hint="free (OpenCode Zen)",
+        # The Zen muse upstream rejects required/named function choices with
+        # a 400 ("only \"auto\" is supported for tool_choice"), so forced
+        # bindings (structured output) must degrade to "auto".
+        tool_choice_modes=("auto",),
     ),
 }
 
