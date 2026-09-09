@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -39,6 +40,75 @@ DEFAULT_SAFETY_CONFIG: Dict[str, Any] = {
 }
 
 _SAFETY_HOME = Path(os.path.expanduser("~")) / ".tradingagents" / "safety"
+
+
+class SafetyStateError(RuntimeError):
+    """The persisted safety state exists but cannot be trusted.
+
+    A corrupt state file must stop startup instead of silently resetting
+    the drawdown high-water mark, the rejection streak, or the token
+    budget — resetting any of them is a fail-open, not a recovery.
+    """
+
+
+def _fresh_state() -> Dict[str, Any]:
+    return {
+        "high_water_mark": None,
+        "consecutive_rejections": 0,
+        "llm_tokens": {},
+    }
+
+
+def _validated_state(raw: Any, source: Path) -> Dict[str, Any]:
+    """Minimal validation of a parsed state dict (missing keys default).
+
+    Deliberate compatibility decision: a dict missing a known key is an
+    older state file, not corruption — fill that key with its default. A
+    key that is PRESENT but invalid is corruption and raises.
+    """
+    if not isinstance(raw, dict):
+        raise SafetyStateError(
+            f"safety state {source} is not a JSON object"
+        )
+
+    state = _fresh_state()
+    state.update(raw)  # unknown keys are preserved, never rejected
+
+    hwm = state.get("high_water_mark")
+    if hwm is not None:
+        if isinstance(hwm, bool) or not isinstance(hwm, (int, float)) \
+                or not math.isfinite(float(hwm)) or float(hwm) <= 0:
+            raise SafetyStateError(
+                f"safety state {source} has invalid high_water_mark "
+                f"(must be null or a positive finite number)"
+            )
+
+    rejects = state.get("consecutive_rejections")
+    if isinstance(rejects, bool) or not isinstance(rejects, int) or rejects < 0:
+        raise SafetyStateError(
+            f"safety state {source} has invalid consecutive_rejections "
+            f"(must be a non-negative integer)"
+        )
+
+    tokens = state.get("llm_tokens")
+    if not isinstance(tokens, dict):
+        raise SafetyStateError(
+            f"safety state {source} has invalid llm_tokens (must be an object)"
+        )
+    for day, count in tokens.items():
+        try:
+            date.fromisoformat(str(day))
+        except ValueError:
+            raise SafetyStateError(
+                f"safety state {source} has invalid llm_tokens key {day!r} "
+                f"(must be a YYYY-MM-DD date string)"
+            )
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise SafetyStateError(
+                f"safety state {source} has invalid llm_tokens count for "
+                f"{day!r} (must be a non-negative integer)"
+            )
+    return state
 
 
 @dataclass
@@ -97,19 +167,46 @@ class SafetyGuard:
     # ----- state persistence -------------------------------------------------
 
     def _load_state(self) -> Dict[str, Any]:
+        # Fail-closed: only a missing state file is a fresh install. A file
+        # that exists but is unreadable/unparsable/invalid must raise —
+        # silently starting from a zeroed state would reset the drawdown
+        # high-water mark, the rejection streak, and the token budget.
         try:
             raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                return raw
-        except (OSError, ValueError):
-            pass
-        return {"high_water_mark": None, "consecutive_rejections": 0, "llm_tokens": {}}
+        except FileNotFoundError:
+            return _fresh_state()
+        except OSError as exc:
+            raise SafetyStateError(
+                f"safety state {self.state_path} exists but cannot be read: "
+                f"{type(exc).__name__}"
+            )
+        except ValueError as exc:
+            raise SafetyStateError(
+                f"safety state {self.state_path} is not valid JSON: {exc}"
+            )
+        return _validated_state(raw, self.state_path)
 
     def _save_state(self) -> None:
+        # Atomic durable write: temp file in the same directory, fsync, then
+        # rename over the real state file so a crash can never truncate it.
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
-        os.replace(tmp, self.state_path)
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.state_path.parent),
+            prefix=self.state_path.name + ".",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+                json.dump(self._state, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, self.state_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     # ----- kill switch --------------------------------------------------------
 

@@ -2,7 +2,38 @@
 Setup script for the TradingAgents package.
 """
 
+from pathlib import Path
+
 from setuptools import setup, find_namespace_packages
+
+_HERE = Path(__file__).resolve().parent
+
+
+def _runtime_requirements():
+    """Direct runtime dependencies from the single maintained manifest.
+
+    requirements.txt is the one source of truth; install_requires mirrors
+    it so the two lists cannot drift. Build-only entries (setuptools) and
+    pip directives (-r, index options) never become runtime requirements.
+    """
+    requirements = []
+    for line in (_HERE / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry.startswith("-"):
+            # pip directives (e.g. -r, --index-url) are invalid for
+            # setuptools; refuse them rather than passing broken input.
+            raise ValueError(
+                "requirements.txt must not contain pip directives; "
+                f"found: {entry!r}"
+            )
+        stripped = entry.split("#", 1)[0].strip()
+        if not stripped or stripped.lower() == "setuptools":
+            continue
+        requirements.append(stripped)
+    return requirements
+
 
 setup(
     name="tradingagents",
@@ -10,7 +41,12 @@ setup(
     description="Auditable multi-agent trading research framework for paper trading, strategy testing, and risk-controlled execution",
     author="TradingAgents Team",
     author_email="yijia.xiao@cs.ucla.edu",
-    url="https://github.com/TauricResearch",
+    url="https://github.com/ihsieh31/traders",
+    project_urls={
+        "Source": "https://github.com/ihsieh31/traders",
+        "Upstream TradingAgents": "https://github.com/TauricResearch/TradingAgents",
+        "Upstream AlpacaTradingAgent": "https://github.com/huygiatrng/AlpacaTradingAgent",
+    },
     packages=find_namespace_packages(include=["tradingagents*", "cli*", "webui*"]),
     include_package_data=True,
     package_data={
@@ -19,25 +55,7 @@ setup(
             "templates/*/*.md",
         ]
     },
-    install_requires=[
-        "openai>=2.33.0,<3.0.0",
-        "langchain>=0.3.27,<0.4.0",
-        "langchain-core>=0.3.84,<1.0.0",
-        "langchain-openai>=0.3.35,<0.4.0",
-        "langchain-anthropic>=0.3.22,<0.4.0",
-        "langchain-google-genai>=2.1.12,<3.0.0",
-        "langchain-experimental>=0.3.4,<0.4.0",
-        "langgraph>=0.6.6,<0.7.0",
-        "numpy>=1.24.0",
-        "pandas>=2.0.0",
-        "praw>=7.7.0",
-        "stockstats>=0.5.4",
-        "typer>=0.9.0",
-        "rich>=13.0.0",
-        "questionary>=2.0.1",
-        "gradio>=4.0.0",
-        "plotly>=5.18.0",
-    ],
+    install_requires=_runtime_requirements(),
     python_requires=">=3.10",
     entry_points={
         "console_scripts": [

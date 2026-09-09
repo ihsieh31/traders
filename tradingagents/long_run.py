@@ -308,6 +308,28 @@ def missing_config_fields(cfg: Dict[str, Any]) -> List[str]:
     return missing
 
 
+def _unattended_safety_error(runtime: Dict[str, Any]) -> str:
+    """P2-01: an unattended paper run cannot run with the safety layer off.
+
+    Only ``runtime.get("safety_enabled", True) is True`` may proceed: the
+    key may be absent (default on), but False/0/"false"/None (explicit)
+    must refuse. The general SafetyGuard feature itself is untouched —
+    this gates only the unattended long-run production path.
+    """
+    if runtime.get("safety_enabled", True) is True:
+        return ""
+    return (
+        "unattended paper execution requires safety_enabled=True "
+        f"(got {runtime.get('safety_enabled')!r})"
+    )
+
+
+def _validate_unattended_safety(runtime: Dict[str, Any]) -> None:
+    error = _unattended_safety_error(runtime)
+    if error:
+        raise LongRunStop("SAFETY_DISABLED", error)
+
+
 def validate_long_run_config(
     cfg: Dict[str, Any], runtime: Optional[Dict[str, Any]] = None
 ) -> List[str]:
@@ -353,6 +375,9 @@ def validate_long_run_config(
         if provider.lower() in PROVIDERS_REQUIRING_URL and not (cfg.get(f"{role}_backend_url") or "").strip():
             errors.append(f"{role}_backend_url is required for provider {provider!r}")
     if runtime is not None:
+        safety_error = _unattended_safety_error(runtime)
+        if safety_error:
+            errors.append(safety_error)
         try:
             from tradingagents.llm_clients.retry import validate_llm_max_retries
 
@@ -607,9 +632,37 @@ def new_observation_state(
 
 
 def load_active_state() -> Optional[Dict[str, Any]]:
-    data = read_json(active_path())
-    if not isinstance(data, dict) or not data.get("run_id"):
+    """Resume state, or None only when no active state file exists.
+
+    Only a missing file may mean "no active run". A file that exists but
+    cannot be trusted (unreadable, truncated, non-dict, missing/blank
+    run_id) is a hard stop: creating a fresh run would mint a new run_id,
+    and execution decision identity includes run_id, so the old run's
+    idempotency could no longer protect this restart.
+    """
+    try:
+        with open(active_path(), "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
         return None
+    except json.JSONDecodeError as exc:
+        raise LongRunStop(
+            "ACTIVE_STATE_CORRUPT",
+            f"active state {active_path()} is not valid JSON "
+            f"({exc.msg} at line {exc.lineno} column {exc.colno})",
+        )
+    except OSError as exc:
+        raise LongRunStop(
+            "ACTIVE_STATE_CORRUPT",
+            f"active state {active_path()} exists but cannot be read: "
+            f"{type(exc).__name__}",
+        )
+    run_id = data.get("run_id") if isinstance(data, dict) else None
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise LongRunStop(
+            "ACTIVE_STATE_CORRUPT",
+            f"active state {active_path()} has no usable run_id",
+        )
     if data.get("status") not in ("RUNNING", "INTERRUPTED"):
         return None
     return data
@@ -847,6 +900,10 @@ def run_preflight(
         if not ok:
             raise LongRunStop("PREFLIGHT_FAILED", f"{name}: {detail}")
 
+    # Defense layer 1: this gate runs before any validation/probe/broker
+    # call, so a disabled safety layer can never reach preflight at all
+    # (not just when a caller ran validate_long_run_config first).
+    _validate_unattended_safety(runtime)
     errors = validate_long_run_config(long_cfg, runtime)
     _check("config_schema", not errors, "; ".join(errors))
 

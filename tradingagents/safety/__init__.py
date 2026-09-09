@@ -3,6 +3,7 @@
 from .guardrails import (
     DEFAULT_SAFETY_CONFIG,
     SafetyGuard,
+    SafetyStateError,
     SafetyVerdict,
     get_safety_guard,
     reset_safety_guard,
@@ -11,6 +12,7 @@ from .guardrails import (
 __all__ = [
     "DEFAULT_SAFETY_CONFIG",
     "SafetyGuard",
+    "SafetyStateError",
     "SafetyVerdict",
     "get_safety_guard",
     "reset_safety_guard",

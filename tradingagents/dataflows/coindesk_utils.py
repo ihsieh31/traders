@@ -4,6 +4,11 @@ import datetime
 from .config import get_api_key
 from .interface_utils import HISTORICAL_SOURCE_UNAVAILABLE, analysis_date_mode
 
+# Bounded transport: an external hang must never pin an analysis thread
+# forever. requests.Timeout is a RequestException, so the existing caller
+# contract (error string) already handles it.
+HTTP_TIMEOUT_SECONDS = 15
+
 
 def get_news(symbol: str, n: int = 5, curr_date: str = None):
     """
@@ -33,7 +38,11 @@ def get_news(symbol: str, n: int = 5, curr_date: str = None):
     headers = {"Authorization": f"Apikey {api_key}"}
 
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
         response.raise_for_status()
         news_data = response.json()
 
@@ -45,7 +54,6 @@ def get_news(symbol: str, n: int = 5, curr_date: str = None):
             title = article.get("title", "No Title")
             source = article.get("source_info", {}).get("name", "Unknown Source")
             body = article.get("body", "")
-            
             # Get and format the published timestamp
             published_timestamp = article.get("published_on", 0)
             published_date = datetime.datetime.fromtimestamp(published_timestamp).strftime('%Y-%m-%d %H:%M:%S')

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 from tradingagents.safety import (
     DEFAULT_SAFETY_CONFIG,
     SafetyGuard,
+    SafetyStateError,
     SafetyVerdict,
     get_safety_guard,
     reset_safety_guard,
@@ -223,6 +224,200 @@ class StatusAndTogglesTests(unittest.TestCase):
         self.assertIsInstance(guard, SafetyGuard)
         self.assertIs(guard, get_safety_guard())
         reset_safety_guard()
+
+
+class SafetyStatePersistenceTests(unittest.TestCase):
+    """P1-02: corrupt safety state must fail closed, never silently reset."""
+
+    def _write_state(self, tmp, text):
+        path = Path(tmp) / "state.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_missing_state_file_initializes_fresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guard = make_guard(tmp)
+            self.assertEqual(guard._state["consecutive_rejections"], 0)
+            self.assertIsNone(guard._state["high_water_mark"])
+            self.assertEqual(guard._state["llm_tokens"], {})
+
+    def test_valid_full_state_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, json.dumps({
+                "high_water_mark": 123456.0,
+                "consecutive_rejections": 3,
+                "llm_tokens": {"2026-09-01": 4321},
+            }))
+            guard = make_guard(tmp)
+            self.assertEqual(guard._state["high_water_mark"], 123456.0)
+            self.assertEqual(guard._state["consecutive_rejections"], 3)
+            self.assertEqual(guard._state["llm_tokens"], {"2026-09-01": 4321})
+
+    def test_legacy_state_missing_keys_get_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, json.dumps({
+                "high_water_mark": 999.0,
+                "future_unknown_key": "kept",
+            }))
+            guard = make_guard(tmp)
+            self.assertEqual(guard._state["high_water_mark"], 999.0)
+            self.assertEqual(guard._state["consecutive_rejections"], 0)
+            self.assertEqual(guard._state["llm_tokens"], {})
+            self.assertEqual(guard._state["future_unknown_key"], "kept")
+
+    def test_malformed_json_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, '{"high_water_mark": ')
+            with self.assertRaises(SafetyStateError):
+                make_guard(tmp)
+
+    def test_json_root_list_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, '[{"high_water_mark": 1}]')
+            with self.assertRaises(SafetyStateError):
+                make_guard(tmp)
+
+    def test_non_numeric_high_water_mark_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, json.dumps({"high_water_mark": "abc"}))
+            with self.assertRaises(SafetyStateError):
+                make_guard(tmp)
+
+    def test_nan_and_inf_high_water_mark_raise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in ("NaN", "Infinity", "-Infinity"):
+                self._write_state(tmp, json.dumps(
+                    {"high_water_mark": json.loads(bad.replace("Infinity", "1e999"))}
+                    if bad.endswith("Infinity") and bad[0] != "-"
+                    else {"high_water_mark": json.loads('1e999') * (-1 if bad[0] == "-" else 1)}
+                ))
+                with self.assertRaises(SafetyStateError):
+                    make_guard(tmp)
+
+    def test_negative_rejection_count_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, json.dumps({"consecutive_rejections": -1}))
+            with self.assertRaises(SafetyStateError):
+                make_guard(tmp)
+
+    def test_bool_rejection_count_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, json.dumps({"consecutive_rejections": True}))
+            with self.assertRaises(SafetyStateError):
+                make_guard(tmp)
+
+    def test_llm_tokens_list_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, json.dumps({"llm_tokens": []}))
+            with self.assertRaises(SafetyStateError):
+                make_guard(tmp)
+
+    def test_negative_or_bool_token_count_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in ({"llm_tokens": {"2026-09-01": -5}},
+                        {"llm_tokens": {"2026-09-01": True}},
+                        {"llm_tokens": {"not-a-date": 5}}):
+                self._write_state(tmp, json.dumps(bad))
+                with self.assertRaises(SafetyStateError):
+                    make_guard(tmp)
+
+    def test_read_permission_error_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_state(tmp, "{}")
+            guard = make_guard(tmp)
+            with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+                with self.assertRaises(SafetyStateError):
+                    guard._load_state()
+            self.assertTrue(path.exists())
+
+    def test_saved_state_round_trips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guard = make_guard(tmp)
+            guard.record_llm_tokens(123, when="2026-09-09")
+            guard.record_order_result(False)
+            guard._state["high_water_mark"] = 4242.0
+            guard._save_state()
+            reloaded = make_guard(tmp)
+            self.assertEqual(reloaded._state["high_water_mark"], 4242.0)
+            self.assertEqual(reloaded._state["consecutive_rejections"], 1)
+            self.assertEqual(reloaded._state["llm_tokens"], {"2026-09-09": 123})
+
+    def test_save_failure_leaves_existing_state_untruncated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guard = make_guard(tmp)
+            original = {"high_water_mark": 555.0, "consecutive_rejections": 2,
+                        "llm_tokens": {}}
+            guard._state = dict(original)
+            guard._save_state()
+            before = (Path(tmp) / "state.json").read_text(encoding="utf-8")
+
+            # A failure before the rename (e.g. fsync blowup) must never
+            # have truncated state.json: the temp file absorbs it.
+            with patch("os.fsync", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    guard._save_state()
+            self.assertEqual(
+                (Path(tmp) / "state.json").read_text(encoding="utf-8"), before
+            )
+            leftovers = [p.name for p in Path(tmp).iterdir()
+                         if p.name.endswith(".tmp")]
+            self.assertEqual(leftovers, [])
+
+    def test_corrupt_state_stops_execution_path_with_zero_mutations(self):
+        # Startup fail-closed: a corrupt safety state surfaces as an
+        # unusable guard; the execution path must then refuse every
+        # mutation (no submit/close), whatever its exact refusal shape.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_state(tmp, '{"high_water_mark": ')
+            with patch("tradingagents.safety.get_safety_guard",
+                       side_effect=SafetyStateError("corrupt")):
+                broker = MagicMock()
+                quote_mod = __import__(
+                    "tradingagents.execution.authority", fromlist=["BrokerQuote"]
+                )
+                from tradingagents.execution import ExecutionService
+
+                service = ExecutionService(
+                    db_path=str(Path(tmp) / "execution.db"),
+                    broker_factory=lambda: broker,
+                    quote_factory=lambda s: quote_mod.BrokerQuote(
+                        s, 100.0, 100.1, datetime.now(timezone.utc)
+                    ),
+                )
+                result = service.execute(
+                    trade_intent=self._buy_intent_simple(),
+                    dollar_amount=1000.0,
+                    allow_shorts=False,
+                )
+            self.assertFalse(result["success"])
+            self.assertFalse(result.get("broker_attempted"))
+            broker.submit_order.assert_not_called()
+            broker.close_position.assert_not_called()
+            broker.cancel_order_by_id.assert_not_called()
+
+    def _buy_intent_simple(self):
+        from tradingagents.agents.schemas import (
+            ExecutableAction,
+            RiskDecision,
+            build_trade_intent_from_risk_decision,
+        )
+
+        return build_trade_intent_from_risk_decision(
+            symbol="AAPL",
+            trading_mode="investment",
+            current_position="NEUTRAL",
+            allow_shorts=False,
+            trade_date="2026-01-02",
+            decision=RiskDecision(
+                action=ExecutableAction.BUY,
+                confidence="medium",
+                risk_rationale="p1-02",
+                required_controls="test",
+                entry_policy=_ready_entry_policy(),
+                stop_loss_price=95,
+            ),
+        ).model_dump(mode="json")
 
 
 class ExecutionIntegrationTests(unittest.TestCase):

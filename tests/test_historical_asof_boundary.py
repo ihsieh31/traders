@@ -400,6 +400,45 @@ class LiveOnlySourceRejectTests(unittest.TestCase):
             coindesk_utils.get_news("BTC", curr_date=_today_ny())
         self.assertEqual(http.call_count, 1)
 
+    def test_coindesk_http_call_carries_finite_timeout(self):
+        # P2-02: every CryptoCompare HTTP call must be bounded so an
+        # external hang cannot pin the analysis thread forever.
+        from tradingagents.dataflows import coindesk_utils
+
+        response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"Type": 100, "Data": []},
+        )
+        with patch.object(
+            coindesk_utils, "get_api_key", return_value="fixture-key"
+        ), patch.object(
+            coindesk_utils.requests, "get", return_value=response
+        ) as http:
+            coindesk_utils.get_news("BTC", curr_date=_today_ny())
+        (args, kwargs), = http.call_args_list
+        timeout = kwargs.get("timeout", args[1] if len(args) > 1 else None)
+        self.assertIsInstance(timeout, (int, float))
+        self.assertGreater(timeout, 0)
+        self.assertTrue(timeout != float("inf"))
+
+    def test_coindesk_timeout_returns_error_string_without_crash(self):
+        import requests as _requests
+        from tradingagents.dataflows import coindesk_utils
+
+        with patch.object(
+            coindesk_utils, "get_api_key", return_value="fixture-key"
+        ), patch.object(
+            coindesk_utils.requests, "get",
+            side_effect=_requests.exceptions.Timeout("timed out"),
+        ) as http:
+            result = coindesk_utils.get_news("BTC", curr_date=_today_ny())
+        self.assertEqual(http.call_count, 1)
+        self.assertIsInstance(result, str)
+        self.assertIn("CryptoCompare", result)
+        # Same bounded timeout present on the raising call too.
+        (_args, kwargs), = http.call_args_list
+        self.assertGreater(float(kwargs.get("timeout")), 0)
+
     def test_news_analyst_binds_no_live_only_tools_historical(self):
         from tradingagents.agents.analysts.news_analyst import create_news_analyst
         from tradingagents.agents.utils.agent_utils import Toolkit

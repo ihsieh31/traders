@@ -5,8 +5,8 @@ From zero to a first multi-agent analysis in about five minutes.
 ## 1. Install
 
 ```bash
-git clone https://github.com/huygiatrng/AlpacaTradingAgent.git
-cd AlpacaTradingAgent
+git clone https://github.com/ihsieh31/traders.git
+cd traders
 python -m venv .venv
 # Windows:
 .venv\Scripts\activate

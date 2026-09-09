@@ -1634,7 +1634,16 @@ def long_run():
         console.print("[bold red]Phase-D requires Python 3.10+.[/bold red]")
         raise typer.Exit(code=2)
 
-    active = lr.load_active_state()
+    try:
+        active = lr.load_active_state()
+    except lr.LongRunStop as exc:
+        # Corrupt active state: stop without creating a new run. A fresh run
+        # would mint a new run_id and escape the old run's idempotency, so
+        # this needs explicit operator action on the state directory.
+        console.print(f"[bold red]Active state unusable: {exc.code}: {exc.detail}[/bold red]")
+        console.print("[bold red]No new observation was created; resolve the "
+                      "state file manually before restarting.[/bold red]")
+        raise typer.Exit(code=1)
     if active is not None:
         # Resume path: same window, recovery first, no new prompts.
         try:

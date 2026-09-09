@@ -229,6 +229,38 @@ class ConfigValidationTest(IsolatedTest):
         self.assertFalse(runtime["allow_shorts"])
         self.assertEqual(runtime["trading_mode"], "investment")
 
+    def test_safety_enabled_true_is_the_only_allowed_value(self):
+        # P2-01: unattended long-run runs only with the safety layer on.
+        self.assertEqual(lr.validate_long_run_config(
+            _valid_cfg(), lr.build_runtime_config(_valid_cfg())), [])
+        for bad in (False, 0, "false", None):
+            runtime = lr.build_runtime_config(_valid_cfg())
+            runtime["safety_enabled"] = bad
+            errors = lr.validate_long_run_config(_valid_cfg(), runtime)
+            self.assertTrue(any("safety_enabled" in e for e in errors),
+                            f"safety_enabled={bad!r} must be rejected")
+        # Missing key keeps the default (on).
+        runtime = lr.build_runtime_config(_valid_cfg())
+        runtime.pop("safety_enabled", None)
+        self.assertEqual(
+            lr.validate_long_run_config(_valid_cfg(), runtime), [])
+
+    def test_preflight_refuses_disabled_safety_before_any_probe(self):
+        # P2-01 defense layer 2: run_preflight itself fails closed before
+        # any LLM probe or broker access, even without a prior validation.
+        cfg = _valid_cfg()
+        runtime = lr.build_runtime_config(cfg)
+        runtime["safety_enabled"] = False
+        deps = lr.LongRunDeps(
+            broker_client_factory=lambda: (_ for _ in ()).throw(
+                AssertionError("no broker access when safety is disabled")),
+            llm_probe_fn=lambda **k: (_ for _ in ()).throw(
+                AssertionError("no LLM probe when safety is disabled")),
+        )
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.run_preflight(cfg, runtime, deps)
+        self.assertEqual(ctx.exception.code, "SAFETY_DISABLED")
+
     def test_missing_values_reported(self):
         cfg = lr.default_long_run_config()
         self.assertIn("base_trade_notional_usd", lr.missing_config_fields(cfg))
@@ -283,11 +315,102 @@ class LockAndAtomicTest(IsolatedTest):
         with lr.runner_lock():
             pass
 
-    def test_half_written_state_never_accepted(self):
+    def test_missing_state_means_no_active_run(self):
+        self.assertFalse(lr.active_path().exists())
+        self.assertIsNone(lr.load_active_state())
+
+    def test_valid_state_round_trips_unchanged(self):
+        state = {"run_id": "run-x", "status": "RUNNING"}
+        lr.save_active_state(state)
+        before = lr.active_path().read_bytes()
+        self.assertEqual(lr.load_active_state(), state)
+        self.assertEqual(lr.active_path().read_bytes(), before)
+
+    def test_truncated_json_fails_closed(self):
         path = lr.active_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"run_id": "x", "status":', encoding="utf-8")
-        self.assertIsNone(lr.load_active_state())
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.load_active_state()
+        self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_non_dict_root_fails_closed(self):
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('[{"run_id": "x"}]', encoding="utf-8")
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.load_active_state()
+        self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_missing_run_id_fails_closed(self):
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"status": "RUNNING"}', encoding="utf-8")
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.load_active_state()
+        self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_blank_run_id_fails_closed(self):
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for bad in ('{"run_id": ""}', '{"run_id": "   "}'):
+            path.write_text(bad, encoding="utf-8")
+            with self.assertRaises(lr.LongRunStop) as ctx:
+                lr.load_active_state()
+            self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_cli_corrupt_active_state_creates_no_new_run_and_no_mutation(self):
+        # P1-01: a corrupt active.json must stop the CLI before any setup
+        # wizard / observation creation / broker access. Simulate the broker
+        # layer with counting fakes; if the CLI tried to create a run or
+        # reach Alpaca at all, these record it.
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"run_id": "lr-old", "status":', encoding="utf-8")
+
+        import cli.main as cli_main
+        from typer.testing import CliRunner
+
+        submit_calls, cancel_calls = [], []
+
+        def _broker(_calls={"submit": submit_calls, "cancel": cancel_calls}):
+            def submit_order(request):
+                _calls["submit"].append(request)
+                raise AssertionError("no broker submit may happen")
+
+            def cancel_order(*a, **k):
+                _calls["cancel"].append((a, k))
+                raise AssertionError("no broker cancel may happen")
+
+            def get_account():
+                raise AssertionError("no broker access may happen")
+
+            return SimpleNamespace(
+                submit_order=submit_order, cancel_order=cancel_order,
+                get_account=get_account, get_all_positions=lambda: [],
+            )
+
+        exec_calls = []
+
+        runner = CliRunner()
+        with patch("tradingagents.long_run._default_broker_client",
+                   side_effect=_broker), \
+             patch("tradingagents.long_run._default_execution_service",
+                   side_effect=lambda: exec_calls.append("constructed")), \
+             patch("cli.main.collect_long_run_config",
+                   side_effect=AssertionError("setup wizard must not run")), \
+             patch("tradingagents.long_run.run_observation_loop",
+                   side_effect=AssertionError("observation loop must not run")):
+            result = runner.invoke(cli_main.app, ["long-run"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(len(submit_calls), 0)
+        self.assertEqual(len(cancel_calls), 0)
+        self.assertEqual(exec_calls, [])
+        # Corrupt file preserved untouched; no new run was created anywhere.
+        self.assertEqual(path.read_text(encoding="utf-8"),
+                         '{"run_id": "lr-old", "status":')
+        self.assertFalse((lr.base_dir() / "runs").exists())
 
 
 class SchedulingTest(IsolatedTest):
