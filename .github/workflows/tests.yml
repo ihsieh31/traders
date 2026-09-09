@@ -30,10 +30,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install dependencies
+      - name: Install dependencies (closed lock)
+        # --no-deps + pip check prove requirements.lock is a complete,
+        # exact-pinned closure: pip may not silently resolve anything the
+        # lock missed (pytest included via requirements-dev.txt).
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.lock pytest
+          pip install --no-deps -r requirements.lock
+          pip check
 
       - name: Run test suite
         # `python -m pytest` puts the repo root on sys.path (the project is

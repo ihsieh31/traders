@@ -1,6 +1,14 @@
 # Human-maintained top-level runtime dependency specification.
-# Production/CI installs resolve through requirements.lock (generated from
-# this file in a clean Python 3.11 venv); keep both in sync.
+# Production/CI installs resolve through requirements.lock — a fully closed,
+# exact-pinned closure generated from this file plus requirements-dev.txt via
+# `uv pip compile --universal --python-version 3.11` (universal keeps
+# environment markers, so the lock covers every platform CI/Docker install
+# on, including the Linux-only akracer/py-mini-racer/greenlet pins akshare
+# needs). Install closed and verify with:
+#   pip install --no-deps -r requirements.lock
+#   pip check
+# Do not hand-edit requirements.lock; regenerate it whenever this file
+# or requirements-dev.txt changes, and keep both in sync.
 typing-extensions
 openai>=2.33.0,<3.0.0
 langchain>=0.3.27,<0.4.0

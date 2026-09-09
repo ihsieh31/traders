@@ -1,0 +1,4 @@
+# Test-only dependencies. Resolved together with requirements.txt into
+# requirements.lock; CI installs that closed lock with --no-deps and
+# verifies it with pip check.
+pytest

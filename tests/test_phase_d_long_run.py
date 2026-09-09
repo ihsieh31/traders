@@ -413,6 +413,98 @@ class LockAndAtomicTest(IsolatedTest):
         self.assertFalse((lr.base_dir() / "runs").exists())
 
 
+    def test_typo_status_fails_closed(self):
+        # P1: "RUNNIG" must not silently read as "no active run".
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"run_id": "existing-run", "status": "RUNNIG"}',
+                        encoding="utf-8")
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.load_active_state()
+        self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_terminal_completed_state_fails_closed(self):
+        # finalize_observation() persists COMPLETED before final reports and
+        # clear_active_state(); a crash in that window must not look like a
+        # fresh install.
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"run_id": "existing-run", "status": "COMPLETED"}',
+                        encoding="utf-8")
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.load_active_state()
+        self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_terminal_stopped_state_fails_closed(self):
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"run_id": "existing-run", "status": "STOPPED"}',
+                        encoding="utf-8")
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            lr.load_active_state()
+        self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+
+    def test_cli_non_resumable_active_state_creates_no_new_run_and_no_mutation(self):
+        # P1: an existing but non-resumable active.json (terminal status)
+        # must stop the CLI before the setup wizard / observation creation /
+        # preflight / recovery / broker access — same contract as corrupt JSON.
+        path = lr.active_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"run_id": "lr-old", "status": "COMPLETED"}',
+                        encoding="utf-8")
+
+        import cli.main as cli_main
+        from typer.testing import CliRunner
+
+        submit_calls, cancel_calls, recovery_calls = [], [], []
+
+        def _broker(_calls={"submit": submit_calls, "cancel": cancel_calls}):
+            def submit_order(request):
+                _calls["submit"].append(request)
+                raise AssertionError("no broker submit may happen")
+
+            def cancel_order(*a, **k):
+                _calls["cancel"].append((a, k))
+                raise AssertionError("no broker cancel may happen")
+
+            def get_account():
+                raise AssertionError("no broker access may happen")
+
+            return SimpleNamespace(
+                submit_order=submit_order, cancel_order=cancel_order,
+                get_account=get_account, get_all_positions=lambda: [],
+            )
+
+        exec_calls = []
+
+        runner = CliRunner()
+        with patch("tradingagents.long_run._default_broker_client",
+                   side_effect=_broker), \
+             patch("tradingagents.long_run._default_execution_service",
+                   side_effect=lambda: exec_calls.append("constructed")), \
+             patch("tradingagents.long_run.run_post_authorization_recovery",
+                   side_effect=lambda *a, **k: recovery_calls.append("recovery")), \
+             patch("cli.main.collect_long_run_config",
+                   side_effect=AssertionError("setup wizard must not run")), \
+             patch("tradingagents.long_run.run_preflight",
+                   side_effect=AssertionError("preflight must not run")), \
+             patch("tradingagents.long_run.new_observation_state",
+                   side_effect=AssertionError("no new observation may be created")), \
+             patch("tradingagents.long_run.run_observation_loop",
+                   side_effect=AssertionError("observation loop must not run")):
+            result = runner.invoke(cli_main.app, ["long-run"])
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(len(submit_calls), 0)
+        self.assertEqual(len(cancel_calls), 0)
+        self.assertEqual(recovery_calls, [])
+        self.assertEqual(exec_calls, [])
+        # Existing state preserved untouched; no new run was created anywhere.
+        self.assertEqual(path.read_text(encoding="utf-8"),
+                         '{"run_id": "lr-old", "status": "COMPLETED"}')
+        self.assertFalse((lr.base_dir() / "runs").exists())
+
+
 class SchedulingTest(IsolatedTest):
     def test_normal_day_uses_configured_target(self):
         info = lr.effective_target_for_session(

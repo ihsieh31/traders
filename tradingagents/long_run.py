@@ -636,9 +636,13 @@ def load_active_state() -> Optional[Dict[str, Any]]:
 
     Only a missing file may mean "no active run". A file that exists but
     cannot be trusted (unreadable, truncated, non-dict, missing/blank
-    run_id) is a hard stop: creating a fresh run would mint a new run_id,
-    and execution decision identity includes run_id, so the old run's
-    idempotency could no longer protect this restart.
+    run_id, unexpected/non-resumable status) is a hard stop: creating a
+    fresh run would mint a new run_id, and execution decision identity
+    includes run_id, so the old run's idempotency could no longer protect
+    this restart. Terminal statuses (e.g. COMPLETED) are included because
+    finalize_observation() persists them before its final reports and
+    clear_active_state() — a crash in that window must not look like a
+    fresh install.
     """
     try:
         with open(active_path(), "r", encoding="utf-8") as handle:
@@ -663,9 +667,14 @@ def load_active_state() -> Optional[Dict[str, Any]]:
             "ACTIVE_STATE_CORRUPT",
             f"active state {active_path()} has no usable run_id",
         )
-    if data.get("status") not in ("RUNNING", "INTERRUPTED"):
-        return None
-    return data
+    status = data.get("status")
+    if status in ("RUNNING", "INTERRUPTED"):
+        return data
+    raise LongRunStop(
+        "ACTIVE_STATE_CORRUPT",
+        f"active state {active_path()} exists with unexpected/non-resumable "
+        f"status {status!r}",
+    )
 
 
 def save_active_state(state: Dict[str, Any]) -> None:

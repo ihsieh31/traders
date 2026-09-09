@@ -444,6 +444,7 @@ class F15UsageTests(_Isolated, unittest.TestCase):
         """Exercise the real get_stock_news_openai layer with a fake OpenAI
         transport: usage 77 is recorded exactly once."""
         import tradingagents.dataflows.interface as interface
+        from tradingagents.dataflows.interface_utils import current_analysis_date
 
         response = SimpleNamespace(
             output=[SimpleNamespace(type="message", content=[SimpleNamespace(
@@ -459,7 +460,10 @@ class F15UsageTests(_Isolated, unittest.TestCase):
         with patch.object(
             interface, "get_openai_client_with_timeout", return_value=fake_client
         ), patch.object(interface, "get_api_key", return_value="fake-key"):
-            interface.get_stock_news_openai("AAPL", "2026-09-08")
+            # Live-mode gate compares against real "today" (ET); a hard-coded
+            # date turns historical the day after it is written and the tool
+            # short-circuits before recording usage.
+            interface.get_stock_news_openai("AAPL", current_analysis_date())
         self.assertEqual(self._guard.llm_tokens_used() - before, 77)
         self.assertEqual(fake_client.responses.create.call_count, 1)
         self.assertEqual(fake_client.chat.completions.create.call_count, 0)

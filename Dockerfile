@@ -25,7 +25,8 @@ RUN python -m venv /opt/venv
 
 COPY requirements.txt requirements.lock ./
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install -r requirements.lock
+    && python -m pip install --no-deps -r requirements.lock \
+    && python -m pip check
 
 
 FROM python:3.11-slim-bookworm AS runtime
