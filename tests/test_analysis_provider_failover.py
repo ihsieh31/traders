@@ -5,8 +5,8 @@ closed on partial config, dedicated fallback credential, endpoint
 isolation), the shared request budget across every invocation surface
 (plain invoke, structured output, tool binding, LCEL composition),
 permanent-vs-transient switching, per-invocation state under concurrency,
-secret-free audit events, and the graph wiring that keeps Decision,
-Screening and the legacy paths untouched.
+secret-free audit events, and the graph wiring that gives Decision the
+same failover route as Analysis while the legacy paths stay untouched.
 """
 
 import os
@@ -676,7 +676,7 @@ class GraphWiringTests(unittest.TestCase):
             )
         return graph, captured
 
-    def test_fallback_config_builds_failover_wrapper_for_analysis_only(self):
+    def test_fallback_config_builds_failover_wrapper_for_analysis_and_decision(self):
         with patch.dict(
             os.environ, {"ANALYSIS_FALLBACK_OPENROUTER_API_KEY": "fb-secret"}
         ):
@@ -700,11 +700,17 @@ class GraphWiringTests(unittest.TestCase):
         self.assertTrue(policy["failover_enabled"])
         self.assertEqual(policy["max_requests_per_invocation"], 4)
         self.assertEqual(policy["fallback_provider"], "openrouter")
-        # Decision keeps its own plain retry owner and never sees fallback.
+        # Decision consumes the same fallback route: the Risk Manager is the
+        # last call of every ticker, so quota exhaustion there must switch
+        # to the fallback instead of stopping a Phase-D round.
         decision_client = graph.graph_setup.decision_llm
-        self.assertIsInstance(decision_client, RetryingLLM)
-        self.assertNotIsInstance(decision_client, FailoverRetryingLLM)
+        self.assertIsInstance(decision_client, FailoverRetryingLLM)
         self.assertEqual(decision_client.inner.tag, "openai:decision-model-y")
+        self.assertEqual(decision_client.fallback_inner.tag, "openrouter:muse-spark-1.3")
+        decision_policy = decision_client.retry_policy
+        self.assertTrue(decision_policy["failover_enabled"])
+        self.assertEqual(decision_policy["role"], "decision")
+        self.assertEqual(decision_policy["fallback_provider"], "openrouter")
         # Both the Primary and Fallback route clients were constructed.
         routes = {(c["provider"], c["model"]) for c in captured}
         self.assertIn(("openrouter", "muse-spark-1.3"), routes)

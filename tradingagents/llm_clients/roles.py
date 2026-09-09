@@ -25,15 +25,16 @@ Rules (implementation contract):
   ``DECISION_ANTHROPIC_API_KEY``, ...) are checked before the provider's
   standard key so one vendor can be used with two accounts. Secrets are
   never persisted to UI config, logs, or sample values.
-- Optional Analysis-only failover: when the ``analysis_fallback_provider``
+- Optional failover route: when the ``analysis_fallback_provider``
   / ``analysis_fallback_model`` pair is set (endpoint optional), a second
-  route is resolved for the same intended Analysis model and served by the
-  failover wrapper in ``retry.py``. Any fallback key set without the
-  required pair is a startup config error — failover fails closed. The
-  fallback credential comes from ``ANALYSIS_FALLBACK_<PROVIDER>_API_KEY``
-  before the provider's standard key, and a cross-provider fallback never
-  inherits the Analysis endpoint. Decision and Screening never consume
-  fallback configuration.
+  route is resolved and served by the failover wrapper in ``retry.py`` for
+  the Analysis role, the Decision role, and (via ``screening.llm``) the
+  Screening role — a transient provider failure or free-tier quota
+  exhaustion must not kill a Phase-D round at whichever role hits it. Any
+  fallback key set without the required pair is a startup config error —
+  failover fails closed. The fallback credential comes from
+  ``ANALYSIS_FALLBACK_<PROVIDER>_API_KEY`` before the provider's standard
+  key, and a cross-provider fallback never inherits the Analysis endpoint.
 """
 
 from __future__ import annotations

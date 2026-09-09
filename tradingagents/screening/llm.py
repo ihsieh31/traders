@@ -189,8 +189,45 @@ def build_screening_llm(resolved: Dict[str, Any], config: Dict[str, Any]) -> Ret
     from tradingagents.default_config import DEFAULT_CONFIG
 
     max_retries = (config or {}).get("llm_max_retries", DEFAULT_CONFIG.get("llm_max_retries", 3))
+    inner = client.get_llm()
+
+    # Provider-failure failover: the Screening role is the first call of
+    # every Phase-D round, so a free-tier quota that has not reset yet would
+    # otherwise stop the round before any analysis runs. The fallback route
+    # (same analysis_fallback_* configuration the Analysis/Decision roles
+    # use) is optional: without it the plain bounded-retry owner remains.
+    try:
+        from tradingagents.llm_clients.roles import resolve_role_config
+
+        role_resolution = resolve_role_config(config or {})
+    except Exception:
+        role_resolution = {"mode": "legacy"}
+    fallback = role_resolution.get("analysis_fallback") if role_resolution.get("mode") == "roles" else None
+    fallback_key = (role_resolution.get("analysis_fallback_api_key") or "") if fallback else ""
+    if fallback is not None and fallback_key:
+        from tradingagents.llm_clients.retry import FailoverRetryingLLM
+
+        fallback_client = create_llm_client(
+            provider=fallback.provider,
+            model=fallback.model,
+            base_url=fallback.backend_url,
+            api_key=fallback_key,
+            model_role="quick",
+            timeout=(config or {}).get("llm_request_timeout_seconds", 120.0),
+            **params,
+        )
+        return FailoverRetryingLLM(
+            inner,
+            fallback_client.get_llm(),
+            role=SCREENING_ROLE,
+            primary_provider=spec.provider,
+            primary_model=spec.model,
+            fallback_provider=fallback.provider,
+            fallback_model=fallback.model,
+            max_retries=int(max_retries),
+        )
     return RetryingLLM(
-        client.get_llm(),
+        inner,
         role=SCREENING_ROLE,
         provider=spec.provider,
         model=spec.model,

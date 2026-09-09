@@ -147,29 +147,30 @@ class TradingAgentsGraph:
                 f"(<= {1 + llm_max_retries} requests per invocation)"
             )
             fallback_spec = self.role_resolution.get("analysis_fallback")
+            fallback_key = self.role_resolution.get("analysis_fallback_api_key") or ""
             if fallback_spec is None:
                 analysis_client = self._build_role_client(
                     analysis_spec, self.role_resolution["analysis_api_key"]
                 )
             else:
-                # Analysis-only failover: one shared request budget across
-                # the Primary and Fallback routes. Decision and Screening
-                # never consume fallback configuration.
-                analysis_client = FailoverRetryingLLM(
-                    self._build_role_inner(
-                        analysis_spec, self.role_resolution["analysis_api_key"]
-                    ),
-                    self._build_role_inner(
-                        fallback_spec, self.role_resolution["analysis_fallback_api_key"]
-                    ),
-                    role="analysis",
-                    primary_provider=analysis_spec.provider,
-                    primary_model=analysis_spec.model,
-                    fallback_provider=fallback_spec.provider,
-                    fallback_model=fallback_spec.model,
-                    max_retries=llm_max_retries,
+                # Primary→Fallback failover with one shared request budget.
+                # The Analysis and Decision roles both consume the same
+                # fallback route (quota exhaustion or transient provider
+                # failure must not kill a Phase-D round at the Risk Manager,
+                # the last call of every ticker). Screening builds its own
+                # failover wrapper in screening.llm.
+                analysis_client = self._build_role_client(
+                    analysis_spec,
+                    self.role_resolution["analysis_api_key"],
+                    fallback_spec=fallback_spec,
+                    fallback_api_key=fallback_key,
                 )
-            decision_client = self._build_role_client(decision_spec, self.role_resolution["decision_api_key"])
+            decision_client = self._build_role_client(
+                decision_spec,
+                self.role_resolution["decision_api_key"],
+                fallback_spec=fallback_spec,
+                fallback_api_key=fallback_key,
+            )
             self.deep_thinking_llm = analysis_client
             self.quick_thinking_llm = analysis_client
             self.decision_llm = decision_client
@@ -291,14 +292,35 @@ class TradingAgentsGraph:
         )
         return client.get_llm()
 
-    def _build_role_client(self, spec, api_key: str):
+    def _build_role_client(
+        self,
+        spec,
+        api_key: str,
+        fallback_spec=None,
+        fallback_api_key: str = "",
+    ):
         """Build one role client (Analysis or Decision) with isolated
-        provider/model/endpoint/credential and the bounded retry owner."""
-        return RetryingLLM(
-            self._build_role_inner(spec, api_key),
+        provider/model/endpoint/credential and the bounded retry owner.
+        When a fallback route is supplied the client becomes a
+        Primary→FailoverRetryingLLM wrapper sharing the one request budget
+        across both routes (attempt 1 is always Primary)."""
+        inner = self._build_role_inner(spec, api_key)
+        if fallback_spec is None:
+            return RetryingLLM(
+                inner,
+                role=spec.role,
+                provider=spec.provider,
+                model=spec.model,
+                max_retries=self.llm_max_retries,
+            )
+        return FailoverRetryingLLM(
+            inner,
+            self._build_role_inner(fallback_spec, fallback_api_key),
             role=spec.role,
-            provider=spec.provider,
-            model=spec.model,
+            primary_provider=spec.provider,
+            primary_model=spec.model,
+            fallback_provider=fallback_spec.provider,
+            fallback_model=fallback_spec.model,
             max_retries=self.llm_max_retries,
         )
 
