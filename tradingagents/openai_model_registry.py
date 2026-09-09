@@ -292,6 +292,22 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "deep": {"reasoning_effort": "high", "text_verbosity": "medium"}
         },
     ),
+    # Third-party OpenAI-compatible endpoints exposing the Responses API.
+    "muse-spark-1.3-contributor-free": _reasoning_spec(
+        model_id="muse-spark-1.3-contributor-free",
+        label="Muse Spark 1.3 - OpenCode Zen free",
+        description=(
+            "Free contributor model on the OpenCode Zen endpoint. Served "
+            "through the Responses API; rejects effort=none, so the lowest "
+            "reasoning option is low."
+        ),
+        reasoning_effort_options=["low", "medium", "high"],
+        role_defaults={
+            "quick": {"reasoning_effort": "low", "text_verbosity": "low"},
+            "deep": {"reasoning_effort": "high", "text_verbosity": "medium"},
+        },
+        price_hint="free (OpenCode Zen)",
+    ),
 }
 
 

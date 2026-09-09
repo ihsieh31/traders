@@ -138,6 +138,28 @@ def get_openai_client_config() -> Dict[str, str]:
     return client_config
 
 
+def get_embedding_client_config() -> Dict[str, str]:
+    """
+    Build OpenAI SDK client kwargs for the memory-embedding endpoint.
+
+    Mirrors :func:`get_openai_client_config`, with two overrides so the
+    embedding provider can differ from the chat provider (e.g. OpenCode Zen
+    serves no embedding models, while Google's OpenAI-compatible endpoint
+    does):
+      - ``OPENAI_EMBEDDING_BASE_URL`` replaces the chat base URL.
+      - ``OPENAI_EMBEDDING_API_KEY`` replaces the chat API key; it also wins
+        in local mode, where the chat path falls back to a placeholder key.
+    """
+    client_config = get_openai_client_config()
+    emb_base = os.getenv("OPENAI_EMBEDDING_BASE_URL")
+    if emb_base and emb_base.strip():
+        client_config["base_url"] = emb_base.strip()
+    emb_key = os.getenv("OPENAI_EMBEDDING_API_KEY")
+    if emb_key and emb_key.strip():
+        client_config["api_key"] = emb_key.strip()
+    return client_config
+
+
 def get_openai_api_key() -> str:
     """Get OpenAI API key from runtime, environment variables, or config."""
     return get_api_key("openai_api_key", "OPENAI_API_KEY")

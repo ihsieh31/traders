@@ -8,6 +8,7 @@ from langchain_core.outputs import ChatResult, ChatGeneration
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from openai import OpenAI
 import json
+import os
 import time
 
 from pydantic import BaseModel
@@ -137,18 +138,40 @@ def _normalize_responses_tool_choice(tool_choice: Any) -> Any:
 _NEUTRAL_USER_AGENT = "traders-paper/1.0"
 
 
+def _env_extra_headers() -> Dict[str, str]:
+    """Parse OPENAI_EXTRA_HEADERS ("Name: Value; Name2: Value2") into a dict.
+
+    Some OpenAI-compatible endpoints require per-request headers beyond the
+    standard auth header (e.g. OpenCode Zen's free tier requires
+    ``X-Session-ID``). An entry with an empty value is skipped; malformed
+    entries without a colon are ignored rather than failing every call.
+    """
+    raw = os.getenv("OPENAI_EXTRA_HEADERS", "")
+    headers: Dict[str, str] = {}
+    for part in raw.replace("\n", ";").split(";"):
+        entry = part.strip()
+        if not entry or ":" not in entry:
+            continue
+        name, value = entry.split(":", 1)
+        name, value = name.strip(), value.strip()
+        if name and value:
+            headers[name] = value
+    return headers
+
+
 def _endpoint_headers(
     base_url: Optional[str],
     custom_headers: Optional[Dict[str, str]] = None,
 ) -> Optional[Dict[str, str]]:
     """Headers for one client construction; neutral UA only on custom endpoints."""
-    if custom_headers and any(k.lower() == "user-agent" for k in custom_headers):
-        # The caller set their own User-Agent; never clobber it.
-        return dict(custom_headers)
+    headers = dict(custom_headers) if custom_headers else {}
+    headers.update(_env_extra_headers())
+    if any(k.lower() == "user-agent" for k in headers):
+        # A caller- or env-configured User-Agent; never clobber it.
+        return headers or None
     if not base_url:
         # Official provider default endpoint: SDK default headers untouched.
-        return dict(custom_headers) if custom_headers else None
-    headers = dict(custom_headers) if custom_headers else {}
+        return headers or None
     headers["User-Agent"] = _NEUTRAL_USER_AGENT
     return headers
 

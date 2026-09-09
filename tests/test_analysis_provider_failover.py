@@ -114,8 +114,11 @@ class FallbackRoleResolutionTests(unittest.TestCase):
         self.assertEqual(resolved["analysis_fallback_api_key"], "")
 
     def test_fallback_keys_alone_enter_roles_mode_and_enable_failover(self):
+        # Hermetic: OPENAI_USE_LOCAL=true in a developer's .env rewrites the
+        # global provider to local_openai and would fail this assertion.
         with patch.dict(
-            os.environ, {"ANALYSIS_FALLBACK_OPENAI_API_KEY": "fb-key"}
+            os.environ,
+            {"ANALYSIS_FALLBACK_OPENAI_API_KEY": "fb-key", "OPENAI_USE_LOCAL": ""},
         ):
             resolved = resolve_role_config(
                 _base_config(

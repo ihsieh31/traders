@@ -6,14 +6,14 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 import re
 import uuid
-from tradingagents.dataflows.config import get_openai_client_config, get_openai_embedding_model
+from tradingagents.dataflows.config import get_embedding_client_config, get_openai_embedding_model
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
 
 
 class FinancialSituationMemory:
     def __init__(self, name, config: dict = None):
         self.retrieval_enabled = bool((config or {}).get("memory_retrieval_enabled", False))
-        client_config = get_openai_client_config()
+        client_config = get_embedding_client_config()
         self.client = OpenAI(**client_config) if client_config else None
         self.embedding_model = get_openai_embedding_model()
         self.embeddings_enabled = self.client is not None

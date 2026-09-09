@@ -379,10 +379,13 @@ class FallbackPreflightTest(_PreflightTest):
         runtime = lr.build_runtime_config(cfg)
         # Primary routes have role-specific keys; the fallback resolves
         # neither ANALYSIS_FALLBACK_* nor (patched) the provider standard key.
+        # clear=True is required: patch.dict() alone cannot REMOVE ambient
+        # keys, so a developer .env exporting ANALYSIS_FALLBACK_* via
+        # load_dotenv() would defeat the "missing credential" scenario.
         env = _all_role_keys()
         env.pop("ANALYSIS_FALLBACK_OPENAI_API_KEY")
         env.pop("OPENAI_API_KEY", None)
-        with patch.dict(os.environ, env), patch(
+        with patch.dict(os.environ, env, clear=True), patch(
             "tradingagents.llm_clients.roles.get_llm_api_key", return_value="",
         ):
             with self.assertRaises(lr.LongRunStop) as ctx:

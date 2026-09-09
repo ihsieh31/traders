@@ -10,7 +10,9 @@ DEFAULT_CONFIG = {
         os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
     ),
     "memory_log_max_entries": None,
-    "memory_retrieval_enabled": False,  # Enable only after validating lessons on held-out data.
+    # Paper observation: retrieval ON. Embeddings route to the Gemini
+    # OpenAI-compatible endpoint (see OPENAI_EMBEDDING_* in .env).
+    "memory_retrieval_enabled": True,
     # Self-learning memory: when set, the per-agent ChromaDB reflection
     # memories persist across restarts instead of resetting each session.
     "agent_memory_dir": os.getenv(
@@ -19,7 +21,7 @@ DEFAULT_CONFIG = {
     ),
     # Feed realized outcomes back into the per-agent memories (5 quick-LLM
     # reflection calls per resolved decision). Requires OpenAI embeddings.
-    "reflection_on_outcome_enabled": False,
+    "reflection_on_outcome_enabled": True,
     # FinMem-style memory maintenance (arXiv:2311.13743): Ebbinghaus time
     # decay with importance-scaled stability, near-duplicate pruning, and a
     # per-collection size cap. Runs after outcome reflections.
@@ -39,15 +41,15 @@ DEFAULT_CONFIG = {
     ),
     # LLM settings
     "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
-    "deep_think_llm": "gpt-5.4-mini",
-    "quick_think_llm": "gpt-5.4-nano",
+    "deep_think_llm": os.getenv("DEEP_THINK_LLM", "muse-spark-1.3-contributor-free"),
+    "quick_think_llm": os.getenv("QUICK_THINK_LLM", "muse-spark-1.3-contributor-free"),
     "backend_url": None,
     "google_thinking_level": None,
     "openai_reasoning_effort": None,
     "anthropic_effort": None,
     "output_language": "English",
     "deep_llm_params": {
-        "reasoning_effort": "medium",
+        "reasoning_effort": "high",
         "text_verbosity": "medium",
         "reasoning_summary": "auto",
         "max_output_tokens": None,
