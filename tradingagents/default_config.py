@@ -52,9 +52,10 @@ DEFAULT_CONFIG = {
         "reasoning_effort": "high",
         "text_verbosity": "medium",
         "reasoning_summary": "auto",
-        # 6000 > 4080: guaranteed single-call output floor for the primary
-        # model (kiosapi ling-3.0-flash-fin verified ≥16000-token capability).
-        "max_output_tokens": 6000,
+        # 16000: verified single-call output capability of the primary model
+        # (kiosapi ling-3.0-flash-fin fills a 16000-token request); well above
+        # the 4080-token single-output requirement.
+        "max_output_tokens": 16000,
         "store": False,
         "parallel_tool_calls": True,
     },
