@@ -41,8 +41,8 @@ DEFAULT_CONFIG = {
     ),
     # LLM settings
     "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
-    "deep_think_llm": os.getenv("DEEP_THINK_LLM", "muse-spark-1.3-contributor-free"),
-    "quick_think_llm": os.getenv("QUICK_THINK_LLM", "muse-spark-1.3-contributor-free"),
+    "deep_think_llm": os.getenv("DEEP_THINK_LLM", "ling-3.0-flash-fin"),
+    "quick_think_llm": os.getenv("QUICK_THINK_LLM", "ling-3.0-flash-fin"),
     "backend_url": None,
     "google_thinking_level": None,
     "openai_reasoning_effort": None,
@@ -52,7 +52,9 @@ DEFAULT_CONFIG = {
         "reasoning_effort": "high",
         "text_verbosity": "medium",
         "reasoning_summary": "auto",
-        "max_output_tokens": None,
+        # 6000 > 4080: guaranteed single-call output floor for the primary
+        # model (kiosapi ling-3.0-flash-fin verified ≥16000-token capability).
+        "max_output_tokens": 6000,
         "store": False,
         "parallel_tool_calls": True,
     },

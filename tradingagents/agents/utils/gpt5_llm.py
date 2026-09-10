@@ -818,4 +818,16 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
         chat_headers = _endpoint_headers(base_url, chat_kwargs.get("default_headers"))
         if chat_headers:
             chat_kwargs["default_headers"] = chat_headers
-        return ChatOpenAI(**chat_kwargs)
+        # NormalizedChatOpenAI (deferred import: it imports this module) forces
+        # with_structured_output onto the function-calling method. The default
+        # ChatOpenAI path prefers native json_schema structured outputs, which
+        # several OpenAI-compatible upstreams (e.g. Novita-hosted models) do
+        # not support, while bound-tool function calling is universally
+        # available and already verified per endpoint.
+        try:
+            from tradingagents.llm_clients.openai_client import (
+                NormalizedChatOpenAI as _NormalizedChatOpenAI,
+            )
+        except Exception:
+            _NormalizedChatOpenAI = ChatOpenAI
+        return _NormalizedChatOpenAI(**chat_kwargs)
