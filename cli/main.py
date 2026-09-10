@@ -1699,8 +1699,12 @@ def long_run():
             f"{cfg['analysis_fallback_model']} "
             f"endpoint={lr.sanitize_url(cfg.get('analysis_fallback_backend_url')) or 'provider default'}"
         )
-    console.print("Mode: paper-only, auto_screening_enabled=True, "
-                  "allow_shorts=False, trading_mode=investment")
+    shorts_enabled = bool(cfg.get("allow_shorts", False))
+    console.print(
+        "Mode: paper-only, auto_screening_enabled=True, "
+        f"allow_shorts={shorts_enabled}, "
+        f"trading_mode={'trading' if shorts_enabled else 'investment'}"
+    )
     if not typer.confirm(
         "Authorize this 30-calendar-day PAPER test? The process must stay "
         "running (rerun this command to resume after a crash).",

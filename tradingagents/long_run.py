@@ -245,6 +245,9 @@ def default_long_run_config() -> Dict[str, Any]:
         "analysis_fallback_provider": None,
         "analysis_fallback_model": None,
         "analysis_fallback_backend_url": None,
+        # Short exposure opt-in for the observation (paper-only build;
+        # broker-side deterministic guards always apply).
+        "allow_shorts": False,
         "screening_provider": None,
         "screening_model": None,
         "screening_backend_url": None,
@@ -446,11 +449,14 @@ def build_runtime_config(
         "analysis_fallback_backend_url",
         "decision_provider", "decision_model", "decision_backend_url",
         "screening_provider", "screening_model", "screening_backend_url",
+        "allow_shorts",
     ):
         runtime[key] = long_cfg.get(key)
     runtime["auto_screening_enabled"] = True
-    runtime["allow_shorts"] = False
-    runtime["trading_mode"] = "investment"
+    # Short exposure is now an explicit per-observation opt-in (paper only;
+    # the broker-side deterministic guards in execution.service still apply).
+    runtime["allow_shorts"] = bool(long_cfg.get("allow_shorts", False))
+    runtime["trading_mode"] = "trading" if runtime["allow_shorts"] else "investment"
     return runtime
 
 
@@ -1424,6 +1430,7 @@ def run_daily_round(
             result = _execute_intent(
                 deps, service, symbol, intent, notional,
                 run_id=run_id, session_date=session_date,
+                allow_shorts=bool(runtime.get("allow_shorts", False)),
             )
         except LongRunStop:
             raise
@@ -1470,6 +1477,7 @@ def run_daily_round(
                 result = _execute_intent(
                     deps, service, symbol, intent, notional,
                     run_id=run_id, session_date=session_date,
+                    allow_shorts=bool(runtime.get("allow_shorts", False)),
                 )
             except LongRunStop:
                 raise
@@ -1739,14 +1747,14 @@ def _screening_with_audit_scope(
     return plan
 
 
-def _execute_intent(deps, service, symbol, intent, notional, *, run_id, session_date):
+def _execute_intent(deps, service, symbol, intent, notional, *, run_id, session_date, allow_shorts=False):
     from tradingagents.execution.auto_trade import execute_auto_trade
 
     return execute_auto_trade(
         ticker=symbol,
         trade_intent=intent,
         base_trade_notional_usd=notional,
-        allow_shorts=False,
+        allow_shorts=bool(allow_shorts),
         config=None,
         execution_service=service,
         decision_id=f"{run_id}-{session_date}-{symbol}",
