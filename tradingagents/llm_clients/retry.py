@@ -37,7 +37,11 @@ from typing import Any, Optional
 
 from langchain_core.runnables import Runnable
 
-_RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504, 529}
+# 520-527 and 530 are Cloudflare's extended origin-failure family (the
+# router gateways in front of several LLM providers emit them); they are
+# origin hiccups, never client misconfigurations, so they retry like the
+# canonical 5xx set.
+_RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530}
 _TRANSIENT_TEXT_MARKERS = (
     "timeout",
     "timed out",
@@ -139,6 +143,10 @@ def classify_provider_error(exc: BaseException) -> str:
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     if isinstance(status, int) and not isinstance(status, bool):
         if status in _RETRYABLE_STATUS_CODES:
+            return "transient"
+        # Any other 5xx is an upstream/server failure: retry rather than
+        # fail the round on a gateway hiccup the explicit set missed.
+        if 500 <= status < 600:
             return "transient"
         if 400 <= status < 500 and status not in (408, 409, 429):
             return "permanent"

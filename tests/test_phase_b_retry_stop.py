@@ -54,6 +54,21 @@ class RetryPolicyValidationTests(unittest.TestCase):
         )
         self.assertEqual(classify_provider_error(ValueError("401 unauthorized")), "permanent")
 
+    def test_cloudflare_5xx_family_and_generic_5xx_are_transient(self):
+        # A router gateway's Cloudflare 520 stopped a Phase-D round as a
+        # "permanent" failure: the extended origin-error family (520-527,
+        # 530) and any other 5xx must classify transient so retries and
+        # failover engage.
+        class WithStatus(Exception):
+            pass
+
+        for status in (500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526,
+                       527, 529, 530, 599):
+            with self.subTest(status=status):
+                exc = WithStatus("gateway error")
+                exc.status_code = status
+                self.assertEqual(classify_provider_error(exc), "transient")
+
     def test_provider_failure_message_is_sanitized(self):
         failure = ProviderFailure(
             role="decision", provider="openai", model="gpt-x", attempts=2,
