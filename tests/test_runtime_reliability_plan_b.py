@@ -479,13 +479,15 @@ class R02ExecutionBoundaryTests(unittest.TestCase):
                 result = service.startup_recover(can_submit=lambda: False)
             self.assertFalse(result["success"])
             self.assertEqual(len(broker.submits), 0)
-            # The row is NOT faked into REJECTED: it stays durably
-            # unresolved (UNKNOWN), replayable by a later authorized resume.
+            # The row is NOT faked into REJECTED: it keeps its exact
+            # pre-transition status (the seed was PENDING, so it stays
+            # PENDING — provably POST-free), replayable by a later
+            # authorized resume.
             statuses = [
                 str(o.get("status") or "").upper()
                 for o in store.list_all_orders()
             ]
-            self.assertIn("UNKNOWN", statuses)
+            self.assertIn("PENDING", statuses)
             self.assertNotIn("REJECTED", statuses)
 
 

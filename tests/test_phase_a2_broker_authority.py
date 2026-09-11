@@ -499,7 +499,7 @@ class CallerAndExitPolicyTests(unittest.TestCase):
         repo = Path(__file__).resolve().parent.parent
         control = (repo / "webui/callbacks/control_callbacks.py").read_text()
         service = (repo / "tradingagents/execution/service.py").read_text()
-        self.assertIn("ExecutionService().startup_recover()", control)
+        self.assertIn("ExecutionService().startup_recover(", control)
         self.assertIn("self._recover_locked(broker, snapshot)", service)
         self.assertIn("post-order reconciliation failed", service)
 

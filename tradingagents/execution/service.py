@@ -2237,25 +2237,26 @@ class ExecutionService:
         if verdict is not None and not verdict.allowed:
             self._store.transition_order(local["order_id"], "CANCELED")
             return
+        # R02 Layer 2: the submit-boundary guard, checked BEFORE the
+        # PENDING/UNKNOWN -> SUBMITTING transition. The caller's stop/window
+        # authority may have flipped while recovery's GET lookups ran; this is
+        # the last check before the POST. Refusal is NOT a rejection and NOT
+        # a CLEAN outcome — and it provably made no POST, so the row keeps its
+        # exact pre-transition status (PENDING stays PENDING, UNKNOWN stays
+        # UNKNOWN) instead of being masked as an ambiguous-outcome UNKNOWN:
+        # a later authorized resume re-enters the normal adopt-or-resubmit
+        # path, and this round's reconciliation reports it unresolved.
+        if can_submit is not None and not can_submit():
+            raise BrokerAuthorityError(
+                f"recovery resubmit deferred by stop/window authority: "
+                f"{local['client_order_id']} (no broker POST was made; the "
+                "order stays in its current durable state for a later "
+                "authorized resume)"
+            )
         ok, current = self._store.transition_order(local["order_id"], "SUBMITTING")
         if not ok:
             raise BrokerAuthorityError(
                 f"recovery state conflict: {local['client_order_id']}"
-            )
-        # R02 Layer 2: the submit-boundary guard. The caller's stop/window
-        # authority may have flipped while recovery's GET lookups ran; this
-        # is the last check before the POST. Refusal is NOT a rejection and
-        # NOT a CLEAN outcome: the row moves to UNKNOWN (the durable
-        # "outcome unresolved" state, provably POST-free here — PENDING is
-        # not a legal SUBMITTING transition), so a later authorized resume
-        # re-enters the normal adopt-or-resubmit path, and this round's
-        # reconciliation reports it unresolved.
-        if can_submit is not None and not can_submit():
-            self._store.transition_order(current["order_id"], "UNKNOWN")
-            raise BrokerAuthorityError(
-                f"recovery resubmit deferred by stop/window authority: "
-                f"{local['client_order_id']} (no broker POST was made; the "
-                "order stays durably unresolved for a later authorized resume)"
             )
         # Rebuild the request with the effective (cap-clipped) size before
         # the POST; the durable client_order_id is unchanged.
@@ -2602,12 +2603,15 @@ class ExecutionService:
         Facts captured before sizing/caps/outbox-commit can go stale while the
         process is suspended or the durable commit is slow. Immediately before
         any exposure-adding POST, the SAME one helper (initial submit and
-        recovery) re-checks snapshot freshness, quote freshness and the entry
-        policy at the current time. On any failure the caller must NOT refresh
-        facts, resize, or rewrite the durable row: broker POST = 0, the row
-        becomes CANCELED (provable: no POST was made) and the caller must
-        re-acquire fresh facts and re-analyze. Returns None when dispatch may
-        proceed, else a fail-closed reason.
+        recovery) re-checks the broker market clock, snapshot freshness, quote
+        freshness and the entry policy at the current time — in that order, so
+        every potentially blocking network GET happens BEFORE the final
+        freshness proof and nothing can stale the facts between the check and
+        the POST. On any failure the caller must NOT refresh facts, resize, or
+        rewrite the durable row: broker POST = 0, the row becomes CANCELED
+        (provable: no POST was made) and the caller must re-acquire fresh
+        facts and re-analyze. Returns None when dispatch may proceed, else a
+        fail-closed reason.
 
         R13: opening orders additionally require the broker's own clock to
         prove the regular session is open (clock.is_open). A closed market,
@@ -2619,6 +2623,18 @@ class ExecutionService:
             return "dispatch revalidation failed: no authoritative broker snapshot"
         if quote is None:
             return "dispatch revalidation failed: no authoritative quote"
+        # R05: the broker clock GET is a potentially blocking network call.
+        # It must run BEFORE the final freshness proof — a slow clock response
+        # must never widen the gap between the freshness check and the POST.
+        # R13: an entry additionally requires the broker's own clock to
+        # prove the regular session is open (clock.is_open). A closed market,
+        # an unavailable or malformed clock response — all fail closed with
+        # zero POSTs. Close/risk-reducing orders never route through this
+        # helper and are never blocked by the opening gate.
+        market_closed = self._market_clock_closed(broker)
+        if market_closed is not None:
+            return f"dispatch revalidation failed: {market_closed}"
+        # Final time-sensitive proof, after every blocking GET above.
         try:
             validate_freshness(
                 snapshot.observed_at,
@@ -2630,11 +2646,6 @@ class ExecutionService:
             validate_quote(quote, symbol)
         except BrokerAuthorityError as exc:
             return f"dispatch revalidation failed: {exc}"
-        # R13 execution layer: prove the regular session is open from the
-        # broker's own clock immediately before the exposure-adding POST.
-        market_closed = self._market_clock_closed(broker)
-        if market_closed is not None:
-            return f"dispatch revalidation failed: {market_closed}"
         if spec.get("notional") is not None:
             amount = float(spec["notional"])
         elif spec.get("quantity") is not None:

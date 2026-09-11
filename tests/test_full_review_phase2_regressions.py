@@ -457,13 +457,21 @@ class F15UsageTests(_Isolated, unittest.TestCase):
             chat=SimpleNamespace(completions=SimpleNamespace(create=MagicMock())),
         )
         before = self._guard.llm_tokens_used()
-        with patch.object(
-            interface, "get_openai_client_with_timeout", return_value=fake_client
-        ), patch.object(interface, "get_api_key", return_value="fake-key"):
-            # Live-mode gate compares against real "today" (ET); a hard-coded
-            # date turns historical the day after it is written and the tool
-            # short-circuits before recording usage.
-            interface.get_stock_news_openai("AAPL", current_analysis_date())
+        # Hermetic model pin: the responses-API path is model-gated, so the
+        # runner's ambient QUICK_THINK_LLM (a chat-API model here) must not
+        # decide which transport the test exercises.
+        saved_config = self._cfgmod.get_config()
+        self._cfgmod.set_config({**saved_config, "quick_think_llm": "gpt-5.4-nano"})
+        try:
+            with patch.object(
+                interface, "get_openai_client_with_timeout", return_value=fake_client
+            ), patch.object(interface, "get_api_key", return_value="fake-key"):
+                # Live-mode gate compares against real "today" (ET); a hard-coded
+                # date turns historical the day after it is written and the tool
+                # short-circuits before recording usage.
+                interface.get_stock_news_openai("AAPL", current_analysis_date())
+        finally:
+            self._cfgmod.set_config(saved_config)
         self.assertEqual(self._guard.llm_tokens_used() - before, 77)
         self.assertEqual(fake_client.responses.create.call_count, 1)
         self.assertEqual(fake_client.chat.completions.create.call_count, 0)

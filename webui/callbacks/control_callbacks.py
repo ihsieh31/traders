@@ -366,7 +366,46 @@ def _scheduler_thread(
         return
 
     if trade_enabled:
-        startup = ExecutionService().startup_recover()
+        # R01: apply THIS run's runtime settings to the global execution
+        # config BEFORE startup_recover() runs. Recovery's entry gates read
+        # the global config (get_config()); until this run's values are
+        # installed, a recovery opening could see a stale
+        # auto_screening_enabled=False global, classify itself as manual
+        # mode, and bypass the Top20 gate. The merge keeps every key the run
+        # did not explicitly override; failure stops this scheduler
+        # fail-closed (no recovery, no submit, no screening).
+        try:
+            from tradingagents.dataflows.config import get_config, set_config
+
+            merged = dict(get_config() or {})
+            merged.update(provider_settings or {})
+            set_config(merged)
+        except Exception as exc:
+            app_state.trade_enabled = False
+            print(
+                "[EXECUTION] Auto-trading not started: could not apply the "
+                f"run's runtime config before recovery: {exc}"
+            )
+            return
+        # F02/R01: config application is not instant — a Stop→Start during
+        # it invalidated this scheduler before it may mutate the broker.
+        if _stale():
+            print("[SCHEDULER] Stale scheduler exiting after Stop→Start")
+            return
+        # R02-A: recovery's broker lookups are slow; the submit-boundary
+        # guard re-checks this scheduler's generation (and the existing
+        # stop authority) immediately before any recovery POST, so an old
+        # run can never resubmit after a Stop→Start — the generation token
+        # is required because Start clears the stop flags.
+        def _recovery_can_submit() -> bool:
+            return (
+                scheduler_generation == app_state.run_generation
+                and not app_state.stop_requested
+            )
+
+        startup = ExecutionService().startup_recover(
+            can_submit=_recovery_can_submit
+        )
         # F02: startup recovery is a slow broker round trip. An operator
         # Stop→Start during it invalidates this scheduler before it may
         # touch any shared state below.
