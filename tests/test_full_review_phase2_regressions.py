@@ -681,6 +681,11 @@ class _BudgetRoundFixture(_Isolated):
 
 
 class _FakeBrokerForBudget:
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
+
     def get_account(self):
         return SimpleNamespace(
             id="acct", equity=100000.0, cash=50000.0, buying_power=50000.0)
@@ -696,7 +701,7 @@ class _FakeBudgetService:
     def enforce_exit_deadlines(self):
         return {"success": True, "deadline_exits": [], "broker_calls": 0}
 
-    def startup_recover(self):
+    def startup_recover(self, can_submit=None):
         return {"success": True, "account_execution_state": "CLEAN",
                 "reconciliation_reasons": []}
 

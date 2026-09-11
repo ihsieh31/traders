@@ -14,7 +14,20 @@ class FinancialSituationMemory:
     def __init__(self, name, config: dict = None):
         self.retrieval_enabled = bool((config or {}).get("memory_retrieval_enabled", False))
         client_config = get_embedding_client_config()
-        self.client = OpenAI(**client_config) if client_config else None
+        if client_config:
+            # R15: the OpenAI SDK's own defaults (long timeout, several
+            # retries) would let an optional memory lookup stall the whole
+            # analysis. Embeddings already disable themselves on the first
+            # failure (see get_embedding), so a bounded request timeout and
+            # zero SDK retries keep the main flow moving; transport retries
+            # remain the owning caller's concern.
+            try:
+                timeout = float((config or {}).get("llm_request_timeout_seconds", 120.0))
+            except (TypeError, ValueError):
+                timeout = 120.0
+            self.client = OpenAI(**client_config, timeout=timeout, max_retries=0)
+        else:
+            self.client = None
         self.embedding_model = get_openai_embedding_model()
         self.embeddings_enabled = self.client is not None
         self._warned_embedding_failure = False

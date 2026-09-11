@@ -16,11 +16,13 @@ guard accumulates them per day and can refuse to start new analyses.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -164,6 +166,43 @@ class SafetyGuard:
         self._lock = threading.RLock()
         self._state = self._load_state()
 
+    # ----- cross-process critical section (R10) ------------------------------
+
+    @contextmanager
+    def _state_file_lock(self):
+        """Serialize read-modify-write state cycles across processes (R10).
+
+        A threading.RLock only protects one process; two processes can both
+        read 0 and write back their own increment, losing the other's update
+        (and a stale in-memory copy can hide another process's tokens or
+        rejection streak entirely). The complete cycle is therefore:
+        thread RLock -> flock LOCK_EX -> reload from disk -> mutate -> atomic
+        save -> unlock. The OS releases the flock if a process crashes.
+        """
+        import contextlib
+
+        lock_path = self.state_path.with_name(self.state_path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path, "a+")
+        with self._lock, contextlib.closing(handle):
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+
+    def _reload_state_locked(self) -> Dict[str, Any]:
+        """Refresh the in-memory state from disk while the flock is held.
+
+        Must only be called inside ``_state_file_lock`` (or where the caller
+        already holds the thread lock and needs the freshest disk copy).
+        """
+        self._state = self._load_state()
+        return self._state
+
     # ----- state persistence -------------------------------------------------
 
     def _load_state(self) -> Dict[str, Any]:
@@ -245,7 +284,8 @@ class SafetyGuard:
     # ----- order/rejection tracking -------------------------------------------
 
     def record_order_result(self, success: bool) -> None:
-        with self._lock:
+        with self._state_file_lock():
+            self._reload_state_locked()
             if success:
                 self._state["consecutive_rejections"] = 0
             else:
@@ -255,7 +295,10 @@ class SafetyGuard:
             self._save_state()
 
     def consecutive_rejections(self) -> int:
-        with self._lock:
+        # R10: the streak may have been advanced by another process; read the
+        # durable file, not this process's stale in-memory copy.
+        with self._state_file_lock():
+            self._reload_state_locked()
             return int(self._state.get("consecutive_rejections", 0))
 
     # ----- LLM token budget ----------------------------------------------------
@@ -264,7 +307,8 @@ class SafetyGuard:
         if not tokens:
             return
         day = _today(when)
-        with self._lock:
+        with self._state_file_lock():
+            self._reload_state_locked()
             counts = self._state.setdefault("llm_tokens", {})
             counts[day] = int(counts.get(day, 0)) + int(tokens)
             # Keep the map from growing unbounded.
@@ -274,12 +318,23 @@ class SafetyGuard:
 
     def llm_tokens_used(self, when: Optional[str] = None) -> int:
         day = _today(when)
-        with self._lock:
+        # R10: another process (long-run scheduler vs WebUI) may have spent
+        # tokens since this instance loaded; the budget decision reads the
+        # durable file under the same flock that guards the writes.
+        with self._state_file_lock():
+            self._reload_state_locked()
             return int(self._state.get("llm_tokens", {}).get(day, 0))
 
     def check_llm_budget(self, when: Optional[str] = None) -> SafetyVerdict:
         budget = float(self.config.get("daily_llm_token_budget", 0) or 0)
-        used = self.llm_tokens_used(when)
+        # R10: read + decide under the state lock so a concurrent writer in
+        # another process cannot slip a large spend between read and verdict.
+        # The nested llm_tokens_used() is intentionally NOT called here — it
+        # would flock a second time; read the refreshed state directly.
+        with self._state_file_lock():
+            self._reload_state_locked()
+            day = _today(when)
+            used = int(self._state.get("llm_tokens", {}).get(day, 0))
         if not self.enabled or budget <= 0 or used < budget:
             return SafetyVerdict(
                 allowed=True,
@@ -411,7 +466,12 @@ class SafetyGuard:
         # Circuit breaker: drawdown from persisted high-water mark.
         dd_pct = float(self.config.get("max_drawdown_halt_pct", 0) or 0)
         if equity:
-            with self._lock:
+            # R10: the high-water mark is read-modify-write state shared with
+            # other processes; the whole cycle runs under the state flock.
+            # Reload happens inside the lock, so this sees another process's
+            # persisted mark instead of this process's stale copy.
+            with self._state_file_lock():
+                self._reload_state_locked()
                 hwm = self._state.get("high_water_mark")
                 if hwm is None or equity > float(hwm):
                     self._state["high_water_mark"] = equity
@@ -438,7 +498,11 @@ class SafetyGuard:
 
         # Circuit breaker: consecutive broker rejections (data-glitch signal).
         max_rejects = int(self.config.get("max_consecutive_rejections", 0) or 0)
-        streak = self.consecutive_rejections()
+        # R10: read the streak under the state lock (not the nested helper,
+        # which would flock again) from the freshest durable state.
+        with self._state_file_lock():
+            self._reload_state_locked()
+            streak = int(self._state.get("consecutive_rejections", 0))
         if max_rejects > 0 and streak >= max_rejects:
             reasons.append(
                 f"{streak} consecutive orders were rejected (halt at {max_rejects}); "

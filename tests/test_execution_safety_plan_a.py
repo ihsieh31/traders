@@ -64,6 +64,11 @@ class Broker:
         return NS(id="audit-fixture", equity=100000, last_equity=100000,
                   cash=100000, buying_power=100000)
 
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return NS(is_open=True)
+
     def get_all_positions(self):
         return [NS(symbol="AAPL", qty=self.qty, market_value=self.qty * 100)] if self.qty else []
 

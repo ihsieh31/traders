@@ -157,6 +157,8 @@ def _state_broker(*, positions=None, orders=None, equity=100000.0,
             id=account_id, equity=str(equity), last_equity=str(equity),
             cash=str(cash), buying_power=str(equity * 2),
         ),
+        # R13: the opening gate proves the session from the broker clock.
+        get_clock=lambda: SimpleNamespace(is_open=True),
         get_all_positions=lambda: list(state["positions"]),
         get_orders=get_orders,
         get_order_by_client_order_id=get_order_by_client_order_id,
@@ -1348,7 +1350,7 @@ class F06PreflightReadOnlyTests(_GuardIsolated, unittest.TestCase):
         recover_calls = {"n": 0}
 
         class RecoveryService:
-            def startup_recover(self):
+            def startup_recover(self, can_submit=None):
                 recover_calls["n"] += 1
                 # A resubmit would happen here: exercise it on the fake.
                 return {"success": True, "account_execution_state": "CLEAN",
@@ -1387,7 +1389,7 @@ class F06PreflightReadOnlyTests(_GuardIsolated, unittest.TestCase):
             self._run(authorize=True))
         # Recovery failure must raise, leaving no observation state.
         class FailingService:
-            def startup_recover(self):
+            def startup_recover(self, can_submit=None):
                 return {"success": False,
                         "reconciliation_reasons": ["unresolved UNKNOWN"]}
 
@@ -1616,7 +1618,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
             recover_calls = 0
             execute_calls = []
 
-            def startup_recover(self):
+            def startup_recover(self, can_submit=None):
                 self.recover_calls += 1
                 return {"success": True, "account_execution_state": "CLEAN",
                         "reconciliation_reasons": []}
@@ -1732,7 +1734,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
         def __init__(self):
             self.execute_calls = []
 
-        def startup_recover(self):
+        def startup_recover(self, can_submit=None):
             return {"success": True, "account_execution_state": "CLEAN",
                     "reconciliation_reasons": []}
 

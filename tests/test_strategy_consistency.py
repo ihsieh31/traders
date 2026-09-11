@@ -178,6 +178,11 @@ class PaperBrokerFixture:
         self.submits = []
         self.cancels = []
 
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
+
     def get_account(self):
         return SimpleNamespace(id='test-account', equity='100000', last_equity='100000', cash='100000', buying_power='100000')
 

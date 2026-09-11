@@ -1718,7 +1718,7 @@ def long_run():
     # resubmit a missing PENDING/UNKNOWN order. Failure exits without
     # creating an active observation.
     try:
-        recovery = lr.run_post_authorization_recovery(lr.LongRunDeps())
+        recovery = lr.run_post_authorization_recovery(lr.LongRunDeps(), runtime)
     except lr.LongRunStop as exc:
         console.print(f"[bold red]Execution recovery failed: {exc.code}: {exc.detail}[/bold red]")
         raise typer.Exit(code=1)

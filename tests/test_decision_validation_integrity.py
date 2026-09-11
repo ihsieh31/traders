@@ -351,6 +351,8 @@ class BrokerLastEquityTests(unittest.TestCase):
                 id="paper-1", equity=str(equity), last_equity=str(last_equity),
                 cash="50000", buying_power="200000",
             ),
+            # R13: the opening gate proves the session from the broker clock.
+            get_clock=lambda: SimpleNamespace(is_open=True),
             get_all_positions=lambda: list(positions),
             get_orders=lambda request=None: list(orders),
         )
@@ -417,6 +419,8 @@ class BrokerLastEquityTests(unittest.TestCase):
                 id="paper-1", equity=str(equity), last_equity=str(last_equity),
                 cash="50000", buying_power="200000",
             ),
+            # R13: the opening gate proves the session from the broker clock.
+            get_clock=lambda: SimpleNamespace(is_open=True),
             get_all_positions=lambda: [],
             get_orders=lambda request=None: [],
             submit_order=lambda request: SimpleNamespace(

@@ -71,15 +71,22 @@ class QuarantineStore:
         self._lock = threading.RLock()
         self._records: dict[str, list[dict]] = {}
         self._load()
+        # R08: a malformed configured event is operator input we cannot
+        # interpret. Swallowing it would trade as if the quarantine never
+        # existed — the exact moment its records are needed most — so the
+        # store fails closed instead of guessing the operator's intent.
         if initial_events:
-            for event in initial_events:
+            for index, event in enumerate(initial_events):
                 try:
                     self.quarantine(**event)
-                except (TypeError, ValueError):
-                    # Invalid configured events must not crash startup; the
-                    # malformed entry is ignored and stays visible to the
-                    # operator through the validation error at write time.
-                    continue
+                except (TypeError, ValueError) as exc:
+                    symbol = ""
+                    if isinstance(event, dict):
+                        symbol = str(event.get("symbol") or "")
+                    raise QuarantineStateError(
+                        f"configured corporate_action_events[{index}] is malformed"
+                        f"{' for symbol ' + symbol if symbol else ''}: {exc}"
+                    ) from exc
 
     # -- persistence ------------------------------------------------------
 

@@ -242,6 +242,11 @@ class _SimpleAuthorityBroker:
     def __init__(self, account_id=PAPER):
         self._account_id = account_id
 
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
+
     def get_account(self):
         return SimpleNamespace(
             id=self._account_id, equity="100000", last_equity="100000",
@@ -519,6 +524,11 @@ class _RecoveryBroker:
         self.lookup_calls = []
         self._submit_status = submit_status
 
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
+
     def get_account(self):
         return SimpleNamespace(
             id=PAPER, equity="100000", last_equity="100000",
@@ -788,6 +798,11 @@ class _DeadlineBroker:
 
     # -- authority GETs ----------------------------------------------------
 
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
+
     def get_account(self):
         return SimpleNamespace(
             id=PAPER, equity="100000", last_equity="100000",
@@ -990,6 +1005,11 @@ class _PositionedBroker:
         self.submits = []
         self.cancels = []
         self._fail = False
+
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
 
     def get_account(self):
         return SimpleNamespace(

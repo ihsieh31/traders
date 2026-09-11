@@ -220,9 +220,12 @@ DEFAULT_CONFIG = {
     "company_ir_pages": {},
     # Manual corporate-action quarantine input (split, ticker change,
     # delisting, non-tradable). There is no automatic event feed in Phase B;
-    # coverage is limited to explicitly reported events. Example:
-    # [{"symbol": "TSLA", "reason": "split", "ratio": "3:1",
-    #   "effective_at": "2026-09-10T00:00:00+00:00", "source": "operator"}]
+    # coverage is limited to explicitly reported events. Free-form fields
+    # (e.g. a split ratio) belong in "details"; a top-level key the store
+    # does not accept is a malformed event and fails closed at startup.
+    # Example: [{"symbol": "TSLA", "reason": "split",
+    #   "effective_at": "2026-09-10T00:00:00+00:00", "source": "operator",
+    #   "details": {"ratio": "3:1"}}]
     "corporate_action_events": [],
     # Sector exposure cap (% of equity). The VALUE defaults to 30%; the cap
     # becomes ACTIVE when the operator provides a sector_mapping below (a

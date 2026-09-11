@@ -502,6 +502,7 @@ def _scheduler_thread(
                         output_language=output_language,
                         checkpoint_enabled=checkpoint_enabled,
                         provider_settings=provider_settings,
+                        run_generation=scheduler_generation,
                     )
 
                     if app_state.stop_market_hour:
@@ -590,6 +591,7 @@ def _scheduler_thread(
                         output_language=output_language,
                         checkpoint_enabled=checkpoint_enabled,
                         provider_settings=provider_settings,
+                        run_generation=scheduler_generation,
                     )
                     if _provider_stopped():
                         _halt_scheduling_for_provider_stop()
@@ -658,6 +660,7 @@ def _scheduler_thread(
                         output_language=output_language,
                         checkpoint_enabled=checkpoint_enabled,
                         provider_settings=provider_settings,
+                        run_generation=scheduler_generation,
                     )
 
     # F02: a stale scheduler returning after Stop→Start must never

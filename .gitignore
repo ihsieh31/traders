@@ -10,3 +10,5 @@ eval_data/
 data/
 .opencode/
 .venv-p2/
+build/
+tradingagents/dataflows/data_cache/

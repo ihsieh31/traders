@@ -705,6 +705,8 @@ def _execution_broker(posts, positions=None, orders=None):
 
     broker = SimpleNamespace(
         get_account=lambda: SimpleNamespace(id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="200000"),
+        # R13: the opening gate proves the session from the broker clock.
+        get_clock=lambda: SimpleNamespace(is_open=True),
         get_all_positions=lambda: list(state["positions"]),
         get_orders=lambda request=None: list(state["orders"]),
         get_order_by_client_order_id=lambda cid: next((o for o in state["orders"] if o.client_order_id == cid), None),

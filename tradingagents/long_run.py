@@ -614,6 +614,64 @@ def next_due_session(
 # Observation state
 # ---------------------------------------------------------------------------
 
+def session_close_et(
+    session_date: str, *,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> dtime:
+    """Authoritative regular-session close (ET) for one session date."""
+    from tradingagents.dataflows.market_calendar import session_close_et_auth
+
+    return session_close_et_auth(
+        date.fromisoformat(session_date),
+        client=calendar_client, calendar_rows=calendar_rows,
+    )
+
+
+def mark_session_missed_after_close(
+    *,
+    run_id: str,
+    session_date: str,
+    now: datetime,
+    run_time_et: str,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> bool:
+    """R13: settle a never-started session whose close has passed as MISSED.
+
+    A session whose scheduled target is overdue, that has no round journal
+    yet (never started), and whose authoritative regular-session close has
+    already passed must never be executed as a "due round" — running it
+    would analyze yesterday's data and leave a new entry for after-hours
+    execution. It is settled with the existing MISSED journal/state so the
+    normal settled-session rule keeps it from being replayed on later days.
+    Returns True when the session was settled here.
+    """
+    journal = load_round_journal(run_id, session_date)
+    if journal is not None:
+        return False  # started earlier (even if unfinished): recovery owns it
+    eastern = eastern_now(now)
+    # CalendarError propagates: the loop's calendar handling must stop the
+    # observation rather than let an unprovable close time trade a stale
+    # session (fail closed).
+    close = session_close_et(
+        session_date,
+        calendar_client=calendar_client, calendar_rows=calendar_rows,
+    )
+    close_dt = eastern.tzinfo.localize(
+        datetime.combine(date.fromisoformat(session_date), close)
+    )
+    if eastern < close_dt:
+        return False  # still inside the regular session: keep it runnable
+    new_journal = new_round_journal(session_date, [])
+    new_journal["status"] = "MISSED"
+    new_journal["stop_reason"] = "MISSED_SESSION_CLOSE"
+    new_journal["finished_at"] = utc_now_iso()
+    save_round_journal(run_id, new_journal)
+    log_event(run_id, "round_missed",
+              {"session": session_date, "reason": "MISSED_SESSION_CLOSE"})
+    return True
+
 def new_observation_state(
     long_cfg: Dict[str, Any], *, expected_sessions: List[str], now: Optional[datetime] = None
 ) -> Dict[str, Any]:
@@ -841,9 +899,20 @@ def _default_llm_probe(
 # Account snapshots (sanitized, no credentials)
 # ---------------------------------------------------------------------------
 
+class SnapshotUnavailable(RuntimeError):
+    """A required account/position fact is missing or non-finite (R16)."""
+
+
 def capture_account_snapshot(client: Any) -> Dict[str, Any]:
+    """Sanitized account/positions snapshot; raise on unprovable facts (R16).
+
+    A NaN equity, missing cash, or ``positions`` of None/invalid value means
+    the broker could not prove the account state. Coercing any of them to a
+    number would let a report claim -100% returns or a fully flat account;
+    instead the capture raises so callers fail closed (preflight aborts,
+    finalize records ``final_snapshot_unavailable``).
+    """
     account = client.get_account()
-    positions = client.get_all_positions() or []
 
     def _num(value: Any) -> Optional[float]:
         try:
@@ -860,18 +929,42 @@ def capture_account_snapshot(client: Any) -> Dict[str, Any]:
         return None
 
     account_id = str(_get(account, "id", "account_id") or "")
-    equity = _num(_get(account, "equity")) or 0.0
-    cash = _num(_get(account, "cash")) or 0.0
-    buying_power = _num(_get(account, "buying_power"))
+    if not account_id:
+        raise SnapshotUnavailable("account snapshot has no usable account id")
+    equity = _num(_get(account, "equity"))
+    if equity is None:
+        raise SnapshotUnavailable("account equity is unavailable (missing/NaN/non-finite)")
+    cash = _num(_get(account, "cash"))
+    if cash is None:
+        raise SnapshotUnavailable("account cash is unavailable (missing/NaN/non-finite)")
+    raw_buying_power = _get(account, "buying_power")
+    buying_power = _num(raw_buying_power) if raw_buying_power is not None else None
+    if raw_buying_power is not None and buying_power is None:
+        raise SnapshotUnavailable(
+            "account buying_power is present but not a finite number"
+        )
+    # None means the broker could not enumerate positions at all — an empty
+    # list (explicitly no holdings) is a legal, different fact.
+    positions = client.get_all_positions()
+    if positions is None:
+        raise SnapshotUnavailable("position list unavailable (broker returned None)")
     rows = []
     long_mv = 0.0
     short_mv = 0.0
     for raw in positions:
         symbol = str(_get(raw, "symbol") or "").upper()
-        qty = _num(_get(raw, "qty")) or 0.0
-        if not symbol or qty == 0:
+        if not symbol:
+            raise SnapshotUnavailable("position row has no symbol")
+        qty = _num(_get(raw, "qty"))
+        if qty is None:
+            raise SnapshotUnavailable(f"position {symbol} qty is unavailable")
+        if qty == 0:
             continue
-        market_value = _num(_get(raw, "market_value")) or 0.0
+        market_value = _num(_get(raw, "market_value"))
+        if market_value is None:
+            raise SnapshotUnavailable(
+                f"position {symbol} market_value is unavailable (missing/NaN)"
+            )
         if market_value >= 0:
             long_mv += market_value
         else:
@@ -1016,8 +1109,75 @@ def run_preflight(
             "optional_sources": optional}
 
 
+def _apply_runtime_config(runtime: Dict[str, Any]) -> None:
+    """R01: install this run's runtime as the global execution config BEFORE
+    any path that could mutate the broker runs.
+
+    The execution gate (screening Top20 entry check) reads the global config
+    via get_config(), while long-run callers hold their own runtime dict.
+    Until set_config() is applied, recovery may see runtime
+    auto_screening_enabled=True against a global auto_screening_enabled=False
+    and misclassify a gated PENDING opening as a manual-mode recovery. The
+    merge keeps every key the run did not explicitly override.
+    """
+    try:
+        from tradingagents.dataflows.config import get_config, set_config
+
+        merged = dict(get_config() or {})
+        merged.update(runtime or {})
+        set_config(merged)
+    except Exception as exc:
+        raise LongRunStop(
+            "CONFIG_APPLY_FAILED",
+            f"could not apply runtime config before recovery: {exc}",
+        )
+
+
+def _validate_long_run_execution_config(runtime: Dict[str, Any]) -> None:
+    """Confirm the applied global config still proves unattended invariants.
+
+    Runs after _apply_runtime_config (and after any later merge) and refuses
+    to continue when the effective config turned off auto screening, paper
+    mode or the safety layer for an unattended long run.
+    """
+    try:
+        from tradingagents.dataflows.config import get_config
+    except Exception as exc:
+        raise LongRunStop(
+            "CONFIG_APPLY_FAILED", f"global execution config unreadable: {exc}"
+        )
+    effective = get_config() or {}
+    if not effective.get("auto_screening_enabled"):
+        raise LongRunStop(
+            "SAFETY_DISABLED",
+            "unattended long-run requires auto_screening_enabled=True after "
+            "runtime config application",
+        )
+    error = _unattended_safety_error(effective)
+    if error:
+        raise LongRunStop("SAFETY_DISABLED", error)
+    try:
+        from tradingagents.dataflows.config import get_alpaca_use_paper
+
+        flag = get_alpaca_use_paper()
+        text = str(flag if flag is not None else "True").strip().lower()
+        if text in ("false", "0", "no", "off", "live"):
+            raise LongRunStop(
+                "SAFETY_DISABLED",
+                "unattended long-run requires paper mode "
+                "(ALPACA_USE_PAPER=False is not supported)",
+            )
+    except LongRunStop:
+        raise
+    except Exception as exc:
+        raise LongRunStop(
+            "CONFIG_APPLY_FAILED", f"paper flag unreadable after apply: {exc}"
+        )
+
+
 def run_post_authorization_recovery(
     deps: Optional["LongRunDeps"] = None,
+    runtime: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Mandatory recovery gate between authorization and observation creation.
 
@@ -1026,8 +1186,17 @@ def run_post_authorization_recovery(
     state/manifest/RUNNING exists — this gate recovers durable nonterminal
     orders and requires a CLEAN authority state. On failure nothing is
     created and the process exits.
+
+    R01: ``runtime`` (the run's own config) is applied to the global
+    execution config BEFORE startup_recover() runs, so recovery and every
+    later execution-path gate see the same screening/entry-policy authority
+    as the round itself. Callers without a runtime keep the legacy behavior
+    of recovering under whatever global config is already installed.
     """
     deps = deps or LongRunDeps()
+    if runtime is not None:
+        _apply_runtime_config(runtime)
+        _validate_long_run_execution_config(runtime)
     service_factory = deps.execution_service_factory or _default_execution_service
     try:
         service = service_factory()
@@ -1245,6 +1414,12 @@ def run_daily_round(
     service = service_factory()
     if ends_at is not None and ends_at.tzinfo is None:
         ends_at = ends_at.replace(tzinfo=timezone.utc)
+    # R02 Layer 1 — round precheck: a stop already requested or an already
+    # ended observation window forbids starting this round at all. Recovery
+    # (below) re-POSTs unresolved PENDING/UNKNOWN orders; that is a new
+    # broker mutation and must not begin once control has said stop. Runs
+    # after the journal gate so a refused round still yields its journal
+    # (resume evidence) to the caller.
     # Journal gate (fail-closed, before anything touches the broker): a
     # settled session is never re-run — re-running a MISSED round would
     # submit a stale order, and an unreadable journal must not be silently
@@ -1277,9 +1452,30 @@ def run_daily_round(
             f"round journal for {session_date} exists but is unreadable",
         )
 
+    control = _control_stop_reason(deps, ends_at)
+    if control:
+        # Nothing was mutated; yield the journal (resume evidence) so the
+        # outer loop records INTERRUPTED/finalizes the window normally.
+        return journal
+
+    # R01: this round's runtime must be the installed global execution
+    # config BEFORE any path below can mutate the broker. Until now the
+    # set_config() call only happened in _build_graph_config (after
+    # recovery), so startup_recover() ran against whatever global config
+    # was left from a previous process — a stale manual-mode config let it
+    # resubmit a gated opening without the Phase C entry gate.
+    _apply_runtime_config(runtime)
+    _validate_long_run_execution_config(runtime)
+
     # Step 1 — recover first; unsafe state stops the whole observation.
+    # R02 Layer 2: the stop/window authority is re-checked inside recovery
+    # itself, immediately before any resubmit POST — the outer precheck
+    # above cannot see a stop that arrives while recovery's GET lookups run.
+    def _recovery_can_submit() -> bool:
+        return _control_stop_reason(deps, ends_at) is None
+
     try:
-        recovery = service.startup_recover()
+        recovery = service.startup_recover(can_submit=_recovery_can_submit)
     except Exception as exc:
         raise LongRunStop("RECOVERY_FAILED", f"startup_recover raised: {exc}")
     if not recovery.get("success"):
@@ -1470,7 +1666,7 @@ def run_daily_round(
                 save_round_journal(run_id, journal)
                 continue
             try:
-                recovery = service.startup_recover()
+                recovery = service.startup_recover(can_submit=_recovery_can_submit)
                 if not recovery.get("success"):
                     raise LongRunStop("RECOVERY_UNSAFE",
                                       f"re-entry recovery unsafe: {recovery.get('reconciliation_reasons')}")
@@ -1951,6 +2147,19 @@ def run_observation_loop(
         # Due now: run the session exactly once (resume-safe journal).
         existing = load_round_journal(run_id, target["session_date"])
         if existing is not None and existing.get("status") in TERMINAL_ROUND_STATUSES:
+            continue
+        # R13 scheduler layer: a never-started session whose authoritative
+        # close has already passed is settled MISSED here — it must not run
+        # as an overdue round (stale data, after-hours entry) and, being
+        # settled, can never be replayed on a later day.
+        if mark_session_missed_after_close(
+            run_id=run_id,
+            session_date=target["session_date"],
+            now=now,
+            run_time_et=str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
+            calendar_client=deps.calendar_client,
+            calendar_rows=deps.calendar_rows,
+        ):
             continue
         try:
             run_daily_round(

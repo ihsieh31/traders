@@ -70,6 +70,11 @@ class FakeBroker:
         )
         self._positions = list(positions)
 
+    def get_clock(self):
+        # R13: the opening gate proves the regular session from the broker's
+        # own clock before any exposure-adding POST; the fixture keeps it open.
+        return SimpleNamespace(is_open=True)
+
     def get_account(self):
         return self._account
 
@@ -88,7 +93,13 @@ class FakeService:
         self.execute_calls = []
         self.posts = {}  # decision_id -> broker_calls
 
-    def startup_recover(self):
+    def startup_recover(self, can_submit=None):
+        # R02: long-run callers pass their stop/window authority as a
+        # submit-boundary callback; the fixture accepts it and fails the
+        # recovery the same way the real service would when it refuses.
+        if can_submit is not None and not can_submit():
+            return {"success": False, "account_execution_state": "PAUSED",
+                    "reconciliation_reasons": ["stop/window authority refused recovery submit"]}
         self.recover_calls += 1
         return {"success": True, "account_execution_state": "CLEAN",
                 "reconciliation_reasons": []}
@@ -783,7 +794,7 @@ class DailyRoundTest(IsolatedTest):
 
     def test_recovery_refusal_hard_stops(self):
         service = FakeService()
-        service.startup_recover = lambda: {
+        service.startup_recover = lambda can_submit=None: {
             "success": False, "reconciliation_reasons": ["unresolved UNKNOWN"]}
         deps, _, _ = _deps(service=service, symbols=("AAA",))
         with self.assertRaises(lr.LongRunStop) as ctx:
@@ -806,9 +817,11 @@ class FakeClockSimulationTest(IsolatedTest):
         lr.save_active_state(state)
         times = [
             _ET.localize(datetime(2026, 9, 8, 11, 0)).astimezone(timezone.utc),
-            # F10 checkpoints read now_fn three times inside the round
-            # (pre-screening, per-symbol loop, pre-execution); they must all
-            # land inside the window.
+            # R02 Layer 1 reads now_fn once at round entry (stop precheck);
+            # F10 checkpoints then read now_fn three more times inside the
+            # round (pre-screening, per-symbol loop, pre-execution) — all
+            # must land inside the window.
+            _ET.localize(datetime(2026, 9, 8, 11, 1)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 8, 11, 2)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 8, 11, 3)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 8, 11, 4)).astimezone(timezone.utc),
@@ -1029,12 +1042,15 @@ class LateResumeTest(IsolatedTest):
         times = [
             _ET.localize(datetime(2026, 9, 10, 10, 0)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 0)).astimezone(timezone.utc),
+            # R02 Layer 1 reads now_fn once at round entry (stop precheck);
             # F10 intra-round checkpoint reads must stay inside the window:
             # pre-screening, per-symbol loop, post-analysis, pre-execution.
+            _ET.localize(datetime(2026, 9, 10, 11, 1)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 2)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 3)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 4)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 5)).astimezone(timezone.utc),
+            _ET.localize(datetime(2026, 9, 10, 11, 6)).astimezone(timezone.utc),
             started + lr.timedelta(days=30, hours=1),
         ]
         calls = {"n": 0}

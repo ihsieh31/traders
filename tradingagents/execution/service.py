@@ -2099,7 +2099,8 @@ class ExecutionService:
         )
 
     def _resubmit_recovered(
-        self, broker: Any, local: dict[str, Any], snapshot: BrokerSnapshot
+        self, broker: Any, local: dict[str, Any], snapshot: BrokerSnapshot,
+        can_submit: Optional[Callable[[], bool]] = None,
     ) -> None:
         if local.get("quantity") is None and local.get("notional") is None:
             raise BrokerAuthorityError(
@@ -2241,6 +2242,21 @@ class ExecutionService:
             raise BrokerAuthorityError(
                 f"recovery state conflict: {local['client_order_id']}"
             )
+        # R02 Layer 2: the submit-boundary guard. The caller's stop/window
+        # authority may have flipped while recovery's GET lookups ran; this
+        # is the last check before the POST. Refusal is NOT a rejection and
+        # NOT a CLEAN outcome: the row moves to UNKNOWN (the durable
+        # "outcome unresolved" state, provably POST-free here — PENDING is
+        # not a legal SUBMITTING transition), so a later authorized resume
+        # re-enters the normal adopt-or-resubmit path, and this round's
+        # reconciliation reports it unresolved.
+        if can_submit is not None and not can_submit():
+            self._store.transition_order(current["order_id"], "UNKNOWN")
+            raise BrokerAuthorityError(
+                f"recovery resubmit deferred by stop/window authority: "
+                f"{local['client_order_id']} (no broker POST was made; the "
+                "order stays durably unresolved for a later authorized resume)"
+            )
         # Rebuild the request with the effective (cap-clipped) size before
         # the POST; the durable client_order_id is unchanged.
         request = _build_market_request(
@@ -2267,6 +2283,7 @@ class ExecutionService:
                 spec={"notional": effective_notional, "quantity": effective_quantity},
                 quote=quote,
                 snapshot=snapshot,
+                broker=broker,
             )
             if blocked:
                 self._store.transition_order(current["order_id"], "CANCELED")
@@ -2333,7 +2350,10 @@ class ExecutionService:
         )
 
     def _recover_locked(
-        self, broker: Any, snapshot: BrokerSnapshot
+        self,
+        broker: Any,
+        snapshot: BrokerSnapshot,
+        can_submit: Optional[Callable[[], bool]] = None,
     ) -> tuple[BrokerSnapshot, Any]:
         """Resolve durable nonterminal rows before permitting new exposure.
 
@@ -2347,6 +2367,10 @@ class ExecutionService:
         binding BEFORE any recovery or execution mutation. Every mutating
         entry (execute / startup_recover / enforce_exit_deadlines /
         liquidate) passes through here under the account lock.
+
+        R02: ``can_submit`` is the caller's stop/window authority, checked
+        one final time inside each resubmit immediately before its broker
+        POST. ``None`` keeps the legacy behavior for non-long-run callers.
         """
         try:
             self._store.ensure_account_binding(snapshot.account_id)
@@ -2405,7 +2429,7 @@ class ExecutionService:
                 self._adopt_recovery_order(local, found)
                 changed = True
             elif status in {"PENDING", "UNKNOWN"}:
-                self._resubmit_recovered(broker, local, snapshot)
+                self._resubmit_recovered(broker, local, snapshot, can_submit=can_submit)
                 changed = True
             else:
                 # SUBMITTING/PARTIAL without a broker fact is not safe to replay.
@@ -2442,8 +2466,17 @@ class ExecutionService:
             snapshot, self._reconcile_snapshot(broker, snapshot)
         )
 
-    def startup_recover(self) -> dict[str, Any]:
-        """Scheduler/startup gate: recover first; only CLEAN may auto-trade."""
+    def startup_recover(
+        self, can_submit: Optional[Callable[[], bool]] = None
+    ) -> dict[str, Any]:
+        """Scheduler/startup gate: recover first; only CLEAN may auto-trade.
+
+        R02: ``can_submit`` (long-run callers pass their stop/window
+        authority) is consulted inside recovery immediately before each
+        resubmit POST, closing the TOCTOU window between the caller's outer
+        precheck and the broker mutation. A refusal leaves the row durably
+        unresolved (no fake REJECTED, no CLEAN claim).
+        """
         try:
             broker = self._broker_factory()
             identity = capture_broker_snapshot(broker)
@@ -2451,7 +2484,9 @@ class ExecutionService:
                 snapshot = capture_broker_snapshot(
                     broker, expected_account_id=identity.account_id
                 )
-                snapshot, result = self._recover_locked(broker, snapshot)
+                snapshot, result = self._recover_locked(
+                    broker, snapshot, can_submit=can_submit
+                )
                 return {
                     "success": result.clean,
                     "account_execution_state": result.state,
@@ -2527,6 +2562,31 @@ class ExecutionService:
         except Exception:
             pass
 
+    def _market_clock_closed(self, broker: Any) -> Optional[str]:
+        """R13: None when the broker clock proves the session open, else a
+        fail-closed reason (closed market, unavailable or malformed clock).
+
+        A clock that cannot be proven open is treated as closed: an entry
+        POST left to a later session would trade on stale analysis. This gate
+        applies only to exposure-adding opening dispatch; verified closes and
+        risk-reducing orders never consult it.
+        """
+        if broker is None:
+            return "broker market clock unavailable: no broker to prove the session open"
+        getter = getattr(broker, "get_clock", None)
+        if not callable(getter):
+            return "broker exposes no market clock; cannot prove the session open"
+        try:
+            clock = getter()
+        except Exception as exc:
+            return f"broker market clock unavailable ({exc}); refusing to open exposure"
+        is_open = getattr(clock, "is_open", None)
+        if is_open is None and isinstance(clock, dict):
+            is_open = clock.get("is_open")
+        if is_open is not True:
+            return "market/session is closed per the broker clock; no new entry may be posted"
+        return None
+
     def _validate_opening_dispatch(
         self,
         *,
@@ -2535,6 +2595,7 @@ class ExecutionService:
         spec: dict[str, Any],
         quote: Any,
         snapshot: Optional[BrokerSnapshot],
+        broker: Any = None,
     ) -> Optional[str]:
         """R05: re-prove entry authorization at the final broker POST boundary.
 
@@ -2547,6 +2608,12 @@ class ExecutionService:
         becomes CANCELED (provable: no POST was made) and the caller must
         re-acquire fresh facts and re-analyze. Returns None when dispatch may
         proceed, else a fail-closed reason.
+
+        R13: opening orders additionally require the broker's own clock to
+        prove the regular session is open (clock.is_open). A closed market,
+        an unavailable or malformed clock response — all fail closed with
+        zero POSTs. Close/risk-reducing orders never route through this
+        helper and are never blocked by the opening gate.
         """
         if snapshot is None:
             return "dispatch revalidation failed: no authoritative broker snapshot"
@@ -2563,6 +2630,11 @@ class ExecutionService:
             validate_quote(quote, symbol)
         except BrokerAuthorityError as exc:
             return f"dispatch revalidation failed: {exc}"
+        # R13 execution layer: prove the regular session is open from the
+        # broker's own clock immediately before the exposure-adding POST.
+        market_closed = self._market_clock_closed(broker)
+        if market_closed is not None:
+            return f"dispatch revalidation failed: {market_closed}"
         if spec.get("notional") is not None:
             amount = float(spec["notional"])
         elif spec.get("quantity") is not None:
@@ -2677,7 +2749,7 @@ class ExecutionService:
             if spec.get("role") == "open":
                 blocked = self._validate_opening_dispatch(
                     intent_dict=intent_dict, symbol=symbol, spec=spec,
-                    quote=_quote, snapshot=_snapshot,
+                    quote=_quote, snapshot=_snapshot, broker=broker,
                 )
                 if blocked:
                     _, blocked_row = self._store.transition_order(order_id, "CANCELED")

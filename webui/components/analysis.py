@@ -193,22 +193,34 @@ def run_analysis(
     checkpoint_enabled=False,
     provider_settings=None,
     progress=None,
+    run_generation=None,
 ):
     """Run the trading analysis using current/real-time data
 
     Args:
         research_depth_config: Either a dict with "rounds" and "level" keys,
                               or an integer for backward compatibility
+        run_generation: Dispatch-time run token (R11). When given, it is this
+                              run's immutable identity for its whole lifetime;
+                              ``None`` (legacy direct calls) captures the
+                              global counter once at entry. A worker must
+                              never re-read the global mid-run to decide who
+                              it is — a Stop→Start during slow work would let
+                              an old run masquerade as the new generation.
     """
     run_logger = get_run_audit_logger()
     run_started = False
     final_state = None
     current_date = None
-    # F02: capture this run's generation up front. An operator Stop bumps
-    # app_state.run_generation; a stale run may finish its LLM work but
-    # must never persist an executable result, trade, or clear a newer
-    # run's flags.
-    my_generation = app_state.run_generation
+    # F02/R11: this run's generation is fixed at entry and never re-read.
+    # An operator Stop bumps app_state.run_generation; a stale run may finish
+    # its LLM work but must never persist an executable result, trade, or
+    # clear a newer run's flags.
+    my_generation = (
+        run_generation
+        if run_generation is not None
+        else app_state.run_generation
+    )
 
     def _run_is_stale() -> bool:
         return my_generation != app_state.run_generation
@@ -420,6 +432,9 @@ def run_analysis(
         print(f"Analysis stopped for {ticker}: {exc}")
         import traceback
         traceback.print_exc()
+        # Finish THIS run's own audit record first, then decide by generation
+        # (R12): an old run failing after a Stop→Start must not write the new
+        # run's provider_stop_reason or clear the new run's analysis_queue.
         if run_started:
             run_logger.finish_run(
                 symbol=ticker,
@@ -428,7 +443,14 @@ def run_analysis(
                 error_message=str(exc),
             )
             run_started = False
-        mark_provider_stop(ticker, exc)
+        if _run_is_stale():
+            print(
+                f"[ANALYSIS] {ticker}: stale run generation "
+                f"({my_generation} != {app_state.run_generation}); provider "
+                "failure recorded for the old run only"
+            )
+        else:
+            mark_provider_stop(ticker, exc)
         if progress is not None:
             progress(1.0)
     except Exception as e:
@@ -474,8 +496,25 @@ def start_analysis(
     checkpoint_enabled=False,
     provider_settings=None,
     progress=None,
+    run_generation=None,
 ):
-    """Start real-time analysis function for the UI"""
+    """Start real-time analysis function for the UI
+
+    R11: ``run_generation`` is the dispatch-time run token (the scheduler
+    passes its already-captured generation; a manual direct call may omit it
+    and the token is captured once here). The token is immutable for this
+    work item — it is never re-read after slow steps to decide identity.
+    """
+    # R11: capture this work item's generation exactly once, before the
+    # budget gate and the (potentially slow) initial chart below.
+    my_generation = (
+        run_generation
+        if run_generation is not None
+        else app_state.run_generation
+    )
+
+    def _work_is_stale() -> bool:
+        return my_generation != app_state.run_generation
 
     # Deterministic LLM budget gate (production safety layer): refuse to burn
     # tokens on a new analysis once the daily budget is exhausted.
@@ -529,7 +568,23 @@ def start_analysis(
         import traceback
         traceback.print_exc()
 
-    # Run analysis with current data
+    # R11: chart creation is a slow step — a Stop→Start may have bumped the
+    # generation while it ran. Re-check the dispatch token BEFORE entering
+    # run_analysis; a stale work item must not start LLM work (or trade)
+    # under the new run's identity.
+    if _work_is_stale():
+        print(
+            f"[ANALYSIS] {ticker}: stale dispatch generation "
+            f"({my_generation} != {app_state.run_generation}) after initial "
+            "chart; analysis not started"
+        )
+        return (
+            f"Analysis for {ticker} discarded: the run was restarted before "
+            "analysis began."
+        )
+
+    # Run analysis with current data; the dispatch token travels with the
+    # work item so run_analysis never re-reads the global to decide identity.
     run_analysis(
         ticker,
         selected_analysts,
@@ -545,6 +600,7 @@ def start_analysis(
         checkpoint_enabled=checkpoint_enabled,
         provider_settings=provider_settings,
         progress=progress,
+        run_generation=my_generation,
     )
 
     # A provider failure stops the whole scheduling round; surface it to the

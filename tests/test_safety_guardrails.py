@@ -505,6 +505,9 @@ class ExecutionIntegrationTests(unittest.TestCase):
 
     def _mock_broker(self):
         broker = MagicMock()
+        # R13: opening orders must prove the session open from the broker
+        # clock before any exposure-adding POST; the fixture keeps it open.
+        broker.get_clock.return_value = SimpleNamespace(is_open=True)
         order = MagicMock()
         order.id = "broker-1"
         order.symbol = "AAPL"
