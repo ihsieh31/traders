@@ -389,8 +389,16 @@ class ExecutionIntegrationTests(unittest.TestCase):
                         updated_at=datetime.now(timezone.utc),
                     )
                 ]
+                # R14: the second decision must be made on the fresh facts
+                # (the account now holds the 18% LONG) — a decision still
+                # claiming NEUTRAL is stale and fails closed. The builder
+                # maps current=LONG to a HOLD, so the increase intent keeps
+                # its OPEN_LONG planned action with the corrected
+                # current_position.
+                increase_intent = self._intent()
+                increase_intent["current_position"] = "LONG"
                 second = svc.execute(
-                    trade_intent=self._intent(), dollar_amount=5000.0,
+                    trade_intent=increase_intent, dollar_amount=5000.0,
                     decision_id="dec-second-buy",
                 )
             self.assertTrue(second["success"])

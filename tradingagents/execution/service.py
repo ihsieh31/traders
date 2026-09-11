@@ -29,10 +29,12 @@ from tradingagents.execution.authority import (
     BrokerSnapshot,
     Reconciler,
     ReconciliationResult,
+    SNAPSHOT_TTL_SECONDS,
     broker_status_to_local,
     capture_broker_snapshot,
     capture_quote,
     utc_now,
+    validate_freshness,
     validate_quote,
 )
 
@@ -56,7 +58,46 @@ _TIMEOUT_MARKERS = (
 )
 
 
+def _exception_http_status(exc: BaseException) -> Optional[int]:
+    """Extract an HTTP status from an exception chain without text guessing (R07).
+
+    Reads structured attributes only — the exception's own ``response`` /
+    ``status_code`` and the same attributes on wrapped causes (requests
+    ``HTTPError``, alpaca ``APIError``). Message text never proves an HTTP
+    status, so it is not pattern-matched here.
+    """
+    current: Optional[BaseException] = exc
+    for _ in range(6):
+        if current is None:
+            return None
+        for attr in ("response", "status_code"):
+            try:
+                value = getattr(current, attr, None)
+            except Exception:
+                value = None
+            status = getattr(value, "status_code", None)
+            if isinstance(status, int) and 100 <= status <= 599:
+                return status
+            if isinstance(value, int) and 100 <= value <= 599:
+                return value
+        current = current.__cause__ or next(
+            (a for a in current.args if isinstance(a, BaseException)), None
+        )
+    return None
+
+
 def _is_ambiguous_error(exc: BaseException) -> bool:
+    """True when a submit outcome cannot be proven either way (R07).
+
+    HTTP 408 and any 5xx (including Cloudflare 520-527/530) mean the broker
+    may have accepted the POST before failing to answer; transport timeouts
+    and connection resets are equally unprovable. Only a provable outcome
+    (a definitive 4xx response, or no POST at all) may be treated as
+    terminal.
+    """
+    status = _exception_http_status(exc)
+    if status is not None and (status == 408 or 500 <= status <= 599):
+        return True
     text = f"{type(exc).__name__} {exc}".lower()
     return any(m in text for m in _TIMEOUT_MARKERS)
 
@@ -567,13 +608,67 @@ class ExecutionService:
         except Exception:
             pass
 
+    @staticmethod
+    def _broker_order_live(snapshot: BrokerSnapshot, broker_order_id: str) -> bool:
+        """R03: is this broker order still live according to fresh facts?"""
+        for order in snapshot.orders:
+            if order.broker_order_id == broker_order_id:
+                return broker_status_to_local(order.status) not in {
+                    "FILLED", "CANCELED", "REJECTED", "EXPIRED",
+                }
+        return False
+
+    def _cancel_protection_with_race_check(
+        self,
+        broker: Any,
+        snapshot: BrokerSnapshot,
+        order: Any,
+        *,
+        account_id: str,
+    ) -> tuple[BrokerSnapshot, int]:
+        """One proven-protection DELETE hardened against bracket cascade (R03).
+
+        Canceling one Alpaca bracket child often cascade-cancels its sibling,
+        so a blind second DELETE raises "already canceled" and previously
+        aborted the close mid-flow, leaving a live position with no
+        protection. Rules here:
+
+        - a fresh snapshot before every DELETE skips children the broker has
+          already taken to a terminal state (cascade done, no DELETE sent);
+        - the outcome of a failing DELETE is settled by FRESH FACTS, never by
+          the error text: a proven-terminal child was a harmless cascade
+          race; a still-live child keeps its protection and the caller's
+          verified-exit check refuses the close (fail closed);
+        - every DELETE actually sent counts, even when it raised;
+        - every step reconciles against a fresh snapshot.
+
+        Returns (freshest snapshot, 1 when a DELETE was actually sent else 0).
+        """
+        fresh = capture_broker_snapshot(broker, expected_account_id=account_id)
+        self._reconcile_snapshot(broker, fresh)
+        if not self._broker_order_live(fresh, order.broker_order_id):
+            return fresh, 0  # broker cascade already completed this child
+        try:
+            broker.cancel_order_by_id(order.broker_order_id)
+        except Exception:
+            after = capture_broker_snapshot(broker, expected_account_id=account_id)
+            self._reconcile_snapshot(broker, after)
+            # Fresh facts decide: still-live means the cancel genuinely failed
+            # and the position is still protected — the verified-exit gate
+            # below will refuse the close instead of racing a bare position.
+            return after, 1
+        after = capture_broker_snapshot(broker, expected_account_id=account_id)
+        self._reconcile_snapshot(broker, after)
+        return after, 1
+
     def _cancel_owned_close_protections(self, broker, snapshot, symbol):
         """Cancel proven protections before an explicit full-position exit.
 
         Manual or ambiguous orders are never canceled. A pending cancellation
         is still rejected by the subsequent verified-exit check. The caller
         must already hold a durably-committed close (F04 sequencing) before
-        invoking this mutation.
+        invoking this mutation. R03: bracket cascade and cancel races are
+        absorbed per-child instead of aborting the close flow.
         """
         position = snapshot.position(symbol)
         if position is None:
@@ -605,11 +700,13 @@ class ExecutionService:
         )
         if verdict is not None and not verdict.allowed:
             raise BrokerAuthorityError("Protection cancellation blocked by safety policy")
+        canceled_calls = 0
         for order in orders:
-            broker.cancel_order_by_id(order.broker_order_id)
-        refreshed = capture_broker_snapshot(broker, expected_account_id=snapshot.account_id)
-        self._reconcile_snapshot(broker, refreshed)
-        return refreshed, len(orders)
+            snapshot, calls = self._cancel_protection_with_race_check(
+                broker, snapshot, order, account_id=snapshot.account_id,
+            )
+            canceled_calls += calls
+        return snapshot, canceled_calls
 
     # -- protection-gap invariant (F04) ------------------------------------
 
@@ -743,6 +840,120 @@ class ExecutionService:
             snapshot_version=result.snapshot_version,
         )
 
+    # -- general protection coverage invariant (R09) ------------------------
+
+    def _protection_coverage_gaps(self, snapshot: BrokerSnapshot) -> list[str]:
+        """R09: symbols whose program-built protection disappeared while the
+        position is still live.
+
+        Only positions the durable ledger can prove came from THIS program's
+        protected entry (a registered protective child relation) are judged —
+        manual holdings are never forced under this rule. For each such live
+        position the provable coverage is:
+
+        - live program-owned protective children, grouped by their opening
+          parent: a sibling stop/target pair contributes its LARGEST single
+          remaining qty (never the sum — one lot is covered once);
+        - plus any other program-owned live exposure-reducing order
+          (a proven close in progress covers the exit).
+
+        Terminal children cover nothing, and a held child of a not-yet-filled
+        parent is not yet active protection. Insufficient coverage means the
+        account must be PAUSED with a stable ``PROTECTION_GAP:`` reason until
+        fresh broker facts prove the position closed or safely covered again.
+        """
+        gaps: list[str] = []
+        rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        try:
+            for row in self._store.list_all_orders():
+                rows_by_symbol.setdefault(str(row.get("symbol") or "").upper(), []).append(row)
+        except Exception as exc:
+            # Ledger unavailable: coverage cannot be proven either way.
+            return [
+                f"PROTECTION_GAP: protection coverage could not be evaluated "
+                f"because the durable ledger is unreadable: {exc}"
+            ]
+        for position in snapshot.positions:
+            if abs(position.qty) <= 1e-9:
+                continue
+            symbol = position.symbol
+            rows = rows_by_symbol.get(symbol, [])
+            has_protected_entry = False
+            for row in rows:
+                try:
+                    if self._store.protective_parent(row["order_id"]):
+                        has_protected_entry = True
+                        break
+                except Exception:
+                    continue
+            if not has_protected_entry:
+                continue  # never a program-protected entry: manual position
+            reducing_side = "sell" if position.qty > 0 else "buy"
+            group_best: dict[str, float] = {}
+            close_covered = 0.0
+            for order in snapshot.orders:
+                if order.symbol != symbol or order.side != reducing_side:
+                    continue
+                if broker_status_to_local(order.status) in {
+                    "FILLED", "CANCELED", "REJECTED", "EXPIRED",
+                }:
+                    continue  # terminal children/orders cover nothing
+                local = self._store.get_order_by_client(order.client_order_id)
+                if not local or local.get("broker_order_id") != order.broker_order_id:
+                    continue  # manual/unknown orders never prove protection
+                remaining = max(0.0, float(order.qty or 0) - float(order.filled_qty or 0))
+                if remaining <= 1e-9:
+                    continue
+                try:
+                    parent_id = self._store.protective_parent(local["order_id"])
+                except Exception:
+                    parent_id = None
+                if parent_id:
+                    if str(order.status).lower() == "held":
+                        parent_row = self._store.get_order(parent_id)
+                        if not parent_row or str(parent_row.get("status") or "").upper() != "FILLED":
+                            # A held child of a not-fully-filled parent is not
+                            # yet active protection.
+                            continue
+                    group_best[parent_id] = max(group_best.get(parent_id, 0.0), remaining)
+                else:
+                    close_covered += remaining  # program-owned live reducing close
+            covered = close_covered + sum(group_best.values())
+            if covered >= abs(position.qty) - 1e-8:
+                continue
+            gaps.append(
+                f"PROTECTION_GAP: {symbol} remains exposed with no proven live "
+                f"protection or program-owned close covering the "
+                f"{abs(position.qty):g}-share position; operator review required"
+            )
+        return gaps
+
+    def _apply_protection_coverage(
+        self, snapshot: BrokerSnapshot, result: Any,
+    ) -> Any:
+        """Recovery wrap-up (R09): PAUSED when proven protection is missing.
+
+        Fresh broker facts decide every time: a closed position or restored
+        sufficient coverage lets normal reconciliation report CLEAN, so a
+        prior pause is never sticky beyond what the broker still shows.
+        """
+        gaps = self._protection_coverage_gaps(snapshot)
+        if not gaps:
+            return result
+        merged = tuple(dict.fromkeys(list(result.reasons) + gaps))
+        self._store.save_account_state(
+            account_id=snapshot.account_id,
+            state="PAUSED",
+            reasons=merged,
+            snapshot_version=snapshot.version,
+            baseline_positions={p.symbol: p.qty for p in snapshot.positions},
+        )
+        return ReconciliationResult(
+            state="PAUSED",
+            reasons=merged,
+            snapshot_version=snapshot.version,
+        )
+
 
     def enforce_exit_deadlines(self) -> dict[str, Any]:
         """Exit due, fill-proven positions on scheduled checks under the account lock.
@@ -818,14 +1029,17 @@ class ExecutionService:
                         )
                     # F01: cancellation count is per symbol; the protection-gap
                     # evaluation below must never see another symbol's tally.
+                    # R03: the same cascade/race-hardened cancel helper as the
+                    # close flow — a sibling canceled by broker cascade must
+                    # never abort the deadline close and leave a bare position.
                     canceled_here = 0
                     for order in conflicting:
-                        canceled_here += 1
-                        broker.cancel_order_by_id(order.broker_order_id)
-                        snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
-                        self._reconcile_snapshot(broker, snapshot)
+                        snapshot, calls = self._cancel_protection_with_race_check(
+                            broker, snapshot, order,
+                            account_id=identity.account_id,
+                        )
+                        canceled_here += calls
                     cancellation_calls += canceled_here
-                    snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
                     current = snapshot.position(symbol)
                     # A protective child may fill during cancellation. Recompute lots.
                     self._reconcile_snapshot(broker, snapshot)
@@ -926,6 +1140,14 @@ class ExecutionService:
                     "broker_calls": deadlines.get("broker_calls", 0),
                     "reason": "Deadline exits processed; reanalyze before any new entry"}
         specs = _planned_order_specs(intent_dict, dollar_amount)
+        # R04: a reversal intent (close the existing side + open the opposite
+        # side) is executed as a CLOSE-ONLY phase in this call. Classifying it
+        # as opening let the opening-only gates and the own-protection
+        # conflict check block even the risk-reducing close leg.
+        is_reversal = any(spec.get("role") == "close" for spec in specs) and any(
+            spec.get("role") == "open" for spec in specs
+        )
+        opening_this_call = any(spec.get("role") == "open" for spec in specs) and not is_reversal
         if not specs:  # HOLD has no execution facts to gate.
             return self._execute_core(
                 trade_intent=trade_intent,
@@ -936,7 +1158,7 @@ class ExecutionService:
                 risk_params=risk_params,
                 current_position=current_position,
             )
-        if any(spec.get("role") == "open" for spec in specs):
+        if opening_this_call:
             from .policy import entry_check
             _, policy_error = entry_check(intent_dict)
             if policy_error:
@@ -945,7 +1167,7 @@ class ExecutionService:
         # Phase B corporate-action quarantine: a quarantined symbol takes no
         # new exposure (zero broker calls). Verified reducing exits keep the
         # Phase A path and are checked below under the account lock.
-        if any(spec.get("role") == "open" for spec in specs):
+        if opening_this_call:
             quarantine = self._quarantine_rejection(intent_dict["symbol"])
             if quarantine:
                 return {
@@ -985,13 +1207,18 @@ class ExecutionService:
                     broker, expected_account_id=identity.account_id
                 )
                 snapshot, reconciliation = self._recover_locked(broker, snapshot)
-                opening = any(spec.get("role") == "open" for spec in specs)
+                opening_this_call = any(
+                    spec.get("role") == "open" for spec in specs
+                ) and not (
+                    any(spec.get("role") == "close" for spec in specs)
+                    and any(spec.get("role") == "open" for spec in specs)
+                )
                 closing_specs = [spec for spec in specs if spec.get("role") == "close"]
-                if not reconciliation.clean and opening:
+                if not reconciliation.clean and opening_this_call:
                     return self._paused_result(snapshot, reconciliation.reasons)
                 canceled_protections = 0
                 prepared_outbox: Optional[dict[str, Any]] = None
-                if closing_specs and not opening:
+                if closing_specs and not opening_this_call:
                     symbol_for_close = intent_dict.get("symbol", "")
                     close_position = snapshot.position(symbol_for_close)
                     if close_position is not None:
@@ -1047,25 +1274,29 @@ class ExecutionService:
                             )
                             if gap is not None:
                                 return gap
-                            return self._paused_result(
+                            paused = self._paused_result(
                                 snapshot,
                                 ["close position changed during protection cancellation"],
                             )
+                            paused["broker_calls"] = canceled_protections
+                            return paused
                 if closing_specs and not self._verified_reducing_exit(
                     snapshot, intent_dict.get("symbol", ""), closing_specs
                 ):
-                    return self._paused_result(
+                    paused = self._paused_result(
                         snapshot,
                         list(reconciliation.reasons)
                         + ["close requires a fresh matching broker position and no conflicting close order"],
                     )
+                    paused["broker_calls"] = canceled_protections
+                    return paused
                 # Phase C entry gate: in auto-screening mode only today's
                 # validated Top20 may open exposure. Program-derived and
                 # re-verified inside the single execution entry, so direct
                 # callers and checkpoint resumes cannot bypass it. HOLD and
                 # verified reducing exits are untouched; recovery of already
                 # authorized orders has already happened above.
-                if opening:
+                if opening_this_call:
                     from tradingagents.screening.gate import check_entry_allowed
 
                     entry_block = check_entry_allowed(
@@ -1090,7 +1321,7 @@ class ExecutionService:
                 # caps (clipped to headroom) instead of an implicit HOLD.
                 quote = (
                     validate_quote(self._quote_factory(intent_dict["symbol"]), intent_dict["symbol"])
-                    if opening else None
+                    if opening_this_call else None
                 )
                 verified_position = (
                     "LONG" if position and position.qty > 0 else
@@ -1107,6 +1338,9 @@ class ExecutionService:
                     _broker=broker,
                     _snapshot=snapshot,
                     _quote=quote,
+                    # R04: reversal runs its close phase only this call; the
+                    # opposite open stays deferred to a later fresh analysis.
+                    _reversal_close_only=is_reversal,
                 )
                 result["broker_calls"] = result.get("broker_calls", 0) + canceled_protections
                 result["preflight_snapshot_version"] = snapshot.version
@@ -1178,6 +1412,7 @@ class ExecutionService:
         _broker: Any = None,
         _snapshot: Optional[BrokerSnapshot] = None,
         _quote: Any = None,
+        _reversal_close_only: bool = False,
     ) -> dict[str, Any]:
         intent_dict, err = validate_trade_intent(trade_intent)
         if err or intent_dict is None:
@@ -1274,7 +1509,13 @@ class ExecutionService:
             "LONG": "LONG",
             "SHORT": "SHORT",
         }.get(signal)
-        opens_new_exposure = any(s.get("role") == "open" for s in _planned_order_specs(intent_dict, dollar_amount))
+        # R04: in a reversal close-phase call the specs still carry the
+        # opposite open leg (durable outbox identity is preserved), but this
+        # call never adds exposure — every opening-only path below stays off.
+        opens_new_exposure = (
+            any(s.get("role") == "open" for s in _planned_order_specs(intent_dict, dollar_amount))
+            and not _reversal_close_only
+        )
         if risk_params is not None and opens_new_exposure:
             order_side = "sell" if signal == "SHORT" else "buy"
             try:
@@ -1364,6 +1605,47 @@ class ExecutionService:
                     spec["quantity"] = abs(verified.qty)
                     spec["notional"] = None
                     spec["side"] = "sell" if verified.qty > 0 else "buy"
+        # F05: a close-then-open reversal completes ONLY its close phase in
+        # this call (see the submit loop below). Computed once here because
+        # the R14 precondition below must never block a reversal's
+        # risk-reducing close phase.
+        is_reversal_flip = any(
+            spec.get("role") == "close" for spec in specs
+        ) and any(spec.get("role") == "open" for spec in specs)
+        # R14: position-transition precondition. The decision was made
+        # against the intent's current_position facts; if the fresh broker
+        # snapshot now shows a different side, the decision is stale. It is
+        # never replayed as-is: no automatic flip reinterpretation, no
+        # quantity rewrite to "just flip it" — fail closed with zero broker
+        # calls and require a fresh analysis. Verified reducing exits
+        # (closes, reversal close phases) are not gated by this rule.
+        if (
+            not is_reversal_flip
+            and any(spec.get("role") == "open" for spec in specs)
+            and _snapshot is not None
+        ):
+            live_position = _snapshot.position(symbol)
+            actual_side = (
+                "LONG" if live_position is not None and live_position.qty > 0
+                else "SHORT" if live_position is not None and live_position.qty < 0
+                else "NEUTRAL"
+            )
+            intent_side = str(intent_dict.get("current_position") or "").upper()
+            if intent_side != actual_side:
+                return {
+                    "success": False,
+                    "fail_closed": True,
+                    "broker_attempted": False,
+                    "broker_calls": 0,
+                    "stale_position_transition": True,
+                    "error": (
+                        f"stale position transition: decision assumed "
+                        f"current_position={intent_side or 'unknown'} but the "
+                        f"broker now holds {actual_side}; fresh analysis is "
+                        "required before any opening order"
+                    ),
+                    "trade_intent": intent_dict,
+                }
 
         # Phase B deterministic exposure caps: clip the increasing leg of
         # every exposure-adding order (fresh opens AND increases of an
@@ -1371,7 +1653,7 @@ class ExecutionService:
         # cap, the gross cap and cash — with outstanding open orders counted
         # against headroom. Verified reducing exits never pass through here.
         exposure_check_info: Optional[dict] = None
-        adds_exposure = target_position_open is not None
+        adds_exposure = target_position_open is not None and not _reversal_close_only
         if adds_exposure and _snapshot is not None and any(
             spec.get("role") == "open" for spec in specs
         ):
@@ -1526,10 +1808,8 @@ class ExecutionService:
         # this call. The opposite open leg is never submitted here — sizing,
         # caps and quotes were computed from pre-close facts, and an accepted
         # close is not a proven flat position. A later fresh analysis decides
-        # the new direction from a fresh broker snapshot.
-        is_reversal_flip = any(s["role"] == "close" for s in specs) and any(
-            s["role"] == "open" for s in specs
-        )
+        # the new direction from a fresh broker snapshot. (is_reversal_flip
+        # was computed above, before the outbox commit, for the R14 gate.)
         for spec, orow in zip(specs, order_rows):
             if (orow.get("status") or "").upper() != "PENDING":
                 results.append(
@@ -1625,7 +1905,7 @@ class ExecutionService:
             self._store.update_intent_state(intent_row["intent_id"], "SUBMITTING")
             submit_outcome = self._submit_one(
                 order_row=orow, spec=spec, symbol=symbol, intent_dict=intent_dict,
-                broker=_broker,
+                broker=_broker, _snapshot=_snapshot, _quote=_quote,
             )
             broker_calls += int(submit_outcome.get("broker_calls", 0))
             if (
@@ -1977,6 +2257,20 @@ class ExecutionService:
             raise BrokerAuthorityError(
                 f"recovery order has no valid size: {local['client_order_id']}"
             )
+        # R05: recovery resubmits share the same final-POST boundary proof as
+        # initial submits — one helper, one semantics. The row is SUBMITTING
+        # here and provably POST-free, so CANCELED is the safe terminal state.
+        if not risk_reducing:
+            blocked = self._validate_opening_dispatch(
+                intent_dict=payload,
+                symbol=local["symbol"],
+                spec={"notional": effective_notional, "quantity": effective_quantity},
+                quote=quote,
+                snapshot=snapshot,
+            )
+            if blocked:
+                self._store.transition_order(current["order_id"], "CANCELED")
+                raise BrokerAuthorityError(block)
         try:
             response = broker.submit_order(request)
         except Exception as exc:
@@ -2072,7 +2366,7 @@ class ExecutionService:
             "unresolved SUBMITTING order:",
         )
         if any(not reason.startswith(recoverable_reasons) for reason in initial.reasons):
-            return snapshot, initial
+            return snapshot, self._apply_protection_coverage(snapshot, initial)
 
         def _broker_clients(current: BrokerSnapshot) -> set[str]:
             return {order.client_order_id for order in current.orders}
@@ -2143,8 +2437,10 @@ class ExecutionService:
             if _blocking_anomalies(step_result):
                 return snapshot, step_result
         if not changed:
-            return snapshot, initial
-        return snapshot, self._reconcile_snapshot(broker, snapshot)
+            return snapshot, self._apply_protection_coverage(snapshot, initial)
+        return snapshot, self._apply_protection_coverage(
+            snapshot, self._reconcile_snapshot(broker, snapshot)
+        )
 
     def startup_recover(self) -> dict[str, Any]:
         """Scheduler/startup gate: recover first; only CLEAN may auto-trade."""
@@ -2231,9 +2527,85 @@ class ExecutionService:
         except Exception:
             pass
 
+    def _validate_opening_dispatch(
+        self,
+        *,
+        intent_dict: dict[str, Any],
+        symbol: str,
+        spec: dict[str, Any],
+        quote: Any,
+        snapshot: Optional[BrokerSnapshot],
+    ) -> Optional[str]:
+        """R05: re-prove entry authorization at the final broker POST boundary.
+
+        Facts captured before sizing/caps/outbox-commit can go stale while the
+        process is suspended or the durable commit is slow. Immediately before
+        any exposure-adding POST, the SAME one helper (initial submit and
+        recovery) re-checks snapshot freshness, quote freshness and the entry
+        policy at the current time. On any failure the caller must NOT refresh
+        facts, resize, or rewrite the durable row: broker POST = 0, the row
+        becomes CANCELED (provable: no POST was made) and the caller must
+        re-acquire fresh facts and re-analyze. Returns None when dispatch may
+        proceed, else a fail-closed reason.
+        """
+        if snapshot is None:
+            return "dispatch revalidation failed: no authoritative broker snapshot"
+        if quote is None:
+            return "dispatch revalidation failed: no authoritative quote"
+        try:
+            validate_freshness(
+                snapshot.observed_at,
+                ttl_seconds=float(
+                    os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
+                ),
+                label="broker snapshot",
+            )
+            validate_quote(quote, symbol)
+        except BrokerAuthorityError as exc:
+            return f"dispatch revalidation failed: {exc}"
+        if spec.get("notional") is not None:
+            amount = float(spec["notional"])
+        elif spec.get("quantity") is not None:
+            amount = float(spec["quantity"]) * float(quote.price)
+        else:
+            return "dispatch revalidation failed: opening order has no provable size"
+        from .policy import entry_check
+
+        signal = str(intent_dict.get("action") or "").upper()
+        execution_price = (
+            quote.ask_price if signal in {"BUY", "LONG"} else quote.bid_price
+        )
+        capped, policy_error = entry_check(
+            intent_dict,
+            price=execution_price if execution_price else float("nan"),
+            equity=float(snapshot.equity),
+            requested=amount,
+        )
+        if policy_error:
+            return f"dispatch revalidation failed: {policy_error}"
+        if capped is None:
+            return "dispatch revalidation failed: entry policy returned no amount"
+        # entry_check floors to cents; tolerate only floor-level dust. A real
+        # shortfall (expired authorization, moved quote, changed equity) is
+        # far larger and fails closed instead of silently resizing here.
+        if capped + 0.02 < amount:
+            return (
+                f"dispatch revalidation failed: entry policy now allows at most "
+                f"${capped:,.2f}, below the durable order amount ${amount:,.2f}; "
+                "the order must not be sent at the old size"
+            )
+        return None
+
     def _submit_one(
-        self, *, order_row: dict[str, Any], spec: dict[str, Any], symbol: str,
-        intent_dict: dict[str, Any], broker: Any = None,
+        self,
+        *,
+        order_row: dict[str, Any],
+        spec: dict[str, Any],
+        symbol: str,
+        intent_dict: dict[str, Any],
+        broker: Any = None,
+        _snapshot: Optional[BrokerSnapshot] = None,
+        _quote: Any = None,
     ) -> dict[str, Any]:
         client_oid = order_row["client_order_id"]
         order_id = order_row["order_id"]
@@ -2298,6 +2670,26 @@ class ExecutionService:
                 self._store.transition_order(order_id, "REJECTED")
                 return {"ok": False, "status": "REJECTED", "broker_calls": 0,
                         "error": "Required protective order could not be constructed"}
+            # R05: last safety point before ANY exposure-adding POST. A stale
+            # snapshot/quote or an expired/reduced authorization must not slip
+            # through on the pre-commit approval; the durable row is provably
+            # POST-free here, so CANCELED is legal.
+            if spec.get("role") == "open":
+                blocked = self._validate_opening_dispatch(
+                    intent_dict=intent_dict, symbol=symbol, spec=spec,
+                    quote=_quote, snapshot=_snapshot,
+                )
+                if blocked:
+                    _, blocked_row = self._store.transition_order(order_id, "CANCELED")
+                    return {
+                        "ok": False,
+                        "status": str(blocked_row.get("status") or "CANCELED"),
+                        "pre_submit_blocked": True,
+                        "fail_closed": True,
+                        "client_order_id": client_oid,
+                        "broker_calls": 0,
+                        "error": blocked,
+                    }
             resp = None
             broker_calls = 0
             order_class: Optional[str] = None
@@ -2533,19 +2925,23 @@ class ExecutionService:
                     if gap is not None:
                         gap["broker_calls"] = canceled_protections
                         return gap
-                    return self._paused_result(
+                    paused = self._paused_result(
                         snapshot,
                         ["liquidation position changed during protection cancellation"],
                     )
+                    paused["broker_calls"] = canceled_protections
+                    return paused
                 if prepared is not None and not self._verified_reducing_exit(
                     snapshot, sym,
                     [{"role": "close", "side": side, "quantity": abs(position.qty)}],
                 ):
                     self._abandon_prepared_rows(prepared)
-                    return self._paused_result(
+                    paused = self._paused_result(
                         snapshot,
                         ["liquidation requires a fresh broker position and no conflicting close order"],
                     )
+                    paused["broker_calls"] = canceled_protections
+                    return paused
                 result = self._liquidate_core(
                     sym,
                     decision_id=decision_id,

@@ -483,6 +483,13 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         broker.get_all_positions.return_value = [
             SimpleNamespace(symbol="AAPL", qty="5", market_value="500")
         ]
+        # R14: the increase decision must carry the position facts it was
+        # made against (the account already holds the LONG); a decision still
+        # claiming NEUTRAL is stale and fails closed. The builder maps
+        # current=LONG to a HOLD, so keep the OPEN_LONG planned action and
+        # correct current_position.
+        intent = _buy_intent()
+        intent["current_position"] = "LONG"
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils, "compute_risk_sized_amount", return_value=SizingDecision(approved=True, notional=1000, stop_loss_price=96, risk_amount=40, caps_applied=[], reason="test")
         ) as snapshot, patch(
@@ -490,7 +497,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             return_value=self._disabled_guard(),
         ):
             result = self._service(tmp, broker).execute(
-                trade_intent=_buy_intent(),
+                trade_intent=intent,
                 dollar_amount=10_000,
                 allow_shorts=False,
                 risk_params={},

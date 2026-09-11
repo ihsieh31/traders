@@ -26,10 +26,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
-# Broker order statuses that can still add exposure. Anything terminal
-# (filled/canceled/rejected/expired) consumes no headroom; unknown-but-live
-# statuses stay conservative and count.
-_LIVE_ORDER_STATUSES_EXCLUSIVE = ("filled", "canceled", "cancelled", "rejected", "expired", "done_for_day")
+from tradingagents.execution.authority import broker_status_to_local
+
+# Single source of terminal truth: the authority module's broker->local
+# status mapping (R06). An order is live unless the broker status maps to
+# one of the four local terminal states, so done_for_day, held, accepted,
+# partial and unknown-but-live statuses all keep consuming headroom.
+# Maintaining a second terminal list here previously let a still-working
+# done_for_day order consume $0 headroom.
+_TERMINAL_LOCAL_STATUSES = frozenset({"FILLED", "CANCELED", "REJECTED", "EXPIRED"})
 
 # Alpaca minimum order notional; below this an order is not placeable.
 MIN_ORDER_NOTIONAL = 1.0
@@ -52,8 +57,7 @@ class ExposureDecision:
 
 
 def _is_live(status: str) -> bool:
-    value = str(status or "").lower()
-    return not any(marker in value for marker in _LIVE_ORDER_STATUSES_EXCLUSIVE)
+    return broker_status_to_local(status) not in _TERMINAL_LOCAL_STATUSES
 
 
 def outstanding_increasing_notional(

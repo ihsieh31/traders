@@ -104,6 +104,10 @@ class KellyStaysOffTests(unittest.TestCase):
             id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
         )
         intent = ExecutionIntegrationTests._intent(object(), current="NEUTRAL")
+        # R14: this opening decision is executed against an account that
+        # already holds the LONG, so the decision must carry those facts —
+        # keep the OPEN_LONG planned action and set current_position=LONG.
+        intent["current_position"] = "LONG"
         with tempfile.TemporaryDirectory() as tmp:
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
