@@ -318,6 +318,71 @@ def _collect_screening_settings(
     }
 
 
+def _webui_run_runtime_config(provider_settings, allow_shorts):
+    """Build THIS run's effective execution runtime over the global config.
+
+    R01: recovery's entry gates read the global config, so the run's
+    screening mode, allow_shorts and derived trading_mode must be applied
+    before startup_recover(). Merge order: old global config ->
+    provider_settings -> explicit execution runtime fields (allow_shorts
+    is the authority; trading_mode is re-derived from it and never trusted
+    from provider_settings or the stale global). Type violations raise
+    TypeError — the caller fail-closes: no coercion, no guessing, no
+    fallback to a stale or default config.
+    """
+    from tradingagents.dataflows.config import get_config
+
+    current_config = get_config()
+    if current_config is None:
+        current_config = {}
+    if not isinstance(current_config, dict):
+        raise TypeError(
+            f"get_config() must return dict or None, got {type(current_config).__name__}"
+        )
+    if provider_settings is None:
+        effective_provider_settings = {}
+    elif isinstance(provider_settings, dict):
+        effective_provider_settings = provider_settings
+    else:
+        raise TypeError(
+            "provider_settings must be dict or None, "
+            f"got {type(provider_settings).__name__}"
+        )
+    if "auto_screening_enabled" in effective_provider_settings:
+        screening = effective_provider_settings["auto_screening_enabled"]
+        if type(screening) is not bool:
+            raise TypeError(
+                "auto_screening_enabled must be a bool when provided, "
+                f"got {type(screening).__name__}: {screening!r}"
+            )
+    for key in (
+        "analysis_provider",
+        "analysis_model",
+        "analysis_backend_url",
+        "decision_provider",
+        "decision_model",
+        "decision_backend_url",
+        "screening_provider",
+        "screening_model",
+        "screening_backend_url",
+    ):
+        value = effective_provider_settings.get(key)
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"{key} must be str or None, got {type(value).__name__}"
+            )
+    if type(allow_shorts) is not bool:
+        raise TypeError(
+            "allow_shorts must be a bool, "
+            f"got {type(allow_shorts).__name__}: {allow_shorts!r}"
+        )
+    merged = dict(current_config)
+    merged.update(effective_provider_settings)
+    merged["allow_shorts"] = allow_shorts
+    merged["trading_mode"] = "trading" if allow_shorts else "investment"
+    return merged
+
+
 def _scheduler_thread(
     *,
     symbols,
@@ -366,20 +431,17 @@ def _scheduler_thread(
         return
 
     if trade_enabled:
-        # R01: apply THIS run's runtime settings to the global execution
-        # config BEFORE startup_recover() runs. Recovery's entry gates read
-        # the global config (get_config()); until this run's values are
-        # installed, a recovery opening could see a stale
-        # auto_screening_enabled=False global, classify itself as manual
-        # mode, and bypass the Top20 gate. The merge keeps every key the run
-        # did not explicitly override; failure stops this scheduler
-        # fail-closed (no recovery, no submit, no screening).
+        # R01: apply THIS run's complete execution runtime to the global
+        # execution config BEFORE startup_recover() runs. Recovery's entry
+        # gates read the global config (get_config()); until this run's
+        # values are installed, a recovery opening could see a previous
+        # run's screening mode, allow_shorts or trading_mode. Any type
+        # violation or set_config failure stops this scheduler fail-closed
+        # (no recovery, no submit, no screening).
         try:
-            from tradingagents.dataflows.config import get_config, set_config
+            from tradingagents.dataflows.config import set_config
 
-            merged = dict(get_config() or {})
-            merged.update(provider_settings or {})
-            set_config(merged)
+            set_config(_webui_run_runtime_config(provider_settings, allow_shorts))
         except Exception as exc:
             app_state.trade_enabled = False
             print(

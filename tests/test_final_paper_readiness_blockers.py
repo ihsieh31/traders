@@ -645,6 +645,177 @@ class R01WebUIConfigBeforeRecoveryTests(WebUISchedulerFixture):
                          "config application must precede recovery")
 
 
+class R01WebUIRuntimeCompletenessTests(WebUISchedulerFixture):
+    """R01 runtime completeness: recovery must see THIS run's full
+    execution runtime — auto_screening_enabled, allow_shorts and the
+    trading_mode derived from it — under strict types, with every
+    contract violation fail-closed before recovery runs."""
+
+    def setUp(self):
+        import tradingagents.dataflows.config as cfgmod
+
+        self.saved_config = cfgmod.get_config()
+        self.cfgmod = cfgmod
+        self.addCleanup(cfgmod.set_config, self.saved_config)
+
+    def _recording_service(self):
+        class _Recorder:
+            def __init__(self):
+                self.recover_calls = 0
+                self.seen = {}
+
+            def startup_recover(self, can_submit=None):
+                from tradingagents.dataflows.config import get_config
+
+                self.recover_calls += 1
+                cfg = get_config() or {}
+                self.seen.update({
+                    "auto_screening_enabled": cfg.get("auto_screening_enabled"),
+                    "allow_shorts": cfg.get("allow_shorts"),
+                    "trading_mode": cfg.get("trading_mode"),
+                    "runtime_marker": cfg.get("runtime_marker"),
+                    "can_submit": (
+                        bool(can_submit()) if can_submit is not None else None
+                    ),
+                })
+                return {"success": True, "account_execution_state": "CLEAN",
+                        "reconciliation_reasons": []}
+
+        return _Recorder()
+
+    def _stale_global(self, **overrides):
+        from tradingagents.default_config import DEFAULT_CONFIG
+
+        stale = {**DEFAULT_CONFIG, "runtime_marker": "stale-global"}
+        stale.update(overrides)
+        self.cfgmod.set_config(stale)
+        return stale
+
+    def test_r01_long_only_run_overrides_stale_short_enabled_global(self):
+        """Global short-enabled, run long-only: recovery must see the run's
+        allow_shorts=False and the trading_mode re-derived from it."""
+        from webui.utils.state import AppState
+
+        self._stale_global(allow_shorts=True, trading_mode="trading",
+                           auto_screening_enabled=True)
+        state = AppState()
+        state.trade_enabled = True
+        service = self._recording_service()
+        self._run_scheduler(
+            state, lambda: service,
+            trade_enabled=True,
+            allow_shorts=False,
+            provider_settings={"auto_screening_enabled": True},
+        )
+        self.assertEqual(service.recover_calls, 1)
+        self.assertIs(service.seen["allow_shorts"], False)
+        self.assertEqual(service.seen["trading_mode"], "investment")
+        self.assertIs(service.seen["auto_screening_enabled"], True)
+        self.assertEqual(service.seen["can_submit"], True)
+
+    def test_r01_short_enabled_run_overrides_stale_long_only_global(self):
+        """Global long-only, run short-enabled: recovery must see the run's
+        allow_shorts=True and trading_mode='trading'."""
+        from webui.utils.state import AppState
+
+        self._stale_global(allow_shorts=False, trading_mode="investment",
+                           auto_screening_enabled=False)
+        state = AppState()
+        state.trade_enabled = True
+        service = self._recording_service()
+        self._run_scheduler(
+            state, lambda: service,
+            trade_enabled=True,
+            allow_shorts=True,
+            provider_settings={"auto_screening_enabled": False},
+        )
+        self.assertEqual(service.recover_calls, 1)
+        self.assertIs(service.seen["allow_shorts"], True)
+        self.assertEqual(service.seen["trading_mode"], "trading")
+        self.assertIs(service.seen["auto_screening_enabled"], False)
+
+    def test_r01_provider_settings_cannot_override_explicit_allow_shorts(self):
+        """The scheduler's explicit allow_shorts is the authority:
+        provider_settings' allow_shorts/trading_mode lose to it."""
+        from webui.utils.state import AppState
+
+        self._stale_global(allow_shorts=False, trading_mode="investment")
+        state = AppState()
+        state.trade_enabled = True
+        service = self._recording_service()
+        self._run_scheduler(
+            state, lambda: service,
+            trade_enabled=True,
+            allow_shorts=False,
+            provider_settings={"allow_shorts": True, "trading_mode": "trading"},
+        )
+        self.assertEqual(service.recover_calls, 1)
+        self.assertIs(service.seen["allow_shorts"], False,
+                      "explicit scheduler argument must override provider_settings")
+        self.assertEqual(service.seen["trading_mode"], "investment")
+
+    def _fail_closed_case(self, *, allow_shorts=True, provider_settings=None):
+        from webui.utils.state import AppState
+
+        stale = self._stale_global(allow_shorts=True, trading_mode="trading",
+                                   auto_screening_enabled=True)
+        state = AppState()
+        state.trade_enabled = True
+        service = self._recording_service()
+        kwargs = dict(trade_enabled=True, allow_shorts=allow_shorts)
+        if provider_settings is not None or allow_shorts is True:
+            kwargs["provider_settings"] = provider_settings
+        self._run_scheduler(state, lambda: service, **kwargs)
+        self.assertEqual(service.recover_calls, 0,
+                         "a config contract violation must stop before recovery")
+        self.assertFalse(state.trade_enabled, "trade must be disabled")
+        self.assertEqual(self.cfgmod.get_config().get("allow_shorts"), True,
+                         "the stale global config must be left untouched")
+        self.assertEqual(self.cfgmod.get_config().get("runtime_marker"),
+                         "stale-global")
+        return service
+
+    def test_r01_allow_shorts_string_false_fails_closed(self):
+        """allow_shorts='false' is a contract violation: no bool() coercion
+        that would silently flip the run to short-enabled."""
+        self._fail_closed_case(allow_shorts="false")
+
+    def test_r01_allow_shorts_none_fails_closed(self):
+        self._fail_closed_case(allow_shorts=None)
+
+    def test_r01_invalid_provider_settings_type_fails_closed(self):
+        self._fail_closed_case(provider_settings=[])
+
+    def test_r01_invalid_auto_screening_type_fails_closed(self):
+        self._fail_closed_case(
+            provider_settings={"auto_screening_enabled": "false"})
+
+    def test_r01_provider_settings_none_is_legal_and_recovery_runs(self):
+        """provider_settings=None is a legal value: the old global config is
+        the base, allow_shorts/trading_mode are still overridden, and the
+        scheduler proceeds into recovery."""
+        from webui.utils.state import AppState
+
+        self._stale_global(allow_shorts=False, trading_mode="investment",
+                           auto_screening_enabled=False)
+        state = AppState()
+        state.trade_enabled = True
+        service = self._recording_service()
+        self._run_scheduler(
+            state, lambda: service,
+            trade_enabled=True,
+            allow_shorts=False,
+            provider_settings=None,
+        )
+        self.assertEqual(service.recover_calls, 1)
+        self.assertIs(service.seen["allow_shorts"], False)
+        self.assertEqual(service.seen["trading_mode"], "investment")
+        self.assertIs(service.seen["auto_screening_enabled"], False)
+        self.assertEqual(service.seen["runtime_marker"], "stale-global",
+                         "the old global config must remain the merge base")
+        self.assertEqual(service.seen["can_submit"], True)
+
+
 class R02WebUIGenerationRecoveryGuardTests(WebUISchedulerFixture):
     def test_r02_webui_old_generation_cannot_resubmit_during_recovery(self):
         """Stop→Start during recovery's slow lookups: the stop flag is
