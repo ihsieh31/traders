@@ -1407,5 +1407,393 @@ class F02StaleRunTests(unittest.TestCase):
         self.assertFalse(app_state.get_state("AAPL")["analysis_running"])
 
 
+# ---------------------------------------------------------------------------
+# F02 — stale scheduler waking after Stop→Start has zero shared-state side
+# effects (drives the extracted _scheduler_thread body deterministically)
+# ---------------------------------------------------------------------------
+
+
+class F02StaleSchedulerTests(unittest.TestCase):
+    def _sched_kwargs(self, **overrides):
+        kwargs = dict(
+            symbols=["AAPL"],
+            market_hour_enabled=False,
+            market_hours_list=[],
+            loop_enabled=False,
+            analysts_market=True,
+            analysts_social=False,
+            analysts_news=False,
+            analysts_fundamentals=False,
+            analysts_macro=False,
+            research_depth="Shallow",
+            allow_shorts=False,
+            quick_llm="quick-model",
+            deep_llm="deep-model",
+            quick_llm_params={},
+            deep_llm_params={},
+            llm_provider="openai",
+            backend_url="",
+            output_language="en",
+            checkpoint_enabled=False,
+            provider_settings={},
+            trade_enabled=False,
+            trade_amount=1000,
+            auto_screening_on=False,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_f02_t1_stale_loop_scheduler_cannot_reset_new_run_state(self):
+        import webui.callbacks.control_callbacks as cc
+        from webui.utils.state import AppState
+
+        state = AppState()
+        state.loop_interval_minutes = 1  # wait_time 60s → 30s sleep chunks
+
+        entered_sleep = threading.Event()
+        restart_done = threading.Event()
+        observed = {}
+
+        def fake_sleep(_seconds):
+            # Run A's first interval sleep: while it sleeps, the operator
+            # Stops Run A (generation += 1) and Starts Run B (flags cleared,
+            # UI state reset, queue re-owned by Run B).
+            entered_sleep.set()
+            state.request_stop()
+            state.reset()
+            state.start_loop(["AAPL"], {})
+            state.init_symbol_state("AAPL")
+            state.analysis_queue = ["MSFT"]  # Run B owns the queue now
+            state.analysis_running = True  # Run B owns the running flag
+            observed["aapl_session"] = state.get_state("AAPL")["session_id"]
+            observed["dispatches_at_stop"] = executed.call_count
+            restart_done.wait(timeout=10)
+            restart_done.set()
+
+        executed = MagicMock()
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "time", SimpleNamespace(sleep=fake_sleep)
+        ), patch.object(cc, "start_analysis", executed), patch.object(
+            cc, "ExecutionService"
+        ) as exec_svc, patch.object(state, "reset_for_loop") as reset_mock:
+            thread = threading.Thread(
+                target=cc._scheduler_thread, kwargs=self._sched_kwargs(loop_enabled=True)
+            )
+            thread.start()
+            self.assertTrue(entered_sleep.wait(timeout=10))
+            restart_done.set()
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive())
+
+        # The stale scheduler must have exited before any shared mutation:
+        # no reset_for_loop, no queue rewrite, no new symbol session, no
+        # further dispatch, no broker path, and Run B's running flag intact.
+        reset_mock.assert_not_called()
+        self.assertEqual(state.analysis_queue, ["MSFT"])
+        self.assertEqual(
+            state.get_state("AAPL")["session_id"], observed["aapl_session"]
+        )
+        self.assertEqual(executed.call_count, observed["dispatches_at_stop"])
+        exec_svc.assert_not_called()
+        self.assertTrue(state.analysis_running)
+        # The single pre-stop dispatch was Run A's iteration 1, before Stop.
+        self.assertEqual(observed["dispatches_at_stop"], 1)
+
+    def test_f02_t2_stale_market_hour_scheduler_cannot_reset_screen_or_queue(self):
+        import webui.callbacks.control_callbacks as cc
+        from webui.utils.state import AppState
+
+        state = AppState()
+
+        entered_sleep = threading.Event()
+        restart_done = threading.Event()
+        observed = {}
+
+        def fake_sleep(_seconds):
+            # Run A waits for the next 03:00 ET execution; the operator
+            # Stops Run A and Starts Run B while it sleeps.
+            entered_sleep.set()
+            state.request_stop()
+            state.reset()
+            state.start_market_hour_mode(["AAPL"], {}, [3])
+            state.init_symbol_state("AAPL")
+            state.analysis_queue = ["MSFT"]
+            state.analysis_running = True
+            observed["aapl_session"] = state.get_state("AAPL")["session_id"]
+            restart_done.wait(timeout=10)
+            restart_done.set()
+
+        executed = MagicMock()
+        screening = MagicMock(return_value=["AAPL"])
+        market_open = MagicMock(return_value=(True, ""))
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "time", SimpleNamespace(sleep=fake_sleep)
+        ), patch.object(cc, "start_analysis", executed), patch.object(
+            cc, "_prepare_auto_round_symbols", screening
+        ), patch(
+            "webui.utils.market_hours.is_market_open", market_open
+        ), patch.object(
+            cc, "ExecutionService"
+        ) as exec_svc, patch.object(
+            state, "reset_for_loop"
+        ) as reset_mock:
+            thread = threading.Thread(
+                target=cc._scheduler_thread,
+                kwargs=self._sched_kwargs(
+                    market_hour_enabled=True,
+                    market_hours_list=[3],
+                    auto_screening_on=True,  # prove screening never runs
+                ),
+            )
+            thread.start()
+            self.assertTrue(entered_sleep.wait(timeout=10))
+            restart_done.set()
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive())
+
+        reset_mock.assert_not_called()
+        screening.assert_not_called()  # no re-screening for the stale run
+        # The only is_market_open call is get_next_market_datetime's internal
+        # calendar check (datetime argument); the scheduler's own post-wait
+        # market-open gate was never reached — the wait-return guard fired.
+        self.assertEqual(market_open.call_count, 1)
+        self.assertIsInstance(market_open.call_args.args[0], datetime)
+        executed.assert_not_called()  # no analysis dispatched
+        self.assertEqual(state.analysis_queue, ["MSFT"])
+        self.assertEqual(
+            state.get_state("AAPL")["session_id"], observed["aapl_session"]
+        )
+        self.assertTrue(state.analysis_running)
+        exec_svc.assert_not_called()
+
+    def test_f02_t3_current_generation_loop_scheduler_still_resets_and_dispatches(self):
+        import webui.callbacks.control_callbacks as cc
+        from webui.utils.state import AppState
+
+        state = AppState()
+        state.loop_interval_minutes = 1
+
+        sleep_count = {"n": 0}
+        real_reset = state.reset_for_loop
+        reset_calls = []
+
+        def spy_reset():
+            reset_calls.append(True)
+            real_reset()
+
+        def fake_sleep(_seconds):
+            sleep_count["n"] += 1
+            if sleep_count["n"] >= 3:
+                # After two full iterations proved the normal path, an
+                # operator Stop (without restart) ends the run.
+                state.stop_loop_mode()
+
+        state.reset_for_loop = spy_reset
+        executed = MagicMock()
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "time", SimpleNamespace(sleep=fake_sleep)
+        ), patch.object(cc, "start_analysis", executed), patch.object(
+            cc, "ExecutionService"
+        ) as exec_svc:
+            thread = threading.Thread(
+                target=cc._scheduler_thread, kwargs=self._sched_kwargs(loop_enabled=True)
+            )
+            thread.start()
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive())
+
+        # The fix must not have degraded the normal path: the un-stopped
+        # scheduler still reset between iterations, re-queued and re-ran
+        # every symbol, and the final Stop ended it cleanly.
+        self.assertEqual(reset_calls, [True])
+        self.assertEqual(executed.call_count, 2)
+        self.assertEqual(state.analysis_queue, [])
+        exec_svc.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# F04 — an unresolved SUBMITTING row blocks the whole recovery round
+# ---------------------------------------------------------------------------
+
+
+class F04SubmittingBlocksQueueTests(_GuardIsolated):
+    def _seed_mixed_queue(self, svc):
+        """A = SUBMITTING (crash mid-submit), B = PENDING behind it.
+
+        created_at is pinned so list_recoverable_orders returns A strictly
+        before B (deterministic fixture, not timing luck).
+        """
+        svc.store.ensure_account_binding(PAPER)
+        _, orders_a, _ = svc.store.create_outbox(
+            decision_id="dec-f4mix-a", run_id=None, symbol="AAPL", action="BUY",
+            target_position="LONG", payload_json=json.dumps(_buy_intent_json()),
+            orders=[{"client_order_id": "ta-f4mix-a", "symbol": "AAPL",
+                     "side": "buy", "quantity": None, "notional": 1000.0}],
+        )
+        ok, _ = svc.store.transition_order(orders_a[0]["order_id"], "SUBMITTING")
+        assert ok
+        _, orders_b, _ = svc.store.create_outbox(
+            decision_id="dec-f4mix-b", run_id=None, symbol="AAPL", action="BUY",
+            target_position="LONG", payload_json=json.dumps(_buy_intent_json()),
+            orders=[{"client_order_id": "ta-f4mix-b", "symbol": "AAPL",
+                     "side": "buy", "quantity": None, "notional": 1000.0}],
+        )
+        conn = svc.store._connect()
+        try:
+            conn.execute(
+                "UPDATE orders SET created_at=? WHERE client_order_id=?",
+                ("2026-01-01T00:00:00+00:00", "ta-f4mix-a"),
+            )
+            conn.execute(
+                "UPDATE orders SET created_at=? WHERE client_order_id=?",
+                ("2026-01-01T00:00:01+00:00", "ta-f4mix-b"),
+            )
+        finally:
+            conn.close()
+        return orders_a[0], orders_b[0]
+
+    def _service(self, tmp, broker):
+        svc = ExecutionService(
+            db_path=str(Path(tmp) / "execution.db"),
+            broker_factory=lambda: broker,
+            quote_factory=lambda s: _fresh_quote(s),
+        )
+        svc._quarantine_rejection = MagicMock(return_value=None)
+        return svc
+
+    def _run_recovery(self, svc):
+        with patch("tradingagents.execution.service._get_execution_config",
+                   return_value=_caps_config(
+                       max_symbol_concentration_pct=25.0)), patch(
+            "tradingagents.screening.gate.check_entry_allowed", return_value=None
+        ):
+            return svc.startup_recover()
+
+    def test_f04_t1_unresolved_submitting_blocks_following_pending(self):
+        broker = _RecoveryBroker()
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(tmp, broker)
+            row_a, row_b = self._seed_mixed_queue(svc)
+            result = self._run_recovery(svc)
+            # A's bounded lookup ran to the full policy count, not found.
+            self.assertEqual(broker.lookup_calls, ["ta-f4mix-a"] * 3)
+            # Zero broker POSTs: A is never resubmitted and B is never reached.
+            self.assertEqual(broker.submit_calls, [])
+            self.assertEqual(
+                svc.store.get_order(row_a["order_id"])["status"], "SUBMITTING"
+            )
+            self.assertEqual(
+                svc.store.get_order(row_b["order_id"])["status"], "PENDING"
+            )
+            self.assertFalse(result["success"])
+            state = svc.store.get_account_state(PAPER)
+            assert state is not None
+            self.assertEqual(state["state"], "PAUSED")
+            self.assertTrue(
+                any("ta-f4mix-a" in r for r in json.loads(state["reasons_json"]))
+            )
+
+    def test_f04_t2_uncertain_submitting_lookup_blocks_following_pending(self):
+        broker = _RecoveryBroker()
+
+        def flaky(cid):
+            broker.lookup_calls.append(cid)
+            raise ConnectionError("connection reset")
+
+        broker.get_order_by_client_order_id = flaky
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(tmp, broker)
+            _, row_b = self._seed_mixed_queue(svc)
+            result = self._run_recovery(svc)
+            self.assertFalse(result["success"])
+            self.assertEqual(broker.submit_calls, [])
+            self.assertEqual(
+                svc.store.get_order(row_b["order_id"])["status"], "PENDING"
+            )
+
+    def test_f04_t3_adopted_submitting_with_clean_facts_allows_following_pending(self):
+        broker = _RecoveryBroker()
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(tmp, broker)
+            row_a, row_b = self._seed_mixed_queue(svc)
+            # A's POST actually landed: the broker holds it under A's
+            # client id, so recovery may adopt it and continue to B.
+            broker.orders.append(SimpleNamespace(
+                id="broker-a", client_order_id="ta-f4mix-a",
+                symbol="AAPL", side="buy", qty="10", notional=1000.0,
+                filled_qty="0", filled_avg_price=None, status="accepted",
+                updated_at=_now(), legs=[],
+            ))
+            result = self._run_recovery(svc)
+            self.assertTrue(result["success"], result)
+            adopted = svc.store.get_order(row_a["order_id"])
+            self.assertEqual(adopted["status"], "ACCEPTED")
+            self.assertEqual(adopted["broker_order_id"], "broker-a")
+            # Only B needed a new POST; A was adopted from broker facts.
+            self.assertEqual(
+                [r.client_order_id for r in broker.submit_calls], ["ta-f4mix-b"]
+            )
+
+
+# ---------------------------------------------------------------------------
+# F06 — concurrent first bind of a fresh DB admits exactly one owner
+# ---------------------------------------------------------------------------
+
+
+class F06ConcurrentFirstBindTests(unittest.TestCase):
+    def _run_concurrent_bind(self, accounts):
+        """Barrier-synchronized concurrent ensure_account_binding on a fresh DB.
+
+        Store construction (schema init) is serial so the race under test is
+        exactly the first-bind ownership claim, not schema creation. Returns
+        (accounts, outcomes, owner); outcomes[i] is None when accounts[i]
+        succeeded or the ValueError it raised.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "execution.db"
+            stores = [ExecutionStore(db) for _ in accounts]
+            barrier = threading.Barrier(len(accounts), timeout=10)
+            unset = object()
+            outcomes = [unset] * len(accounts)
+
+            def bind(index, store, account_id):
+                barrier.wait(timeout=10)
+                try:
+                    store.ensure_account_binding(account_id)
+                    outcomes[index] = None
+                except Exception as exc:
+                    outcomes[index] = exc
+
+            threads = [
+                threading.Thread(target=bind, args=(i, store, account))
+                for i, (store, account) in enumerate(zip(stores, accounts))
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+            self.assertNotIn(unset, outcomes)
+            owner = ExecutionStore(db).account_binding_owner()
+            return accounts, outcomes, owner
+
+    def test_f06_t1_concurrent_first_bind_different_accounts_single_owner(self):
+        accounts, outcomes, owner = self._run_concurrent_bind((PAPER, "paper-2"))
+        succeeded = [a for a, exc in zip(accounts, outcomes) if exc is None]
+        failed = [a for a, exc in zip(accounts, outcomes) if exc is not None]
+        self.assertEqual(len(succeeded), 1, outcomes)
+        self.assertEqual(len(failed), 1, outcomes)
+        self.assertIn(owner, (PAPER, "paper-2"))
+        self.assertEqual(owner, succeeded[0])
+        self.assertNotEqual(failed[0], owner)
+        self.assertIn("bound", str(outcomes[accounts.index(failed[0])]))
+
+    def test_f06_t2_concurrent_first_bind_same_account_both_succeed(self):
+        accounts, outcomes, owner = self._run_concurrent_bind((PAPER, PAPER))
+        self.assertEqual(
+            [exc for exc in outcomes if exc is not None], [], outcomes
+        )
+        self.assertEqual(owner, PAPER)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

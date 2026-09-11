@@ -824,6 +824,28 @@ class ExecutionStore:
                     now,
                 ),
             )
+            # F06: post-insert verify. A concurrent first-binder may have won
+            # the row between our pre-read and this insert, and the conflict
+            # clause above silently did nothing — the only proof of ownership
+            # is re-reading the stored owner inside the same write
+            # transaction. A mismatching loser fails closed before any
+            # broker mutation can run under its identity.
+            stored = conn.execute(
+                "SELECT payload_json FROM execution_intents WHERE decision_id = ?",
+                (ACCOUNT_BINDING_DECISION_ID,),
+            ).fetchone()
+            owner = None
+            if stored is not None:
+                try:
+                    owner = json.loads(stored["payload_json"]).get("account_id")
+                except Exception:
+                    owner = None
+            if owner != account_id:
+                conn.execute("ROLLBACK")
+                raise ValueError(
+                    f"execution DB is bound to broker account {owner!r}, "
+                    f"refusing to use it for {account_id!r}"
+                )
             conn.execute("COMMIT")
         except Exception:
             try:

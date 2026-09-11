@@ -2115,7 +2115,13 @@ class ExecutionService:
                 changed = True
             else:
                 # SUBMITTING/PARTIAL without a broker fact is not safe to replay.
-                continue
+                # F04: this row's turn came and the bounded lookup still found
+                # no broker fact, so its submit outcome stays ambiguous. It is
+                # no longer exempted queued work: stop the round immediately —
+                # no resubmit of this row, no recovery mutation for any later
+                # queue item. The unresolved-SUBMITTING reason keeps the
+                # account PAUSED.
+                break
             processed.add(local["client_order_id"])
             # Refresh authority immediately after the adoption/resubmit above
             # so the next iteration's cap evaluation sees it (F02).

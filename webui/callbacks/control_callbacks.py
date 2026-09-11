@@ -105,19 +105,26 @@ def _apply_screening_plan(plan) -> list:
     return symbols
 
 
-def _prepare_auto_round_symbols(provider_settings: dict):
+def _prepare_auto_round_symbols(provider_settings: dict, is_stale=None):
     """Run the screening pipeline for one round; halt scheduling on stop.
 
     Returns ``None`` when the round must not proceed (screening stop — the
-    scheduler has been halted), otherwise the ordered symbol list for this
-    round (Top20 by rank plus analyzable extra holdings; possibly empty on
-    a non-trading day with no holdings).
+    scheduler has been halted, or the calling scheduler went stale during
+    the scan and must not apply the plan), otherwise the ordered symbol
+    list for this round (Top20 by rank plus analyzable extra holdings;
+    possibly empty on a non-trading day with no holdings).
     """
     plan = _run_screening_round(provider_settings)
     if plan.stopped:
         app_state.screening_stop_reason = plan.stop_reason_text()
         app_state.screening_status_text = f"stopped: {plan.stop_reason_text()}"
         _halt_scheduling_for_screening_stop()
+        return None
+    if is_stale is not None and is_stale():
+        # F02: the operator Stop→Started while this scheduler's screening
+        # scan ran. Applying the plan now would overwrite the new run's
+        # screening/symbol state — discard it; the stale scheduler exits.
+        print("[SCHEDULER] Discarding stale screening round after Stop→Start")
         return None
     return _apply_screening_plan(plan)
 
@@ -308,6 +315,350 @@ def _collect_screening_settings(
         "screening_model": _clean(screening_model),
         "screening_backend_url": _clean(screening_backend_url),
     }
+
+
+def _scheduler_thread(
+    *,
+    symbols,
+    market_hour_enabled,
+    market_hours_list,
+    loop_enabled,
+    analysts_market,
+    analysts_social,
+    analysts_news,
+    analysts_fundamentals,
+    analysts_macro,
+    research_depth,
+    allow_shorts,
+    quick_llm,
+    deep_llm,
+    quick_llm_params,
+    deep_llm_params,
+    llm_provider,
+    backend_url,
+    output_language,
+    checkpoint_enabled,
+    provider_settings,
+    trade_enabled,
+    trade_amount,
+    auto_screening_on,
+):
+    """Auto-scheduling thread body (F02: extracted verbatim from the Start
+    callback closure so regression tests can drive it deterministically).
+
+    ``scheduler_generation`` is captured at entry: every operator stop bumps
+    the shared counter and a later Start never restores it, so every
+    sleep/wait wake-up in the loops below must re-check its generation
+    before mutating any shared state.
+    """
+    # F02: this scheduler's generation. A Stop bumps the shared
+    # counter; if an operator immediately Starts again, the cleared
+    # stop flags must NOT resurrect this sleeping thread — every
+    # loop below also requires its generation to still be current.
+    scheduler_generation = app_state.run_generation
+
+    def _stale() -> bool:
+        return scheduler_generation != app_state.run_generation
+
+    if trade_enabled:
+        startup = ExecutionService().startup_recover()
+        # F02: startup recovery is a slow broker round trip. An operator
+        # Stop→Start during it invalidates this scheduler before it may
+        # touch any shared state below.
+        if _stale():
+            print("[SCHEDULER] Stale scheduler exiting after Stop→Start")
+            return
+        if not startup.get("success"):
+            app_state.trade_enabled = False
+            print(
+                "[EXECUTION] Auto-trading PAUSED at startup: "
+                + "; ".join(startup.get("reconciliation_reasons", []))
+            )
+    if market_hour_enabled:
+        # Start market hour mode with scheduling logic
+        market_hour_config = {
+            'analysts_market': analysts_market,
+            'analysts_social': analysts_social,
+            'analysts_news': analysts_news,
+            'analysts_fundamentals': analysts_fundamentals,
+            'analysts_macro': analysts_macro,
+            'research_depth': research_depth,
+            'allow_shorts': allow_shorts,
+            'llm_provider': llm_provider,
+            'backend_url': backend_url,
+            'output_language': output_language,
+            'checkpoint_enabled': checkpoint_enabled,
+            'quick_llm': quick_llm,
+            'deep_llm': deep_llm,
+            'quick_llm_params': quick_llm_params,
+            'deep_llm_params': deep_llm_params,
+            **provider_settings,
+            'trade_enabled': trade_enabled,
+            'trade_amount': trade_amount
+        }
+        app_state.start_market_hour_mode(symbols, market_hour_config, market_hours_list)
+
+        # Market hour scheduling loop
+        import datetime
+        import pytz
+        from webui.utils.market_hours import get_next_market_datetime, is_market_open
+
+        eastern = pytz.timezone('US/Eastern')
+        utc = pytz.utc
+
+        while (
+            not app_state.stop_market_hour
+            and scheduler_generation == app_state.run_generation
+        ):
+            # Compute the schedule from current UTC time projected into Eastern.
+            now = datetime.datetime.now(utc).astimezone(eastern)
+            next_execution_times = []
+
+            for hour in app_state.market_hours:
+                next_dt = get_next_market_datetime(hour, now)
+                next_execution_times.append((hour, next_dt))
+
+            # Sort by next execution time
+            next_execution_times.sort(key=lambda x: x[1])
+            next_hour, next_dt = next_execution_times[0]
+
+            print(f"[MARKET_HOUR] Next execution: {next_dt.strftime('%A, %B %d at %I:%M %p %Z')} (Hour {next_hour})")
+
+            # Wait until next execution time
+            while (
+                datetime.datetime.now(utc).astimezone(eastern) < next_dt
+                and not app_state.stop_market_hour
+                and scheduler_generation == app_state.run_generation
+            ):
+                time.sleep(60)  # Check every minute
+
+            # F02: Stop→Start during the wait cleared the stop flags but left
+            # this scheduler stale — the new run owns every shared state
+            # below; wake up and exit without touching it.
+            if _stale():
+                break
+
+            if app_state.stop_market_hour:
+                break
+
+            # Check if market is actually open
+            is_open, reason = is_market_open()
+            if not is_open:
+                print(f"[MARKET_HOUR] Market is closed: {reason}. Waiting for next execution time.")
+                continue
+
+            # F02: the market-open check is another slow step; re-confirm
+            # before the first shared-state mutation of the round.
+            if _stale():
+                break
+
+            print(f"[MARKET_HOUR] Market is open, starting analysis at {next_hour}:00")
+
+            # Reset states for new analysis
+            app_state.reset_for_loop()
+
+            # Phase C: auto-screening mode derives this round's
+            # symbols from the pipeline (scan-or-cache Top20 plus
+            # fresh holdings); a screening stop halts the schedule.
+            round_symbols = symbols
+            if auto_screening_on:
+                round_symbols = _prepare_auto_round_symbols(
+                    provider_settings,
+                    is_stale=lambda: _stale(),
+                )
+                if round_symbols is None:
+                    break
+
+            # Initialize symbol states
+            for symbol in round_symbols:
+                app_state.init_symbol_state(symbol)
+
+            # Add symbols to queue and run analysis
+            app_state.add_symbols_to_queue(round_symbols)
+
+            while (
+                app_state.analysis_queue
+                and not app_state.stop_market_hour
+                and scheduler_generation == app_state.run_generation
+            ):
+                # F10: the universal stop flag gates the next symbol.
+                if app_state.stop_requested:
+                    break
+                symbol = app_state.get_next_symbol()
+                if symbol:
+                    print(f"[MARKET_HOUR] Analyzing {symbol} at {next_hour}:00 with current market data...")
+                    start_analysis(
+                        symbol,
+                        analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
+                        research_depth, allow_shorts, quick_llm, deep_llm,
+                        quick_llm_params, deep_llm_params,
+                        llm_provider=llm_provider,
+                        backend_url=backend_url,
+                        output_language=output_language,
+                        checkpoint_enabled=checkpoint_enabled,
+                        provider_settings=provider_settings,
+                    )
+
+                    if app_state.stop_market_hour:
+                        break
+                    if _provider_stopped():
+                        # Provider failure: stop this round and the
+                        # whole schedule until an operator restarts.
+                        _halt_scheduling_for_provider_stop()
+                        break
+
+            if app_state.stop_market_hour:
+                break
+
+            if _provider_stopped():
+                break
+            if _screening_stopped():
+                break
+
+            if not app_state.stop_market_hour:
+                print(f"[MARKET_HOUR] Analysis completed for {next_hour}:00. Waiting for next execution time.")
+
+    elif loop_enabled:
+        # Start loop mode
+        loop_config = {
+            'analysts_market': analysts_market,
+            'analysts_social': analysts_social,
+            'analysts_news': analysts_news,
+            'analysts_fundamentals': analysts_fundamentals,
+            'analysts_macro': analysts_macro,
+            'research_depth': research_depth,
+            'allow_shorts': allow_shorts,
+            'llm_provider': llm_provider,
+            'backend_url': backend_url,
+            'output_language': output_language,
+            'checkpoint_enabled': checkpoint_enabled,
+            'quick_llm': quick_llm,
+            'deep_llm': deep_llm,
+            'quick_llm_params': quick_llm_params,
+            'deep_llm_params': deep_llm_params,
+            **provider_settings,
+            'trade_enabled': trade_enabled,
+            'trade_amount': trade_amount
+        }
+        app_state.start_loop(symbols, loop_config)
+
+        loop_iteration = 1
+        while (
+            not app_state.stop_loop
+            and scheduler_generation == app_state.run_generation
+        ):
+            print(f"[LOOP] Starting iteration {loop_iteration}")
+
+            # Phase C: auto-screening mode derives this round's
+            # symbols from the pipeline; a screening stop halts.
+            round_symbols = symbols
+            if auto_screening_on:
+                round_symbols = _prepare_auto_round_symbols(
+                    provider_settings,
+                    is_stale=lambda: _stale(),
+                )
+                if round_symbols is None:
+                    break
+
+            # States already initialized above, just add to queue
+            app_state.add_symbols_to_queue(round_symbols)
+
+            # Run analysis for all symbols
+            while (
+                app_state.analysis_queue
+                and not app_state.stop_loop
+                and scheduler_generation == app_state.run_generation
+            ):
+                # F10: the universal stop flag gates the next symbol.
+                if app_state.stop_requested:
+                    break
+                symbol = app_state.get_next_symbol()
+                if symbol:
+                    print(f"[LOOP] Analyzing {symbol} with current market data...")
+                    start_analysis(
+                        symbol,
+                        analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
+                        research_depth, allow_shorts, quick_llm, deep_llm,
+                        quick_llm_params, deep_llm_params,
+                        llm_provider=llm_provider,
+                        backend_url=backend_url,
+                        output_language=output_language,
+                        checkpoint_enabled=checkpoint_enabled,
+                        provider_settings=provider_settings,
+                    )
+                    if _provider_stopped():
+                        _halt_scheduling_for_provider_stop()
+                        break
+
+            if app_state.stop_loop:
+                break
+            if _screening_stopped():
+                break
+
+            print(f"[LOOP] Iteration {loop_iteration} completed. Waiting {app_state.loop_interval_minutes} minutes...")
+
+            # Wait for the specified interval (checking for stop every 30 seconds)
+            wait_time = app_state.loop_interval_minutes * 60  # Convert to seconds
+            elapsed = 0
+            while (
+                elapsed < wait_time
+                and not app_state.stop_loop
+                and scheduler_generation == app_state.run_generation
+            ):
+                time.sleep(min(30, wait_time - elapsed))
+                elapsed += 30
+
+            # F02: Stop→Start during the interval sleep cleared stop_loop but
+            # left this scheduler stale — it must not reset the new run's
+            # state or queue another round.
+            if _stale():
+                break
+
+            if not app_state.stop_loop:
+                # Reset analysis results for next iteration but keep states for pagination
+                app_state.reset_for_loop()
+                loop_iteration += 1
+
+        print("[LOOP] Loop stopped")
+    else:
+        # Single run mode (original behavior) - use current date
+        # Phase C: auto-screening mode derives the round symbols.
+        round_symbols = symbols
+        if auto_screening_on:
+            round_symbols = _prepare_auto_round_symbols(
+                provider_settings,
+                is_stale=lambda: _stale(),
+            )
+        if round_symbols:
+            app_state.add_symbols_to_queue(round_symbols)
+
+            while (
+                app_state.analysis_queue
+                and scheduler_generation == app_state.run_generation
+            ):
+                # F10: single-run mode checks the universal stop flag
+                # before taking the next symbol too.
+                if app_state.stop_requested:
+                    break
+                symbol = app_state.get_next_symbol()
+                if symbol:
+                    print(f"[SINGLE] Analyzing {symbol} with current market data...")
+                    start_analysis(
+                        symbol,
+                        analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
+                        research_depth, allow_shorts, quick_llm, deep_llm,
+                        quick_llm_params, deep_llm_params,
+                        llm_provider=llm_provider,
+                        backend_url=backend_url,
+                        output_language=output_language,
+                        checkpoint_enabled=checkpoint_enabled,
+                        provider_settings=provider_settings,
+                    )
+
+    # F02: a stale scheduler returning after Stop→Start must never
+    # clear the new run's running flag.
+    if scheduler_generation == app_state.run_generation:
+        app_state.analysis_running = False
 
 
 def register_control_callbacks(app):
@@ -1224,278 +1575,34 @@ def register_control_callbacks(app):
             app_state.init_symbol_state(symbol)
 
         def analysis_thread():
-            # F02: this scheduler's generation. A Stop bumps the shared
-            # counter; if an operator immediately Starts again, the cleared
-            # stop flags must NOT resurrect this sleeping thread — every
-            # loop below also requires its generation to still be current.
-            scheduler_generation = app_state.run_generation
-            if trade_enabled:
-                startup = ExecutionService().startup_recover()
-                if not startup.get("success"):
-                    app_state.trade_enabled = False
-                    print(
-                        "[EXECUTION] Auto-trading PAUSED at startup: "
-                        + "; ".join(startup.get("reconciliation_reasons", []))
-                    )
-            if market_hour_enabled:
-                # Start market hour mode with scheduling logic
-                market_hour_config = {
-                    'analysts_market': analysts_market,
-                    'analysts_social': analysts_social,
-                    'analysts_news': analysts_news,
-                    'analysts_fundamentals': analysts_fundamentals,
-                    'analysts_macro': analysts_macro,
-                    'research_depth': research_depth,
-                    'allow_shorts': allow_shorts,
-                    'llm_provider': llm_provider,
-                    'backend_url': backend_url,
-                    'output_language': output_language,
-                    'checkpoint_enabled': checkpoint_enabled,
-                    'quick_llm': quick_llm,
-                    'deep_llm': deep_llm,
-                    'quick_llm_params': quick_llm_params,
-                    'deep_llm_params': deep_llm_params,
-                    **provider_settings,
-                    'trade_enabled': trade_enabled,
-                    'trade_amount': trade_amount
-                }
-                app_state.start_market_hour_mode(symbols, market_hour_config, market_hours_list)
-
-                # Market hour scheduling loop
-                import datetime
-                import pytz
-                from webui.utils.market_hours import get_next_market_datetime, is_market_open
-
-                eastern = pytz.timezone('US/Eastern')
-                utc = pytz.utc
-
-                while (
-                    not app_state.stop_market_hour
-                    and scheduler_generation == app_state.run_generation
-                ):
-                    # Compute the schedule from current UTC time projected into Eastern.
-                    now = datetime.datetime.now(utc).astimezone(eastern)
-                    next_execution_times = []
-
-                    for hour in app_state.market_hours:
-                        next_dt = get_next_market_datetime(hour, now)
-                        next_execution_times.append((hour, next_dt))
-
-                    # Sort by next execution time
-                    next_execution_times.sort(key=lambda x: x[1])
-                    next_hour, next_dt = next_execution_times[0]
-
-                    print(f"[MARKET_HOUR] Next execution: {next_dt.strftime('%A, %B %d at %I:%M %p %Z')} (Hour {next_hour})")
-
-                    # Wait until next execution time
-                    while (
-                        datetime.datetime.now(utc).astimezone(eastern) < next_dt
-                        and not app_state.stop_market_hour
-                        and scheduler_generation == app_state.run_generation
-                    ):
-                        time.sleep(60)  # Check every minute
-
-                    if app_state.stop_market_hour:
-                        break
-
-                    # Check if market is actually open
-                    is_open, reason = is_market_open()
-                    if not is_open:
-                        print(f"[MARKET_HOUR] Market is closed: {reason}. Waiting for next execution time.")
-                        continue
-
-                    print(f"[MARKET_HOUR] Market is open, starting analysis at {next_hour}:00")
-
-                    # Reset states for new analysis
-                    app_state.reset_for_loop()
-
-                    # Phase C: auto-screening mode derives this round's
-                    # symbols from the pipeline (scan-or-cache Top20 plus
-                    # fresh holdings); a screening stop halts the schedule.
-                    round_symbols = symbols
-                    if auto_screening_on:
-                        round_symbols = _prepare_auto_round_symbols(provider_settings)
-                        if round_symbols is None:
-                            break
-
-                    # Initialize symbol states
-                    for symbol in round_symbols:
-                        app_state.init_symbol_state(symbol)
-
-                    # Add symbols to queue and run analysis
-                    app_state.add_symbols_to_queue(round_symbols)
-
-                    while (
-                        app_state.analysis_queue
-                        and not app_state.stop_market_hour
-                        and scheduler_generation == app_state.run_generation
-                    ):
-                        # F10: the universal stop flag gates the next symbol.
-                        if app_state.stop_requested:
-                            break
-                        symbol = app_state.get_next_symbol()
-                        if symbol:
-                            print(f"[MARKET_HOUR] Analyzing {symbol} at {next_hour}:00 with current market data...")
-                            start_analysis(
-                                symbol,
-                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                                research_depth, allow_shorts, quick_llm, deep_llm,
-                                quick_llm_params, deep_llm_params,
-                                llm_provider=llm_provider,
-                                backend_url=backend_url,
-                                output_language=output_language,
-                                checkpoint_enabled=checkpoint_enabled,
-                                provider_settings=provider_settings,
-                            )
-
-                            if app_state.stop_market_hour:
-                                break
-                            if _provider_stopped():
-                                # Provider failure: stop this round and the
-                                # whole schedule until an operator restarts.
-                                _halt_scheduling_for_provider_stop()
-                                break
-
-                    if app_state.stop_market_hour:
-                        break
-
-                    if _provider_stopped():
-                        break
-                    if _screening_stopped():
-                        break
-
-                    if not app_state.stop_market_hour:
-                        print(f"[MARKET_HOUR] Analysis completed for {next_hour}:00. Waiting for next execution time.")
-
-            elif loop_enabled:
-                # Start loop mode
-                loop_config = {
-                    'analysts_market': analysts_market,
-                    'analysts_social': analysts_social,
-                    'analysts_news': analysts_news,
-                    'analysts_fundamentals': analysts_fundamentals,
-                    'analysts_macro': analysts_macro,
-                    'research_depth': research_depth,
-                    'allow_shorts': allow_shorts,
-                    'llm_provider': llm_provider,
-                    'backend_url': backend_url,
-                    'output_language': output_language,
-                    'checkpoint_enabled': checkpoint_enabled,
-                    'quick_llm': quick_llm,
-                    'deep_llm': deep_llm,
-                    'quick_llm_params': quick_llm_params,
-                    'deep_llm_params': deep_llm_params,
-                    **provider_settings,
-                    'trade_enabled': trade_enabled,
-                    'trade_amount': trade_amount
-                }
-                app_state.start_loop(symbols, loop_config)
-
-                loop_iteration = 1
-                while (
-                    not app_state.stop_loop
-                    and scheduler_generation == app_state.run_generation
-                ):
-                    print(f"[LOOP] Starting iteration {loop_iteration}")
-
-                    # Phase C: auto-screening mode derives this round's
-                    # symbols from the pipeline; a screening stop halts.
-                    round_symbols = symbols
-                    if auto_screening_on:
-                        round_symbols = _prepare_auto_round_symbols(provider_settings)
-                        if round_symbols is None:
-                            break
-
-                    # States already initialized above, just add to queue
-                    app_state.add_symbols_to_queue(round_symbols)
-
-                    # Run analysis for all symbols
-                    while (
-                        app_state.analysis_queue
-                        and not app_state.stop_loop
-                        and scheduler_generation == app_state.run_generation
-                    ):
-                        # F10: the universal stop flag gates the next symbol.
-                        if app_state.stop_requested:
-                            break
-                        symbol = app_state.get_next_symbol()
-                        if symbol:
-                            print(f"[LOOP] Analyzing {symbol} with current market data...")
-                            start_analysis(
-                                symbol,
-                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                                research_depth, allow_shorts, quick_llm, deep_llm,
-                                quick_llm_params, deep_llm_params,
-                                llm_provider=llm_provider,
-                                backend_url=backend_url,
-                                output_language=output_language,
-                                checkpoint_enabled=checkpoint_enabled,
-                                provider_settings=provider_settings,
-                            )
-                            if _provider_stopped():
-                                _halt_scheduling_for_provider_stop()
-                                break
-
-                    if app_state.stop_loop:
-                        break
-                    if _screening_stopped():
-                        break
-
-                    print(f"[LOOP] Iteration {loop_iteration} completed. Waiting {app_state.loop_interval_minutes} minutes...")
-
-                    # Wait for the specified interval (checking for stop every 30 seconds)
-                    wait_time = app_state.loop_interval_minutes * 60  # Convert to seconds
-                    elapsed = 0
-                    while (
-                        elapsed < wait_time
-                        and not app_state.stop_loop
-                        and scheduler_generation == app_state.run_generation
-                    ):
-                        time.sleep(min(30, wait_time - elapsed))
-                        elapsed += 30
-
-                    if not app_state.stop_loop:
-                        # Reset analysis results for next iteration but keep states for pagination
-                        app_state.reset_for_loop()
-                        loop_iteration += 1
-
-                print("[LOOP] Loop stopped")
-            else:
-                # Single run mode (original behavior) - use current date
-                # Phase C: auto-screening mode derives the round symbols.
-                round_symbols = symbols
-                if auto_screening_on:
-                    round_symbols = _prepare_auto_round_symbols(provider_settings)
-                if round_symbols:
-                    app_state.add_symbols_to_queue(round_symbols)
-
-                    while (
-                        app_state.analysis_queue
-                        and scheduler_generation == app_state.run_generation
-                    ):
-                        # F10: single-run mode checks the universal stop flag
-                        # before taking the next symbol too.
-                        if app_state.stop_requested:
-                            break
-                        symbol = app_state.get_next_symbol()
-                        if symbol:
-                            print(f"[SINGLE] Analyzing {symbol} with current market data...")
-                            start_analysis(
-                                symbol,
-                                analysts_market, analysts_social, analysts_news, analysts_fundamentals, analysts_macro,
-                                research_depth, allow_shorts, quick_llm, deep_llm,
-                                quick_llm_params, deep_llm_params,
-                                llm_provider=llm_provider,
-                                backend_url=backend_url,
-                                output_language=output_language,
-                                checkpoint_enabled=checkpoint_enabled,
-                                provider_settings=provider_settings,
-                            )
-
-            # F02: a stale scheduler returning after Stop→Start must never
-            # clear the new run's running flag.
-            if scheduler_generation == app_state.run_generation:
-                app_state.analysis_running = False
+            # F02: the scheduler body lives at module level so regression
+            # tests can drive it deterministically; the generation is
+            # captured at its entry.
+            _scheduler_thread(
+                symbols=symbols,
+                market_hour_enabled=market_hour_enabled,
+                market_hours_list=market_hours_list if market_hour_enabled else [],
+                loop_enabled=loop_enabled,
+                analysts_market=analysts_market,
+                analysts_social=analysts_social,
+                analysts_news=analysts_news,
+                analysts_fundamentals=analysts_fundamentals,
+                analysts_macro=analysts_macro,
+                research_depth=research_depth,
+                allow_shorts=allow_shorts,
+                quick_llm=quick_llm,
+                deep_llm=deep_llm,
+                quick_llm_params=quick_llm_params,
+                deep_llm_params=deep_llm_params,
+                llm_provider=llm_provider,
+                backend_url=backend_url,
+                output_language=output_language,
+                checkpoint_enabled=checkpoint_enabled,
+                provider_settings=provider_settings,
+                trade_enabled=trade_enabled,
+                trade_amount=trade_amount,
+                auto_screening_on=auto_screening_on,
+            )
 
         if not app_state.analysis_running:
             app_state.analysis_running = True
