@@ -207,7 +207,10 @@ class MidFlipOutageTests(unittest.TestCase):
                 current_position="LONG",
             )
 
-    def test_open_leg_failure_reports_failure_and_feeds_the_breaker(self):
+    def test_flip_close_accepted_defers_open_leg_and_feeds_no_rejection(self):
+        # F05: a close-then-open flip completes only the close phase. The
+        # opposite open leg is never submitted in the same call, so the
+        # breaker sees one successful close and no rejection.
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp, max_consecutive_rejections=5)
             broker = Mock()
@@ -219,11 +222,15 @@ class MidFlipOutageTests(unittest.TestCase):
                 {"success": False, "error": "connection reset"},
             ]
             outcome = self._run_flip(tmp, guard, broker)
-            self.assertFalse(outcome["success"])
-            roles = [r.get("status") for r in outcome["results"]]
-            self.assertEqual(len(roles), 2)
-            # One success (close) then one rejection (open): streak is 1.
-            self.assertEqual(guard.consecutive_rejections(), 1)
+            self.assertTrue(outcome["success"])
+            self.assertTrue(outcome.get("reanalysis_required"))
+            self.assertTrue(outcome.get("hold"))
+            # The second side_effect (the would-be open leg) must never be
+            # consumed: exactly one POST happened, for the close.
+            self.assertEqual(broker.submit_order.call_count, 1)
+            deferred = [r for r in outcome["results"] if r.get("reversal_open_deferred")]
+            self.assertEqual(len(deferred), 1)
+            self.assertEqual(guard.consecutive_rejections(), 0)
 
     def test_close_leg_failure_never_attempts_the_open_leg(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -237,7 +244,9 @@ class MidFlipOutageTests(unittest.TestCase):
             self.assertFalse(outcome["success"])
             self.assertEqual(broker.submit_order.call_count, 1)
 
-    def test_unexpected_exception_mid_flip_goes_unknown_without_retry(self):
+    def test_mid_flip_open_exception_never_reaches_the_broker_under_f05(self):
+        # F05: even when a second POST failure is queued, the deferred open
+        # leg is never submitted — only the close phase runs in this call.
         with tempfile.TemporaryDirectory() as tmp:
             guard = _guard(tmp)
             broker = Mock()
@@ -249,10 +258,12 @@ class MidFlipOutageTests(unittest.TestCase):
                 ConnectionError("socket closed mid-request"),
             ]
             outcome = self._run_flip(tmp, guard, broker)
-            self.assertFalse(outcome["success"])
-            self.assertTrue(outcome.get("has_unknown"))
-            # Ambiguous POST: exactly one attempt, never an immediate retry.
-            self.assertEqual(broker.submit_order.call_count, 2)
+            self.assertTrue(outcome["success"])
+            self.assertTrue(outcome.get("reanalysis_required"))
+            self.assertFalse(outcome.get("has_unknown"))
+            # Ambiguity can only come from the close leg; the open leg was
+            # deferred without any POST.
+            self.assertEqual(broker.submit_order.call_count, 1)
 
 
 class KillSwitchAndBreakerFlowTests(unittest.TestCase):

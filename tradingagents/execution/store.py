@@ -20,6 +20,11 @@ from typing import Any, Optional
 
 SCHEMA_VERSION = 3
 
+# F06: one execution DB is bound to exactly one broker account forever.
+# The binding is a single fixed decision_id row in execution_intents —
+# no schema change, no per-row account_id.
+ACCOUNT_BINDING_DECISION_ID = "execution-account-binding-v1"
+
 ORDER_STATUSES = frozenset(
     {
         "PENDING",
@@ -679,6 +684,18 @@ class ExecutionStore:
         finally:
             conn.close()
 
+    def recorded_fill_cost(self, order_id: str) -> float:
+        """Total recorded notional (SUM qty*price) of an order's fills (F10)."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(qty * price), 0) AS cost FROM fills WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()
+            return float(row["cost"] or 0.0)
+        finally:
+            conn.close()
+
     def list_fills_since(self, timestamp: str) -> list[dict[str, Any]]:
         conn = self._connect()
         try:
@@ -688,6 +705,132 @@ class ExecutionStore:
                 (timestamp,),
             ).fetchall()
             return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    # -- account binding (F06) --------------------------------------------
+
+    def _read_account_binding(self) -> Optional[dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM execution_intents WHERE decision_id = ?",
+                (ACCOUNT_BINDING_DECISION_ID,),
+            ).fetchone()
+            if row is None:
+                return None
+            raw = dict(row)
+            try:
+                payload = json.loads(raw["payload_json"])
+            except Exception:
+                payload = {}
+            return {"account_id": payload.get("account_id"), "row": raw}
+        finally:
+            conn.close()
+
+    def account_binding_owner(self) -> Optional[str]:
+        """Bound account id, or None when this DB has no binding row yet."""
+        binding = self._read_account_binding()
+        return binding["account_id"] if binding else None
+
+    def _legacy_account_state_ids(self) -> set[str]:
+        """Account ids provable from existing __ACCOUNT__/RECONCILE rows."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT payload_json FROM execution_intents "
+                "WHERE symbol = '__ACCOUNT__' AND action = 'RECONCILE'"
+            ).fetchall()
+        finally:
+            conn.close()
+        ids: set[str] = set()
+        for row in rows:
+            try:
+                value = json.loads(row["payload_json"]).get("account_id")
+            except Exception:
+                continue
+            if isinstance(value, str) and value.strip():
+                ids.add(value.strip())
+        return ids
+
+    def ensure_account_binding(self, account_id: str) -> None:
+        """Bind this DB to one broker account before any recovery/execution.
+
+        Fail-closed rules:
+        - already bound to another account => refuse;
+        - legacy DB whose RECONCILE rows prove a DIFFERENT (or ambiguous)
+          account => refuse;
+        - legacy DB with trading records but no provable owner => refuse;
+          the operator must use a fresh DB or migrate explicitly.
+        A brand-new DB (no orders, no account-state rows) binds silently.
+        """
+        account_id = str(account_id or "").strip()
+        if not account_id:
+            raise ValueError("cannot bind an execution DB without an account id")
+        binding = self._read_account_binding()
+        if binding is not None:
+            if binding["account_id"] != account_id:
+                raise ValueError(
+                    f"execution DB is bound to broker account "
+                    f"{binding['account_id']!r}, refusing to use it for "
+                    f"{account_id!r}"
+                )
+            return
+        legacy_ids = self._legacy_account_state_ids()
+        if len(legacy_ids) == 1:
+            legacy_id = next(iter(legacy_ids))
+            if legacy_id != account_id:
+                raise ValueError(
+                    f"execution DB was used by broker account {legacy_id!r}, "
+                    f"refusing to bind it to {account_id!r}"
+                )
+        elif len(legacy_ids) > 1:
+            raise ValueError(
+                "execution DB contains mixed account states; account "
+                "ownership cannot be proven"
+            )
+        else:
+            conn = self._connect()
+            try:
+                has_orders = conn.execute(
+                    "SELECT EXISTS(SELECT 1 FROM orders)"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            if has_orders:
+                raise ValueError(
+                    "legacy execution DB contains unbound trading records; "
+                    "account ownership cannot be proven — use a new "
+                    "execution DB or perform an explicit one-time migration"
+                )
+        now = utcnow_iso()
+        intent_id = intent_id_for_decision(ACCOUNT_BINDING_DECISION_ID)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """
+                INSERT INTO execution_intents
+                (intent_id,decision_id,run_id,symbol,action,target_position,
+                 payload_json,state,created_at,updated_at)
+                VALUES (?,?,NULL,'__ACCOUNT__','BIND','AUTHORITY',?,'COMPLETED',?,?)
+                ON CONFLICT(decision_id) DO NOTHING
+                """,
+                (
+                    intent_id,
+                    ACCOUNT_BINDING_DECISION_ID,
+                    json.dumps({"account_id": account_id}, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
         finally:
             conn.close()
 

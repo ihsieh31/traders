@@ -65,17 +65,23 @@ def outstanding_increasing_notional(
 ) -> tuple[float, bool]:
     """Sum live exposure-adding open-order notional from the snapshot.
 
-    A buy order adds long exposure. A sell order adds exposure only for a
-    currently short position (a sell against a long position reduces it).
-    Returns (total, fully_estimated): ``fully_estimated`` is False when any
-    counted order's value had to be guessed, which callers must treat as
-    "refuse the increase" rather than trusting the partial sum.
+    F03B: each symbol shares one provable reducing capacity across ALL its
+    live orders — a SHORT position proves at most its size in BUY qty as
+    reducing, a LONG position proves at most its size in SELL qty, and a
+    flat position proves nothing (both an opening BUY and an opening SELL
+    add exposure). The first reducing order consumes the capacity; any
+    further quantity on that side counts as exposure-increasing, so two
+    sells can never each claim the same long lot as their reduction.
 
-    Quantity-only orders are valued with their OWN symbol's validated quote
-    from ``reference_prices``. A single scalar ``reference_price`` (kept for
-    backward compatibility) applies only to the candidate symbol — it must
-    never be used as a global fallback, because a $1,000 stock valued at a
-    $10 candidate price understates outstanding exposure by 100x.
+    Notional-based orders cannot prove they only reduce, so their full
+    notional counts as increasing. Quantity-only orders are valued with
+    their OWN symbol's validated quote from ``reference_prices``; a single
+    scalar ``reference_price`` (kept for backward compatibility) applies
+    only to the candidate symbol — it must never be a global fallback,
+    because a $1,000 stock valued at a $10 candidate price understates
+    outstanding exposure by 100x. Returns (total, fully_estimated):
+    ``fully_estimated`` is False when any counted order's value had to be
+    guessed, which callers must treat as "refuse the increase".
     """
     total = 0.0
     fully_estimated = True
@@ -91,27 +97,43 @@ def outstanding_increasing_notional(
                 continue
             if key and value > 0:
                 price_map[key] = value
+    # F03B: per-symbol provable reducing capacity, shared by every live
+    # order on that symbol (buy capacity from a short, sell capacity from
+    # a long; flat positions have none).
+    reducing_capacity: dict[str, dict[str, float]] = {}
+
+    def _capacity_for(symbol: str) -> dict[str, float]:
+        caps = reducing_capacity.get(symbol)
+        if caps is None:
+            position = snapshot.position(symbol)
+            pos_qty = float(position.qty) if position is not None else 0.0
+            caps = {
+                "buy": max(0.0, -pos_qty),
+                "sell": max(0.0, pos_qty),
+            }
+            reducing_capacity[symbol] = caps
+        return caps
+
     for order in snapshot.orders:
         if not _is_live(order.status):
             continue
         if symbols is not None and order.symbol not in symbols:
             continue
-        position = snapshot.position(order.symbol)
-        short_side = position is not None and position.qty < 0
-        if str(order.side).lower() == "buy":
-            increasing = True
-        elif str(order.side).lower() == "sell" and short_side:
-            increasing = True
-        else:
-            continue
-        if not increasing:
-            continue
+        side = str(order.side).lower()
         if order.notional is not None and order.notional > 0:
+            # A notional order cannot prove it only reduces: count it whole.
             total += float(order.notional)
             continue
         qty = float(order.qty or 0) - float(order.filled_qty or 0)
         if qty <= 0:
             continue
+        capacity = _capacity_for(order.symbol).get(side, 0.0)
+        if capacity > 0:
+            reduced = min(qty, capacity)
+            _capacity_for(order.symbol)[side] = capacity - reduced
+            qty -= reduced
+        if qty <= 0:
+            continue  # fully provable reduction: adds no exposure
         own_price = price_map.get(order.symbol)
         if own_price is not None and own_price > 0:
             total += qty * float(own_price)
@@ -244,9 +266,16 @@ def evaluate_opening_exposure(
                 sector_exposure_used += abs(float(held.market_value))
 
         same_sector_symbols = {
-            sym for sym, sec in held_sectors.items() if sec == symbol_sector
+            str(sym or "").upper().replace("/", "")
+            for sym, sec in sector_mapping.items()
+            if sec == symbol_sector
         }
+        # F03A: the sector's outstanding orders come from the whole mapping
+        # (every same-sector symbol), never only from currently held
+        # symbols — a flat symbol with a pending same-sector BUY consumes
+        # sector headroom too.
         same_sector_symbols.add(normalized)
+        same_sector_symbols.discard("")
         sector_outstanding, sector_estimated = outstanding_increasing_notional(
             snapshot,
             symbols=same_sector_symbols,

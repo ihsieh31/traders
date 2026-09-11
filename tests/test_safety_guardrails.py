@@ -590,7 +590,11 @@ class ExecutionIntegrationTests(unittest.TestCase):
         broker.submit_order.assert_called_once()
         broker.close_position.assert_not_called()
 
-    def test_position_flip_closes_first_then_blocks_new_exposure(self):
+    def test_position_flip_closes_then_defers_open_for_fresh_analysis(self):
+        # F05: the flip completes only its close phase in this call. The
+        # oversized opposite open leg is deferred (never submitted), so the
+        # per-trade cap is enforced on the NEXT round's fresh analysis
+        # against fresh broker facts instead of pre-close sizing.
         with tempfile.TemporaryDirectory() as tmp:
             guard = make_guard(tmp, max_trade_notional_usd=100.0)
             broker = self._mock_broker()
@@ -607,10 +611,11 @@ class ExecutionIntegrationTests(unittest.TestCase):
                     current_position="LONG",
                 )
 
-        self.assertFalse(result["success"])
-        self.assertTrue(result["safety_blocked"])
+        self.assertTrue(result["success"])
+        self.assertTrue(result.get("reanalysis_required"))
+        self.assertFalse(result.get("safety_blocked"))
+        # Exactly one POST: the close leg. The open leg was deferred.
         broker.submit_order.assert_called_once()
-        broker.close_position.assert_not_called()
 
 
 class RunLoggerBudgetFeedTests(unittest.TestCase):

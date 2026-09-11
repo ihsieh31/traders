@@ -265,6 +265,7 @@ class RecoveryAndReconciliationTests(unittest.TestCase):
         broker = FakeBroker()
         with tempfile.TemporaryDirectory() as tmp:
             svc = _service(tmp, broker)
+            svc.store.ensure_account_binding("paper-1")
             _, orders, _ = svc.store.create_outbox(
                 decision_id="dec-restart", run_id=None, symbol="AAPL", action="BUY",
                 target_position="LONG", payload_json=json.dumps(_intent()),

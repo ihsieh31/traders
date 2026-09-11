@@ -466,6 +466,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
         broker = self._broker(positions=[_pos("AAPL", 150, 19500.0)])
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._service(tmp, broker)
+            svc.store.ensure_account_binding("paper-1")
             svc.store.create_outbox(
                 decision_id="dec-cap", run_id=None, symbol="AAPL", action="BUY",
                 target_position="LONG", payload_json=json.dumps(self._intent()),

@@ -543,6 +543,8 @@ class F02RecoveryRefreshTests(_GuardIsolated, unittest.TestCase):
     def _seed_pending(self, svc, symbol, notional, tag):
         from tradingagents.execution.store import client_order_id_for
 
+        svc.store.ensure_account_binding("paper-1")
+
         did = f"dec-seed-{tag}"
         coid = client_order_id_for(did, symbol, "buy", role="open", seq=0)
         intent_row, orders, _ = svc.store.create_outbox(
@@ -916,6 +918,8 @@ class F04ProtectionGapTests(_GuardIsolated, unittest.TestCase):
         """A durable 9-share AAPL lot with a registered protective stop."""
         from tradingagents.execution.store import client_order_id_for
 
+        svc.store.ensure_account_binding("paper-1")
+
         did = "dec-parent"
         coid = client_order_id_for(did, "AAPL", "buy", role="open", seq=0)
         intent_row, orders, _ = svc.store.create_outbox(
@@ -1126,6 +1130,8 @@ class F04ShortCloseRegressionTests(_GuardIsolated, unittest.TestCase):
     def _seed_short_protected_position(self, svc, broker):
         """A durable 5-share SHORT lot with a registered protective BUY stop."""
         from tradingagents.execution.store import client_order_id_for
+
+        svc.store.ensure_account_binding("paper-1")
 
         did = "dec-parent-short"
         coid = client_order_id_for(did, "AAPL", "sell", role="open", seq=0)

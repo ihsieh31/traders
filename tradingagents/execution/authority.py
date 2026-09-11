@@ -295,6 +295,11 @@ def capture_broker_snapshot(
     sleep: Callable[[float], None] = time.sleep,
 ) -> BrokerSnapshot:
     """Fetch one complete account/position/order/fill authority snapshot."""
+    # F09: stamp the capture START, not the end. Every fact below was read
+    # at or after this instant, so the snapshot's age must include the
+    # whole capture duration (a slow GET sequence must not masquerade as a
+    # fresh snapshot).
+    capture_started_at = now().astimezone(timezone.utc)
     account = get_with_retry(broker.get_account, sleep=sleep)
     account_id = str(_value(account, "id", "account_id") or "").strip()
     if not account_id:
@@ -416,7 +421,7 @@ def capture_broker_snapshot(
                 )
             )
 
-    observed_at = now().astimezone(timezone.utc)
+    observed_at = capture_started_at
     canonical = json.dumps(
         {
             "observed_at": observed_at.isoformat(),
@@ -493,13 +498,25 @@ def capture_quote(symbol: str) -> BrokerQuote:
 
 
 class AccountExecutionLock:
-    """Non-blocking, crash-released process lock keyed by verified account ID."""
+    """Non-blocking, crash-released process lock keyed by verified account ID.
+
+    F08: the lock lives in ONE fixed same-host location (env
+    ``TRADINGAGENTS_EXECUTION_LOCK_DIR`` override, else
+    ``~/.tradingagents/execution-locks``), never beside the DB — two
+    worktrees pointing at different DB paths but the same broker account
+    must contend for the same lock file. Same host/filesystem only; no
+    multi-host (distributed) claim is made. An unbuildable lock directory
+    fails closed instead of falling back to a per-DB lock.
+    """
 
     def __init__(self, db_path: str, account_id: str):
         digest = hashlib.sha256(account_id.encode()).hexdigest()[:20]
-        lock_dir = Path(db_path).resolve().parent / ".execution-locks"
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        self.path = lock_dir / f"account-{digest}.lock"
+        lock_dir = os.getenv("TRADINGAGENTS_EXECUTION_LOCK_DIR", "").strip()
+        if not lock_dir:
+            lock_dir = str(Path.home() / ".tradingagents" / "execution-locks")
+        lock_path = Path(lock_dir)
+        lock_path.mkdir(parents=True, exist_ok=True)
+        self.path = lock_path / f"account-{digest}.lock"
         self._file: Any = None
 
     def __enter__(self) -> "AccountExecutionLock":
@@ -602,11 +619,29 @@ class Reconciler:
             already = float(current.get("filled_qty") or 0) if current else 0.0
             delta = fill.qty - already
             if delta > 1e-9:
+                # F10: broker filled_qty/filled_avg_price are CUMULATIVE.
+                # The incremental fill price is the cost delta over the qty
+                # delta, never the cumulative average itself.
+                broker_cumulative_cost = float(fill.qty) * float(fill.price)
+                recorded_cost = float(self.store.recorded_fill_cost(local["order_id"]))
+                delta_cost = broker_cumulative_cost - recorded_cost
+                incremental_price = delta_cost / delta
+                if (
+                    delta_cost <= 0
+                    or not math.isfinite(incremental_price)
+                    or incremental_price <= 0
+                ):
+                    raise BrokerAuthorityError(
+                        f"invalid cumulative fill economics for "
+                        f"{fill.client_order_id}: cumulative qty {fill.qty:g} "
+                        f"at avg {fill.price:g} vs recorded cost "
+                        f"{recorded_cost:.8f}; refusing to record a guessed fill"
+                    )
                 self.store.record_fill(
                     execution_id=fill.execution_id,
                     order_id=local["order_id"],
                     qty=delta,
-                    price=fill.price,
+                    price=incremental_price,
                     filled_at=fill.filled_at.isoformat(),
                 )
 

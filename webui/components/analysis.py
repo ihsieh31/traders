@@ -204,6 +204,14 @@ def run_analysis(
     run_started = False
     final_state = None
     current_date = None
+    # F02: capture this run's generation up front. An operator Stop bumps
+    # app_state.run_generation; a stale run may finish its LLM work but
+    # must never persist an executable result, trade, or clear a newer
+    # run's flags.
+    my_generation = app_state.run_generation
+
+    def _run_is_stale() -> bool:
+        return my_generation != app_state.run_generation
 
     try:
         # Always use current date for real-time analysis. F17: the analysis
@@ -344,6 +352,16 @@ def run_analysis(
         run_started = False
 
         # NEW: Persist the extracted decision so the trading engine can act on it directly
+        # F02 boundary: a stale generation must not overwrite the shared
+        # executable result — a newer run may already own this symbol.
+        if _run_is_stale():
+            print(
+                f"[ANALYSIS] {ticker}: stale run generation "
+                f"({my_generation} != {app_state.run_generation}); result "
+                "discarded without trading"
+            )
+            return "Analysis completed but result discarded: a stop invalidated this run"
+
         current_state["recommended_action"] = decision
         current_state["final_trade_intent"] = trade_intent
 
@@ -378,6 +396,12 @@ def run_analysis(
         # further symbol is dispatched.
         if getattr(app_state, 'stop_requested', False):
             print(f"[TRADE] Stop requested during {ticker}'s analysis; trade suppressed.")
+            return
+
+        # F02 boundary: no order may leave a stale run, even when a new
+        # Start has already cleared the shared stop flags.
+        if _run_is_stale():
+            print(f"[TRADE] {ticker}: stale run generation; trade suppressed.")
             return
 
         if trade_enabled:
@@ -422,9 +446,11 @@ def run_analysis(
         if progress is not None:
             progress(1.0)  # Complete the progress bar
     finally:
-        # Mark analysis as no longer running
-        print(f"Real-time analysis for {ticker} completed")
-        current_state["analysis_running"] = False
+        # Mark analysis as no longer running — but only for the run that
+        # still owns the current generation (F02): a stale run returning
+        # from a blocked LLM call must never clear a newer run's flag.
+        if not _run_is_stale():
+            current_state["analysis_running"] = False
 
     return "Real-time analysis complete"
 

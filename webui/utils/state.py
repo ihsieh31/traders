@@ -50,6 +50,14 @@ class AppState:
         # loop and the pre-trade boundary check this before proceeding.
         self.stop_requested = False
 
+        # F02: process-local monotonic run generation. Every operator stop
+        # invalidates all already-dispatched work by bumping it; a new
+        # Start never restores it. Stale analysis threads and schedulers
+        # compare their captured generation before trading/dispatching so
+        # a Stop→immediate Start cannot resurrect old work through the
+        # cleared stop flags.
+        self.run_generation = 0
+
         # Phase B: set when an LLM provider failure stops a run. Auto
         # dispatch (loop/market-hour) checks this and halts until the
         # operator explicitly restarts the analysis.
@@ -519,6 +527,9 @@ class AppState:
         """Stop the looping mode."""
         self.stop_loop = True
         self.stop_requested = True  # F10: universal stop, not just scheduling
+        # F02: a stop invalidates every already-dispatched work item, even
+        # one still blocked inside a long LLM call.
+        self.run_generation += 1
         self.loop_enabled = False
         self.analysis_running = False
         print("[STATE] Stopping loop mode")
@@ -537,6 +548,8 @@ class AppState:
         """Stop the market hour trading mode."""
         self.stop_market_hour = True
         self.stop_requested = True  # F10: universal stop, not just scheduling
+        # F02: a stop invalidates every already-dispatched work item.
+        self.run_generation += 1
         self.market_hour_enabled = False
         self.analysis_running = False
         print("[STATE] Stopping market hour mode")
@@ -546,6 +559,8 @@ class AppState:
         self.stop_requested = True
         self.stop_loop = True
         self.stop_market_hour = True
+        # F02: a stop invalidates every already-dispatched work item.
+        self.run_generation += 1
 
     def is_stop_requested(self) -> bool:
         return bool(getattr(self, "stop_requested", False))

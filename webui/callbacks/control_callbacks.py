@@ -1224,6 +1224,11 @@ def register_control_callbacks(app):
             app_state.init_symbol_state(symbol)
 
         def analysis_thread():
+            # F02: this scheduler's generation. A Stop bumps the shared
+            # counter; if an operator immediately Starts again, the cleared
+            # stop flags must NOT resurrect this sleeping thread — every
+            # loop below also requires its generation to still be current.
+            scheduler_generation = app_state.run_generation
             if trade_enabled:
                 startup = ExecutionService().startup_recover()
                 if not startup.get("success"):
@@ -1264,7 +1269,10 @@ def register_control_callbacks(app):
                 eastern = pytz.timezone('US/Eastern')
                 utc = pytz.utc
 
-                while not app_state.stop_market_hour:
+                while (
+                    not app_state.stop_market_hour
+                    and scheduler_generation == app_state.run_generation
+                ):
                     # Compute the schedule from current UTC time projected into Eastern.
                     now = datetime.datetime.now(utc).astimezone(eastern)
                     next_execution_times = []
@@ -1280,7 +1288,11 @@ def register_control_callbacks(app):
                     print(f"[MARKET_HOUR] Next execution: {next_dt.strftime('%A, %B %d at %I:%M %p %Z')} (Hour {next_hour})")
 
                     # Wait until next execution time
-                    while datetime.datetime.now(utc).astimezone(eastern) < next_dt and not app_state.stop_market_hour:
+                    while (
+                        datetime.datetime.now(utc).astimezone(eastern) < next_dt
+                        and not app_state.stop_market_hour
+                        and scheduler_generation == app_state.run_generation
+                    ):
                         time.sleep(60)  # Check every minute
 
                     if app_state.stop_market_hour:
@@ -1313,7 +1325,11 @@ def register_control_callbacks(app):
                     # Add symbols to queue and run analysis
                     app_state.add_symbols_to_queue(round_symbols)
 
-                    while app_state.analysis_queue and not app_state.stop_market_hour:
+                    while (
+                        app_state.analysis_queue
+                        and not app_state.stop_market_hour
+                        and scheduler_generation == app_state.run_generation
+                    ):
                         # F10: the universal stop flag gates the next symbol.
                         if app_state.stop_requested:
                             break
@@ -1376,7 +1392,10 @@ def register_control_callbacks(app):
                 app_state.start_loop(symbols, loop_config)
 
                 loop_iteration = 1
-                while not app_state.stop_loop:
+                while (
+                    not app_state.stop_loop
+                    and scheduler_generation == app_state.run_generation
+                ):
                     print(f"[LOOP] Starting iteration {loop_iteration}")
 
                     # Phase C: auto-screening mode derives this round's
@@ -1391,7 +1410,11 @@ def register_control_callbacks(app):
                     app_state.add_symbols_to_queue(round_symbols)
 
                     # Run analysis for all symbols
-                    while app_state.analysis_queue and not app_state.stop_loop:
+                    while (
+                        app_state.analysis_queue
+                        and not app_state.stop_loop
+                        and scheduler_generation == app_state.run_generation
+                    ):
                         # F10: the universal stop flag gates the next symbol.
                         if app_state.stop_requested:
                             break
@@ -1423,7 +1446,11 @@ def register_control_callbacks(app):
                     # Wait for the specified interval (checking for stop every 30 seconds)
                     wait_time = app_state.loop_interval_minutes * 60  # Convert to seconds
                     elapsed = 0
-                    while elapsed < wait_time and not app_state.stop_loop:
+                    while (
+                        elapsed < wait_time
+                        and not app_state.stop_loop
+                        and scheduler_generation == app_state.run_generation
+                    ):
                         time.sleep(min(30, wait_time - elapsed))
                         elapsed += 30
 
@@ -1442,7 +1469,10 @@ def register_control_callbacks(app):
                 if round_symbols:
                     app_state.add_symbols_to_queue(round_symbols)
 
-                    while app_state.analysis_queue:
+                    while (
+                        app_state.analysis_queue
+                        and scheduler_generation == app_state.run_generation
+                    ):
                         # F10: single-run mode checks the universal stop flag
                         # before taking the next symbol too.
                         if app_state.stop_requested:
@@ -1462,7 +1492,10 @@ def register_control_callbacks(app):
                                 provider_settings=provider_settings,
                             )
 
-            app_state.analysis_running = False
+            # F02: a stale scheduler returning after Stop→Start must never
+            # clear the new run's running flag.
+            if scheduler_generation == app_state.run_generation:
+                app_state.analysis_running = False
 
         if not app_state.analysis_running:
             app_state.analysis_running = True

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -460,6 +461,14 @@ def _evaluate_opening_caps(
     )
 
 
+class _DeadlineGapOutcome(Exception):
+    """Carries a protection-gap result out of the deadline loop (F01)."""
+
+    def __init__(self, gap: dict[str, Any]):
+        super().__init__(str(gap.get("error") or "protection gap"))
+        self.gap = gap
+
+
 class ExecutionService:
     """Unique production execution entry (paper-only)."""
 
@@ -734,6 +743,7 @@ class ExecutionService:
             snapshot_version=result.snapshot_version,
         )
 
+
     def enforce_exit_deadlines(self) -> dict[str, Any]:
         """Exit due, fill-proven positions on scheduled checks under the account lock.
 
@@ -806,11 +816,15 @@ class ExecutionService:
                             f"deadline close durable commit failed: "
                             f"{prepared_outbox.get('error')}"
                         )
+                    # F01: cancellation count is per symbol; the protection-gap
+                    # evaluation below must never see another symbol's tally.
+                    canceled_here = 0
                     for order in conflicting:
-                        cancellation_calls += 1
+                        canceled_here += 1
                         broker.cancel_order_by_id(order.broker_order_id)
                         snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
                         self._reconcile_snapshot(broker, snapshot)
+                    cancellation_calls += canceled_here
                     snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
                     current = snapshot.position(symbol)
                     # A protective child may fill during cancellation. Recompute lots.
@@ -820,25 +834,58 @@ class ExecutionService:
                         # Position closed during cancellation: nothing to close.
                         self._abandon_prepared_rows(prepared_outbox)
                         continue
+
+                    def _fail_with_gap_check(message: str) -> None:
+                        # F01: after this symbol's protections were canceled, a
+                        # verification failure must first consult the existing
+                        # protection-gap invariant before any further action.
+                        gap = self._evaluate_protection_gap(
+                            broker, snapshot, symbol,
+                            canceled_protections=canceled_here,
+                        )
+                        if gap is not None:
+                            raise _DeadlineGapOutcome(gap)
+                        raise BrokerAuthorityError(message)
+
                     if not refreshed or abs(current.qty - refreshed["qty"]) > 1e-8:
-                        raise BrokerAuthorityError("Deadline position changed during protection cancellation")
-                    if abs(current.qty - abs(float(prepared_outbox["order_rows"][0]["quantity"] or 0))) > 1e-8:
-                        raise BrokerAuthorityError("Deadline close quantity no longer matches the position")
+                        _fail_with_gap_check("Deadline position changed during protection cancellation")
+                    expected_close_side = "sell" if current.qty > 0 else "buy"
+                    prepared_qty = float(prepared_outbox["order_rows"][0]["quantity"] or 0)
+                    if str(prepared_outbox["order_rows"][0]["side"] or "").lower() != expected_close_side:
+                        _fail_with_gap_check("Deadline close side no longer matches the position")
+                    if abs(abs(current.qty) - abs(prepared_qty)) > 1e-8:
+                        _fail_with_gap_check("Deadline close quantity no longer matches the position")
                     spec = [{"role": "close", "side": closing_side, "quantity": abs(current.qty)}]
                     if not self._verified_reducing_exit(snapshot, symbol, spec):
-                        raise BrokerAuthorityError("Deadline close not yet safe; protection cancellation may be pending")
+                        _fail_with_gap_check("Deadline close not yet safe; protection cancellation may be pending")
                     result = self._liquidate_core(symbol, decision_id=due["decision_id"], _broker=broker,
                                                    _quantity=abs(current.qty), _side=closing_side,
                                                    _outbox=prepared_outbox)
                     results.append(result)
                     snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
                     post = self._reconcile_snapshot(broker, snapshot)
+                    if not result.get("success"):
+                        # F01: a failed close on a now-bare position is exactly
+                        # the protection-gap condition; decide it from fresh facts.
+                        if result.get("status") != "UNKNOWN":
+                            gap = self._evaluate_protection_gap(
+                                broker, snapshot, symbol,
+                                canceled_protections=canceled_here,
+                            )
+                            if gap is not None:
+                                raise _DeadlineGapOutcome(gap)
                     if not result.get("success") or not post.clean:
                         return {"success": False, "paused": True, "deadline_exits": results,
                                 "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
                                 "error": "Deadline exit requires reconciliation before further trading"}
-            return {"success": True, "deadline_exits": results,
-                    "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results)}
+                return {"success": True, "deadline_exits": results,
+                        "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results)}
+        except _DeadlineGapOutcome as gap_exc:
+            out = {"success": False,
+                   "deadline_exits": results,
+                   "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results)}
+            out.update(gap_exc.gap)
+            return out
         except Exception as exc:
             return {"success": False, "paused": True, "fail_closed": True,
                     "deadline_exits": results,
@@ -1475,10 +1522,33 @@ class ExecutionService:
         broker_calls = 0
         results: list[dict[str, Any]] = []
         close_leg_failed = False
+        # F05: a close-then-open reversal completes ONLY its close phase in
+        # this call. The opposite open leg is never submitted here — sizing,
+        # caps and quotes were computed from pre-close facts, and an accepted
+        # close is not a proven flat position. A later fresh analysis decides
+        # the new direction from a fresh broker snapshot.
+        is_reversal_flip = any(s["role"] == "close" for s in specs) and any(
+            s["role"] == "open" for s in specs
+        )
         for spec, orow in zip(specs, order_rows):
             if (orow.get("status") or "").upper() != "PENDING":
                 results.append(
                     {"client_order_id": orow["client_order_id"], "deduped": True}
+                )
+                continue
+            if is_reversal_flip and spec["role"] == "open":
+                self._store.transition_order(orow["order_id"], "CANCELED")
+                results.append(
+                    {
+                        "client_order_id": orow["client_order_id"],
+                        "skipped": True,
+                        "reversal_open_deferred": True,
+                        "error": (
+                            "skipped: reversal close was submitted; a fresh "
+                            "analysis on fresh broker facts is required "
+                            "before the opposite open"
+                        ),
+                    }
                 )
                 continue
             if close_leg_failed and spec["role"] == "open":
@@ -1577,9 +1647,17 @@ class ExecutionService:
         statuses = {(o.get("status") or "").upper() for o in final_orders}
         if statuses and statuses <= {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
             self._store.update_intent_state(intent_row["intent_id"], "COMPLETED")
+        # F05: deferred reversal open legs are a planned outcome, not a
+        # failure — judge success on the close phase only.
+        deferral_results = [
+            r for r in results if r.get("reversal_open_deferred")
+        ]
+        judged_results = [
+            r for r in results if not r.get("reversal_open_deferred")
+        ]
         success = all(
-            r.get("ok") or r.get("deduped") for r in results
-        ) and not any(r.get("safety_blocked") for r in results)
+            r.get("ok") or r.get("deduped") for r in judged_results
+        ) and not any(r.get("safety_blocked") for r in judged_results)
         # Safety blocks fail the overall call but never touched the broker.
         broker_attempted = broker_calls > 0
         out: dict[str, Any] = {
@@ -1599,6 +1677,16 @@ class ExecutionService:
             )
             if first_block.get("error"):
                 out["error"] = first_block["error"]
+        if is_reversal_flip and deferral_results and success:
+            # F05: the close phase completed; the opposite open must come
+            # from a later fresh analysis against fresh broker facts. This
+            # never claims the target position was achieved.
+            out["hold"] = True
+            out["reanalysis_required"] = True
+            out["reason"] = (
+                "reversal close submitted; fresh analysis required before "
+                "opposite open"
+            )
         if exposure_check_info is not None:
             out["exposure_check"] = exposure_check_info
         if any((r.get("status") or "") == "UNKNOWN" for r in results):
@@ -1960,11 +2048,28 @@ class ExecutionService:
         recoverable order evaluates caps against live facts — a prior
         resubmit/adoption must never be invisible to the following cap check
         (F02). A failed refresh stops recovery fail-closed on the old facts.
+
+        F06: verify (or first-establish) the DB's single broker-account
+        binding BEFORE any recovery or execution mutation. Every mutating
+        entry (execute / startup_recover / enforce_exit_deadlines /
+        liquidate) passes through here under the account lock.
         """
+        try:
+            self._store.ensure_account_binding(snapshot.account_id)
+        except Exception as exc:
+            raise BrokerAuthorityError(
+                f"execution DB account binding check failed: {exc}"
+            ) from exc
         initial = self._reconcile_snapshot(broker, snapshot)
         recoverable_reasons = (
             "unresolved PENDING order:",
             "unresolved UNKNOWN order:",
+            # F07: a crash mid-submit leaves a SUBMITTING row the broker may
+            # or may not have accepted. It may enter the read-only
+            # client-order-id lookup (adopt if found); it is never
+            # auto-resubmitted — without a broker fact it stays unresolved
+            # and the account stays paused.
+            "unresolved SUBMITTING order:",
         )
         if any(not reason.startswith(recoverable_reasons) for reason in initial.reasons):
             return snapshot, initial
@@ -1973,6 +2078,28 @@ class ExecutionService:
             return {order.client_order_id for order in current.orders}
 
         changed = False
+        queued = {row["client_order_id"] for row in self._store.list_recoverable_orders()}
+        processed: set[str] = set()
+
+        def _blocking_anomalies(result: Any) -> list[str]:
+            # F04: reasons that describe real broker-side anomalies (a
+            # partial fill, a position mismatch, an unknown live order, a
+            # stale snapshot...) stop the recovery round immediately.
+            # "unresolved PENDING/UNKNOWN/SUBMITTING order" rows that are
+            # still QUEUED for this same loop are the loop's own remaining
+            # work items, not anomalies — the final reconcile below still
+            # reports any that survive the round.
+            blocking = []
+            for reason in result.reasons:
+                match = re.match(
+                    r"unresolved (PENDING|UNKNOWN|SUBMITTING) order: (\S+)$",
+                    reason,
+                )
+                if match and match.group(2) in (queued - processed):
+                    continue
+                blocking.append(reason)
+            return blocking
+
         for local in list(self._store.list_recoverable_orders()):
             if local["client_order_id"] in _broker_clients(snapshot):
                 continue
@@ -1989,18 +2116,26 @@ class ExecutionService:
             else:
                 # SUBMITTING/PARTIAL without a broker fact is not safe to replay.
                 continue
+            processed.add(local["client_order_id"])
             # Refresh authority immediately after the adoption/resubmit above
-            # so the next iteration's cap evaluation sees it.
+            # so the next iteration's cap evaluation sees it (F02).
             try:
                 snapshot = capture_broker_snapshot(
                     broker, expected_account_id=snapshot.account_id
                 )
-                self._reconcile_snapshot(broker, snapshot)
+                step_result = self._reconcile_snapshot(broker, snapshot)
             except Exception as exc:
                 raise BrokerAuthorityError(
                     f"broker snapshot refresh failed during recovery; "
                     f"stopping before further mutations: {exc}"
                 ) from exc
+            # F04: once fresh broker facts are not CLEAN after a recovery
+            # mutation, no further recovery mutation may run this round —
+            # the next recoverable order must wait for proven safety.
+            if step_result.clean:
+                continue
+            if _blocking_anomalies(step_result):
+                return snapshot, step_result
         if not changed:
             return snapshot, initial
         return snapshot, self._reconcile_snapshot(broker, snapshot)
@@ -2036,6 +2171,27 @@ class ExecutionService:
         try:
             broker = self._broker_factory()
             snapshot = capture_broker_snapshot(broker)
+        except Exception as exc:
+            result = {"state": "PAUSED", "reasons": [str(exc)]}
+            self._attach_quarantine_status(result)
+            return result
+        # F06: never surface another account's durable state from this DB.
+        bound = None
+        try:
+            bound = self._store.account_binding_owner()
+        except Exception:
+            bound = None
+        if bound is not None and bound != snapshot.account_id:
+            result = {
+                "state": "PAUSED",
+                "reasons": [
+                    f"execution DB is bound to broker account {bound!r}, "
+                    f"not the current account {snapshot.account_id!r}"
+                ],
+            }
+            self._attach_quarantine_status(result)
+            return result
+        try:
             state = self._store.get_account_state(snapshot.account_id)
         except Exception as exc:
             result = {"state": "PAUSED", "reasons": [str(exc)]}

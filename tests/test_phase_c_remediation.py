@@ -791,6 +791,8 @@ class R2RecoveryGateTests(unittest.TestCase):
     def _seed_pending(self, svc, symbol, side="buy", notional=1000.0):
         from tradingagents.execution.store import client_order_id_for
 
+        svc.store.ensure_account_binding("paper-1")
+
         did = f"dec-seed-{symbol}"
         coid = client_order_id_for(did, symbol, side, role="open", seq=0)
         intent_row, orders, _ = svc.store.create_outbox(
@@ -908,6 +910,7 @@ class R2RecoveryGateTests(unittest.TestCase):
         # the broker position. Side alone never proves an order is a close.
         from tradingagents.execution.store import client_order_id_for
 
+        svc.store.ensure_account_binding("paper-1")
         did = "dec-exit-ZZZ"
         coid = client_order_id_for(did, "ZZZ", "sell", role="close", seq=0)
         # Use quantity so _resubmit passes idempotency check.
