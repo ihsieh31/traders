@@ -115,16 +115,16 @@ def _prepare_auto_round_symbols(provider_settings: dict, is_stale=None):
     possibly empty on a non-trading day with no holdings).
     """
     plan = _run_screening_round(provider_settings)
+    # F02: the stale check must precede the plan outcome — a stale run's
+    # screening result (failure included) belongs to a dead run and must
+    # never touch the new run's stop flags, queue or screening state.
+    if is_stale is not None and is_stale():
+        print("[SCHEDULER] Discarding stale screening round after Stop→Start")
+        return None
     if plan.stopped:
         app_state.screening_stop_reason = plan.stop_reason_text()
         app_state.screening_status_text = f"stopped: {plan.stop_reason_text()}"
         _halt_scheduling_for_screening_stop()
-        return None
-    if is_stale is not None and is_stale():
-        # F02: the operator Stop→Started while this scheduler's screening
-        # scan ran. Applying the plan now would overwrite the new run's
-        # screening/symbol state — discard it; the stale scheduler exits.
-        print("[SCHEDULER] Discarding stale screening round after Stop→Start")
         return None
     return _apply_screening_plan(plan)
 
@@ -278,6 +278,12 @@ def _collect_llm_params(
     )
 
 
+def _clean(value):
+    """Normalize an optional override: blank/None stays unset."""
+    text = str(value or "").strip()
+    return text or None
+
+
 def _collect_role_settings(
     analysis_provider,
     analysis_model,
@@ -287,11 +293,6 @@ def _collect_role_settings(
     decision_backend_url,
 ):
     """Phase B role overrides: empty values stay unset (legacy behavior)."""
-
-    def _clean(value):
-        text = str(value or "").strip()
-        return text or None
-
     return {
         "analysis_provider": _clean(analysis_provider),
         "analysis_model": _clean(analysis_model),
@@ -342,23 +343,27 @@ def _scheduler_thread(
     trade_enabled,
     trade_amount,
     auto_screening_on,
+    scheduler_generation,
 ):
     """Auto-scheduling thread body (F02: extracted verbatim from the Start
     callback closure so regression tests can drive it deterministically).
 
-    ``scheduler_generation`` is captured at entry: every operator stop bumps
-    the shared counter and a later Start never restores it, so every
-    sleep/wait wake-up in the loops below must re-check its generation
-    before mutating any shared state.
+    ``scheduler_generation`` is the dispatch token the Start callback
+    captured BEFORE this worker thread was created — the body never reads
+    the global counter itself. Every operator stop bumps the shared counter
+    and a later Start never restores it, so every wake-up in the loops
+    below must re-check this token before mutating any shared state.
     """
-    # F02: this scheduler's generation. A Stop bumps the shared
-    # counter; if an operator immediately Starts again, the cleared
-    # stop flags must NOT resurrect this sleeping thread — every
-    # loop below also requires its generation to still be current.
-    scheduler_generation = app_state.run_generation
 
     def _stale() -> bool:
         return scheduler_generation != app_state.run_generation
+
+    # F02: a worker whose dispatch token is already stale (the operator
+    # Stop→Started before this thread ever ran) must exit without touching
+    # anything — not startup recovery, not the mode setup below, nothing.
+    if _stale():
+        print("[SCHEDULER] Stale scheduler exiting at entry (dispatch token stale)")
+        return
 
     if trade_enabled:
         startup = ExecutionService().startup_recover()
@@ -1574,10 +1579,17 @@ def register_control_callbacks(app):
         for symbol in symbols:
             app_state.init_symbol_state(symbol)
 
+        # F02: capture this run's generation at dispatch time, BEFORE the
+        # worker thread exists. A worker inherits the token from the moment
+        # of spawn; reading the global at thread entry would let a thread
+        # delayed past a Stop→Start read the new run's generation and
+        # masquerade as Run B with Run A's old symbols/settings.
+        scheduler_generation = app_state.run_generation
+
         def analysis_thread():
             # F02: the scheduler body lives at module level so regression
-            # tests can drive it deterministically; the generation is
-            # captured at its entry.
+            # tests can drive it deterministically; the generation token is
+            # fixed by the dispatch capture above.
             _scheduler_thread(
                 symbols=symbols,
                 market_hour_enabled=market_hour_enabled,
@@ -1602,6 +1614,7 @@ def register_control_callbacks(app):
                 trade_enabled=trade_enabled,
                 trade_amount=trade_amount,
                 auto_screening_on=auto_screening_on,
+                scheduler_generation=scheduler_generation,
             )
 
         if not app_state.analysis_running:

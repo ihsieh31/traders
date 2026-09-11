@@ -1476,8 +1476,12 @@ class F02StaleSchedulerTests(unittest.TestCase):
         ), patch.object(cc, "start_analysis", executed), patch.object(
             cc, "ExecutionService"
         ) as exec_svc, patch.object(state, "reset_for_loop") as reset_mock:
+            dispatch_generation = state.run_generation  # captured at dispatch
             thread = threading.Thread(
-                target=cc._scheduler_thread, kwargs=self._sched_kwargs(loop_enabled=True)
+                target=cc._scheduler_thread,
+                kwargs=self._sched_kwargs(
+                    loop_enabled=True, scheduler_generation=dispatch_generation
+                ),
             )
             thread.start()
             self.assertTrue(entered_sleep.wait(timeout=10))
@@ -1537,12 +1541,14 @@ class F02StaleSchedulerTests(unittest.TestCase):
         ) as exec_svc, patch.object(
             state, "reset_for_loop"
         ) as reset_mock:
+            dispatch_generation = state.run_generation  # captured at dispatch
             thread = threading.Thread(
                 target=cc._scheduler_thread,
                 kwargs=self._sched_kwargs(
                     market_hour_enabled=True,
                     market_hours_list=[3],
                     auto_screening_on=True,  # prove screening never runs
+                    scheduler_generation=dispatch_generation,
                 ),
             )
             thread.start()
@@ -1595,8 +1601,12 @@ class F02StaleSchedulerTests(unittest.TestCase):
         ), patch.object(cc, "start_analysis", executed), patch.object(
             cc, "ExecutionService"
         ) as exec_svc:
+            dispatch_generation = state.run_generation  # captured at dispatch
             thread = threading.Thread(
-                target=cc._scheduler_thread, kwargs=self._sched_kwargs(loop_enabled=True)
+                target=cc._scheduler_thread,
+                kwargs=self._sched_kwargs(
+                    loop_enabled=True, scheduler_generation=dispatch_generation
+                ),
             )
             thread.start()
             thread.join(timeout=10)
@@ -1609,6 +1619,227 @@ class F02StaleSchedulerTests(unittest.TestCase):
         self.assertEqual(executed.call_count, 2)
         self.assertEqual(state.analysis_queue, [])
         exec_svc.assert_not_called()
+
+    def test_f02_t5_worker_never_started_before_stop_start_cannot_masquerade(self):
+        """F02: the generation token is captured at dispatch, not worker entry.
+
+        The real Start callback is driven with Thread.start neutered, so the
+        Run A worker is created but never begins to run. The operator then
+        Stops Run A and Starts Run B; only afterwards is the never-started
+        Run A worker allowed to execute. With a worker-entry capture it
+        would read Run B's generation and clobber Run B's queue, symbols,
+        loop config and stop flags with Run A's old settings; with
+        dispatch-time capture it must exit stale at entry.
+        """
+        import webui.callbacks.control_callbacks as cc
+        from webui.utils.state import AppState
+
+        state = AppState()
+
+        class _RecordingApp:
+            def __init__(self):
+                self.callbacks = {}
+
+            def callback(self, *args, **kwargs):
+                def deco(fn):
+                    self.callbacks[fn.__name__] = fn
+                    return fn
+
+                return deco
+
+        fake_app = _RecordingApp()
+        cc.register_control_callbacks(fake_app)
+        on_control_button_click = fake_app.callbacks["on_control_button_click"]
+
+        # The dispatched worker is created but deliberately never started.
+        thread_factory = MagicMock(return_value=SimpleNamespace(start=lambda: None))
+        executed = MagicMock()
+        exec_svc = MagicMock()
+        exec_svc.return_value.startup_recover.return_value = {
+            "success": False,
+            "reconciliation_reasons": ["forced failure"],
+        }
+        callback_kwargs = dict(
+            n_clicks=1,
+            button_children="Start Analysis",
+            tickers="AAPL",
+            analysts_market=True, analysts_social=False, analysts_news=False,
+            analysts_fundamentals=False, analysts_macro=False,
+            research_depth="Shallow",
+            llm_provider="openai", backend_url=None, output_language="en",
+            checkpoint_enabled=False,
+            quick_llm="quick-model", deep_llm="deep-model",
+            quick_llm_custom_model=None, deep_llm_custom_model=None,
+            google_thinking_level=None, anthropic_effort=None,
+            quick_reasoning_effort=None, quick_verbosity=None,
+            quick_summary=None, quick_temperature=None, quick_top_p=None,
+            quick_max_output_tokens=None, quick_store=None,
+            quick_parallel_tool_calls=None,
+            deep_reasoning_effort=None, deep_verbosity=None,
+            deep_summary=None, deep_temperature=None, deep_top_p=None,
+            deep_max_output_tokens=None, deep_store=None,
+            deep_parallel_tool_calls=None,
+            allow_shorts=False,
+            loop_enabled=True, loop_interval=1,
+            trade_enabled=True, trade_amount=1000,
+            market_hour_enabled=False, market_hours_input=None,
+            analysis_provider=None, analysis_model=None,
+            analysis_backend_url=None,
+            decision_provider=None, decision_model=None,
+            decision_backend_url=None,
+            auto_screening_enabled=False,
+            screening_provider=None, screening_model=None,
+            screening_backend_url=None,
+        )
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "threading", SimpleNamespace(Thread=thread_factory)
+        ), patch.object(
+            cc, "resolve_model_choice", return_value="resolved-model"
+        ), patch.object(
+            cc, "normalize_model_params", return_value={}
+        ), patch.object(
+            cc, "get_provider_ui_metadata", return_value={"backend_visible": False}
+        ), patch(
+            "tradingagents.llm_clients.roles.resolve_role_config", return_value={}
+        ), patch(
+            "dash.callback_context", SimpleNamespace(triggered=[])
+        ):
+            on_control_button_click(**callback_kwargs)
+
+        # The callback dispatched the Run A worker; the worker never ran.
+        self.assertEqual(state.run_generation, 0)
+        target = thread_factory.call_args.kwargs["target"]
+
+        # Operator Stop Run A → Start Run B, all while Run A never executed.
+        state.request_stop()  # generation 0 → 1
+        state.reset()
+        state.start_loop(["MSFT"], {})
+        state.init_symbol_state("MSFT")
+        state.analysis_queue = ["MSFT"]
+        state.analysis_running = True
+        run_b_session = state.get_state("MSFT")["session_id"]
+
+        # Only now is the never-started Run A worker allowed to run.
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "start_analysis", executed
+        ), patch.object(cc, "ExecutionService", exec_svc), patch.object(
+            cc, "_prepare_auto_round_symbols"
+        ) as screening, patch.object(state, "reset_for_loop") as reset_mock:
+            target()
+        reset_mock.assert_not_called()
+
+        # Run A was stale from birth: zero side effects on Run B anywhere.
+        self.assertEqual(state.analysis_queue, ["MSFT"])
+        self.assertEqual(state.loop_symbols, ["MSFT"])  # not Run A's ["AAPL"]
+        self.assertEqual(state.loop_config, {})  # not Run A's loop config
+        self.assertTrue(state.analysis_running)
+        self.assertTrue(state.trade_enabled)  # not clobbered by a stale recovery
+        self.assertEqual(state.get_state("MSFT")["session_id"], run_b_session)
+        executed.assert_not_called()
+        exec_svc.assert_not_called()  # never reached startup recovery / broker
+        screening.assert_not_called()
+
+    def test_f02_t6_stale_stopped_screening_cannot_halt_the_new_run(self):
+        """F02: a stale run's stopped screening plan must not touch Run B.
+
+        Run A's screening scan is blocked while the operator Stops A and
+        Starts B; the scan then returns stopped=True. The stale check must
+        fire BEFORE any plan-derived shared-state mutation, or the dead run
+        would set the stop reason, raise the stop flags and clear Run B's
+        queue.
+        """
+        import webui.callbacks.control_callbacks as cc
+        from tradingagents.screening.pipeline import RoundPlan
+        from webui.utils.state import AppState
+
+        state = AppState()
+        gen_a = state.run_generation
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_stopped_round(provider_settings):
+            entered.set()
+            release.wait(timeout=10)
+            release.set()
+            return RoundPlan(
+                status="stopped", reason="INSUFFICIENT_CANDIDATES", detail="only 3"
+            )
+
+        outcome = {}
+
+        def run_a_screening():
+            outcome["result"] = cc._prepare_auto_round_symbols(
+                {"auto_screening_enabled": True},
+                is_stale=lambda: gen_a != state.run_generation,
+            )
+
+        apply_plan = MagicMock()
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "_run_screening_round", slow_stopped_round
+        ), patch.object(cc, "_apply_screening_plan", apply_plan):
+            thread = threading.Thread(target=run_a_screening)
+            thread.start()
+            self.assertTrue(entered.wait(timeout=10))  # Run A inside screening
+
+            # Operator Stop Run A → Start Run B while the scan is blocked.
+            state.request_stop()  # generation bump + stop flags
+            state.reset()
+            state.start_loop(["MSFT"], {})
+            state.init_symbol_state("MSFT")
+            state.screening_status_text = "run B selection"
+            state.screening_top20 = [{"rank": 1, "symbol": "MSFT"}]
+            state.screening_stop_reason = None
+            state.analysis_queue = ["MSFT"]
+            state.analysis_running = True
+            state.stop_market_hour = False  # Run B's clean flags
+
+            release.set()
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive())
+
+        # The stale stopped plan was discarded before any mutation.
+        self.assertIsNone(outcome["result"])
+        apply_plan.assert_not_called()
+        self.assertIsNone(state.screening_stop_reason)
+        self.assertEqual(state.screening_status_text, "run B selection")
+        self.assertFalse(state.stop_loop)
+        self.assertFalse(state.stop_market_hour)
+        self.assertFalse(state.stop_requested)
+        self.assertEqual(state.analysis_queue, ["MSFT"])
+        self.assertTrue(state.analysis_running)
+        self.assertEqual(
+            [entry["symbol"] for entry in state.screening_top20], ["MSFT"]
+        )
+
+    def test_f02_t7_current_generation_screening_failure_still_halts_scheduler(self):
+        """F02: with the dispatch token still current, a real screening
+        failure keeps its original behavior — stop reason recorded, scheduler
+        halted, queue cleared, no downstream analysis."""
+        import webui.callbacks.control_callbacks as cc
+        from tradingagents.screening.pipeline import RoundPlan
+        from webui.utils.state import AppState
+
+        state = AppState()
+        dispatch_generation = state.run_generation
+        stopped_plan = RoundPlan(
+            status="stopped", reason="INSUFFICIENT_CANDIDATES", detail="only 3"
+        )
+        with patch.object(cc, "app_state", state), patch.object(
+            cc, "_run_screening_round", return_value=stopped_plan
+        ), patch.object(cc, "_apply_screening_plan") as apply_plan:
+            result = cc._prepare_auto_round_symbols(
+                {"auto_screening_enabled": True},
+                is_stale=lambda: dispatch_generation != state.run_generation,
+            )
+        self.assertIsNone(result)
+        apply_plan.assert_not_called()
+        self.assertIsNotNone(state.screening_stop_reason)
+        self.assertIn("INSUFFICIENT_CANDIDATES", state.screening_stop_reason)
+        self.assertIn("stopped:", state.screening_status_text)
+        self.assertTrue(state.stop_loop)
+        self.assertTrue(state.stop_market_hour)
+        self.assertEqual(state.analysis_queue, [])
 
 
 # ---------------------------------------------------------------------------
