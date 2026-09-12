@@ -7,10 +7,17 @@ from dash import html, dcc
 import pandas as pd
 from datetime import datetime
 import pytz
-from tradingagents.dataflows.alpaca_utils import AlpacaUtils
+from tradingagents.dataflows.alpaca_utils import AlpacaAccountDataError, AlpacaUtils
 
 
 ORDERS_PAGE_SIZE = 10
+
+
+def _safe_account_error(error):
+    """Return a credential-safe detail for account error surfaces."""
+    if isinstance(error, AlpacaAccountDataError):
+        return str(error)
+    return f"{type(error).__name__} while rendering Alpaca account data"
 
 
 def _visible_order_pages(active_page, total_pages):
@@ -195,13 +202,14 @@ def render_positions_table():
         return table
 
     except Exception as e:
-        print(f"Error rendering positions table: {e}")
+        error_detail = _safe_account_error(e)
+        print(f"Error rendering positions table: {error_detail}")
         return html.Div([
             html.Div([
                 html.I(className="fas fa-exclamation-triangle fa-2x mb-3 text-warning"),
                 html.H5("Unable to Load Positions", className="text-warning"),
                 html.P("Check your Alpaca API keys", className="text-muted"),
-                html.Small(f"Error: {str(e)}", className="text-muted")
+                html.Small(f"Error: {error_detail}", className="text-muted")
             ], className="text-center p-4")
         ], className="enhanced-table-container error-state")
 
@@ -280,12 +288,13 @@ def render_orders_table_body(orders_data, page=1):
 
 
 def render_orders_table_error(error):
+    error_detail = _safe_account_error(error)
     return html.Div([
         html.Div([
             html.I(className="fas fa-exclamation-triangle fa-2x mb-3 text-warning"),
             html.H5("Unable to Load Orders", className="text-warning"),
             html.P("Check your Alpaca API keys", className="text-muted"),
-            html.Small(f"Error: {str(error)}", className="text-muted")
+            html.Small(f"Error: {error_detail}", className="text-muted")
         ], className="text-center p-4")
     ], className="orders-empty-state error-state")
 
@@ -316,7 +325,8 @@ def render_orders_table(page=1, page_size=ORDERS_PAGE_SIZE):
         ], className="enhanced-table-container orders-table-container")
 
     except Exception as e:
-        print(f"Error rendering orders table: {e}")
+        error_detail = _safe_account_error(e)
+        print(f"Error rendering orders table: {error_detail}")
         return html.Div([
             dcc.Loading(
                 html.Div(id="orders-table-body-container", children=render_orders_table_error(e)),
@@ -378,13 +388,14 @@ def render_account_summary():
         return summary
 
     except Exception as e:
-        print(f"Error rendering account summary: {e}")
+        error_detail = _safe_account_error(e)
+        print(f"Error rendering account summary: {error_detail}")
         return html.Div([
             html.Div([
                 html.I(className="fas fa-exclamation-triangle fa-2x mb-3 text-warning"),
                 html.H5("Unable to Load Account Summary", className="text-warning"),
                 html.P("Check your Alpaca API keys", className="text-muted"),
-                html.Small(f"Error: {str(e)}", className="text-muted")
+                html.Small(f"Error: {error_detail}", className="text-muted")
             ], className="text-center p-4")
         ], className="enhanced-account-summary error-state")
 

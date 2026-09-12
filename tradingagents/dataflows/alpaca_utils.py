@@ -33,6 +33,19 @@ from tradingagents.risk.position_sizing import (
 )
 
 
+class AlpacaAccountDataError(RuntimeError):
+    """Public-safe account-data failure for the WebUI.
+
+    Broker exceptions can contain request details or credentials.  Preserve
+    the original exception only through chaining for internal diagnostics;
+    the public message deliberately contains the resource and exception type,
+    never the raw exception text.
+    """
+
+    def __init__(self, resource: str, cause: BaseException):
+        super().__init__(f"Alpaca {resource} unavailable ({type(cause).__name__})")
+
+
 # Fallback dictionary for company names
 ticker_to_company_fallback = {
     "AAPL": "Apple",
@@ -680,9 +693,7 @@ class AlpacaUtils:
             client = get_alpaca_trading_client()
             positions = client.get_all_positions()
         except Exception as e:
-            raise RuntimeError(
-                f"Alpaca positions unavailable ({type(e).__name__}): {e}"
-            ) from e
+            raise AlpacaAccountDataError("positions", e) from e
 
         # Convert positions to a list of dictionaries
         positions_data = []
@@ -700,9 +711,9 @@ class AlpacaUtils:
                 today_pl_percent = (today_pl_dollars / cost_basis) * 100 if cost_basis != 0 else 0
                 total_pl_percent = (total_pl_dollars / cost_basis) * 100 if cost_basis != 0 else 0
             except (TypeError, ValueError, AttributeError) as e:
-                raise RuntimeError(
-                    f"Alpaca position payload for {getattr(position, 'symbol', '?')} "
-                    f"is unreadable ({type(e).__name__}): {e}"
+                symbol = getattr(position, "symbol", "?")
+                raise AlpacaAccountDataError(
+                    f"position payload for {symbol}", e
                 ) from e
 
             positions_data.append({
@@ -773,9 +784,7 @@ class AlpacaUtils:
             }
 
         except Exception as e:
-            raise RuntimeError(
-                f"Alpaca orders unavailable ({type(e).__name__}): {e}"
-            ) from e
+            raise AlpacaAccountDataError("orders", e) from e
 
     @staticmethod
     def get_account_info():
@@ -797,9 +806,7 @@ class AlpacaUtils:
             equity = float(account.equity)
             last_equity = float(account.last_equity)
         except Exception as e:
-            raise RuntimeError(
-                f"Alpaca account info unavailable ({type(e).__name__}): {e}"
-            ) from e
+            raise AlpacaAccountDataError("account info", e) from e
         daily_change_dollars = equity - last_equity
         daily_change_percent = (daily_change_dollars / last_equity) * 100 if last_equity != 0 else 0
 

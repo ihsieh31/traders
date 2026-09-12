@@ -2512,7 +2512,7 @@ class ExecutionService:
             )
             if blocked:
                 self._store.transition_order(local["order_id"], "CANCELED")
-                raise BrokerAuthorityError(block)
+                raise BrokerAuthorityError(blocked)
         # R02 Layer 2 / N03: the submit-boundary authority check, run AFTER
         # every blocking GET and immediately before the PENDING/UNKNOWN ->
         # SUBMITTING transition. Refusal is NOT a rejection and NOT a CLEAN

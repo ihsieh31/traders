@@ -219,6 +219,21 @@ def test_N03_stop_or_window_during_final_get_blocks_the_post(isolated, monkeypat
     assert len(e.broker.submits) == 0 and e.broker.qty == 0
 
 
+def test_N03_recovery_dispatch_refusal_returns_paused_instead_of_crashing(isolated):
+    e = isolated
+    row = seed_pending(e, opening())
+    e.broker.get_clock = lambda: NS(is_open=False)
+
+    result = e.service.startup_recover()
+
+    assert result["success"] is False
+    assert result["account_execution_state"] == "PAUSED"
+    assert "market/session is closed" in result["error"]
+    assert result["recovery_maintenance"]["broker_calls"] == 0
+    assert len(e.broker.submits) == 0 and e.broker.qty == 0
+    assert e.service.store.get_order(row["order_id"])["status"] == "CANCELED"
+
+
 # ---------------------------------------------------------------------------
 # N04 — kill switch holds the final POST and DELETE boundaries
 # ---------------------------------------------------------------------------
@@ -745,31 +760,45 @@ def test_N12_busy_lock_on_resume_mutates_nothing(isolated, monkeypatch):
 # N14 — broker outages are error states, never an empty portfolio
 # ---------------------------------------------------------------------------
 
-def test_N14_broker_outage_renders_error_states(isolated, monkeypatch):
+def test_N14_broker_outage_renders_error_states_without_leaking_details(
+        isolated, monkeypatch, capsys):
     from tradingagents.dataflows.alpaca_utils import AlpacaUtils
     from webui.components.alpaca_account import (
         render_account_summary, render_orders_table, render_orders_table_error,
         render_positions_table,
     )
 
-    monkeypatch.setattr("tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
-                        Mock(side_effect=RuntimeError("broker unavailable")))
+    secret = "dummy-secret-must-not-render"
+    monkeypatch.setattr(
+        "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
+        Mock(side_effect=RuntimeError(f"APCA_API_SECRET_KEY={secret}")),
+    )
     positions = render_positions_table()
     assert "Unable to Load Positions" in str(positions)
-    assert "broker unavailable" in str(positions)
-    with pytest.raises(RuntimeError, match="broker unavailable"):
+    assert secret not in str(positions)
+    with pytest.raises(RuntimeError, match=r"Alpaca positions unavailable \(RuntimeError\)"):
         AlpacaUtils.get_positions_data()
-    with pytest.raises(RuntimeError, match="account info unavailable"):
+    with pytest.raises(RuntimeError, match=r"Alpaca account info unavailable \(RuntimeError\)"):
         AlpacaUtils.get_account_info()
-    assert "Unable to Load Account Summary" in str(render_account_summary())
-    with pytest.raises(RuntimeError, match="orders unavailable"):
+    account = render_account_summary()
+    assert "Unable to Load Account Summary" in str(account)
+    assert secret not in str(account)
+    with pytest.raises(RuntimeError, match=r"Alpaca orders unavailable \(RuntimeError\)"):
         AlpacaUtils.get_recent_orders_page()
-    assert "Unable to Load Orders" in str(render_orders_table())
+    orders = render_orders_table()
+    assert "Unable to Load Orders" in str(orders)
+    assert secret not in str(orders)
     # The callback path's catch must land on the error renderer too.
     try:
         AlpacaUtils.get_recent_orders_page()
     except Exception as exc:
-        assert "Unable to Load Orders" in str(render_orders_table_error(exc))
+        callback_error = render_orders_table_error(exc)
+        assert "Unable to Load Orders" in str(callback_error)
+        assert secret not in str(callback_error)
+    # Even an arbitrary renderer exception must not be echoed verbatim.
+    arbitrary = render_orders_table_error(RuntimeError(secret))
+    assert secret not in str(arbitrary)
+    assert secret not in capsys.readouterr().out
 
 
 def test_N14_legal_empty_account_still_renders_empty_and_zeros(isolated, monkeypatch):
