@@ -240,8 +240,11 @@ def create_macro_analyst(llm, toolkit):
                 # analyst "failed" so the coverage gate rejects the round.
                 result = AIMessage(content="")
             
-            # If we had tool failures, let the LLM know and ask for a general analysis
-            if tool_failures and not successful_tools:
+            # If we had tool failures, let the LLM know and ask for a general
+            # analysis — but never when the loop already exhausted with
+            # pending tool calls: the analyst has failed, and a fallback
+            # report would resurrect "completed" from that failure (H-08).
+            if tool_failures and not successful_tools and not tool_loop_exhausted:
                 print(f"[MACRO] All tools failed ({tool_failures}), requesting general macro analysis")
                 fallback_prompt = render_prompt(
                     "analysts/macro_general_fallback",

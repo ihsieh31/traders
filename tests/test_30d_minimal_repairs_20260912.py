@@ -228,6 +228,22 @@ def test_R02_macro_fallback_provider_failure_stops_the_round(isolated, monkeypat
     assert llm.invocations == 3  # the fallback LLM call failed closed
 
 
+def test_R05b_macro_exhaustion_with_all_tools_failed_skips_general_fallback(isolated, monkeypatch):
+    # Every tool call failed AND the last LLM round still demanded tool
+    # calls: exhaustion must win. The general fallback must not resurrect a
+    # "completed" report from an analyst that never produced one.
+    llm = ScriptedLLM([
+        tool_calls_message("no_such_tool"),  # iteration 1: tool not found
+        tool_calls_message("no_such_tool"),  # loop exits at the cap, still tool calls
+    ])
+    out = _run_analyst(monkeypatch, "tradingagents.agents.analysts.macro_analyst.create_macro_analyst",
+                       llm, _macro_exhaust_toolkit())
+    assert out["macro_report"] == ""
+    assert out["analysis_status"]["macro"] == "failed"
+    assert out["analysis_errors"]["macro"]
+    assert llm.invocations == 2  # a third (fallback) invoke must never happen
+
+
 # ---------------------------------------------------------------------------
 # R5 (H-08) — tool-loop exhaustion is a failed analyst, never a fake report
 # ---------------------------------------------------------------------------
