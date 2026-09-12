@@ -40,16 +40,18 @@ WebUI / CLI
 - **兩層冪等**：分析層 `decision_id` 唯一（同一份分析只會建立一次執行 intent）＋ broker 層 deterministic `client_order_id` 唯一（重啟後沿用原 ID，不產生新邏輯訂單）。
 - **Durable outbox**：stdlib SQLite 三張表（`execution_intents` / `orders` / `fills`），先在同一個 transaction 內 commit intent 與 PENDING 訂單、commit 成功後才送單。三個 crash 點（commit 前／commit 後送單前／送單後回寫前）都有明確恢復語義，最後一種以 `client_order_id` 向 broker 查找後 adopt。
 - **訂單狀態機**：`PENDING → SUBMITTING → ACCEPTED → PARTIAL → FILLED`，含 `UNKNOWN`（timeout 下不明結果）的 bounded lookup 恢復；`UNKNOWN` 未解決前帳戶保持 `PAUSED`。
-- **固定 broker retry 政策**：唯讀 GET 最多 3 次短退避後 fail-closed；POST 被拒不重試；POST timeout 先標 `UNKNOWN` 再查詢，不直接重送。
-- **BrokerSnapshot 唯一權威**：account、positions、orders、fills、cash 一律以即時快照為準，本機 ledger、memory、checkpoint 都不能覆寫 broker 事實。只有 reconciliation `CLEAN` 才能新增風險；持倉不符、重複 ID、未解決部分成交等一律 `PAUSED`。
+- **固定 broker retry 政策**：唯讀 GET 最多 3 次短退避後 fail-closed；POST 被拒不重試；POST timeout 與任何 5xx（含 Cloudflare 520-527/530）屬模糊結果，先標 `UNKNOWN` 再查詢，不直接重送。
+- **最後 POST 前重驗**：任何新增曝險的訂單送出前，重新驗證 broker 市場時鐘（無法證明開盤視同收盤）、快照與報價新鮮度、entry 政策與裁切後規模；任一失敗即取消該筆（可證明零 POST），絕不重新整理事實後硬送。
+- **BrokerSnapshot 唯一權威**：account、positions、orders、fills、cash 一律以即時快照為準，本機 ledger、memory、checkpoint 都不能覆寫 broker 事實。只有 reconciliation `CLEAN` 才能新增風險；持倉不符、重複 ID、未解決部分成交等一律 `PAUSED`。已驗證的持倉不符可由**人工維護 API**（`Reconciler.rebase_baseline`，需非空理由、新鮮快照、無任何未解決本地單與 live broker 單）明確 rebase baseline，一般執行路徑絕不自動 rebase。
 - **新鮮度 gate 與單一執行鎖**：account/position/order/quote 有 TTL；以 Alpaca account ID 為 key 的 OS 層執行鎖，第二個 process 拿不到鎖立即退出。
-- **降風險平倉例外**：已驗證的減持 exit 在 broker 即時確認持倉後仍可執行。
+- **降風險平倉例外**：已驗證的減持 exit 在 broker 即時確認持倉後仍可執行（kill switch 仍優先於一切）。
+- **Short 曝險逐次 opt-in**：預設 investment 模式（BUY/HOLD/SELL）；明確開啟 `allow_shorts` 後才允許 LONG/NEUTRAL/SHORT（加密貨幣一律不接受 SHORT），由執行層 deterministic guard 強制。
 
 ### 1.4 LLM 固定角色與有界重試
 
-- **Analysis / Decision 兩角色分離**：設定任一 `analysis_*` / `decision_*` key 後，Analysis provider/model 服務所有研究節點（五分析師、多空、research manager、trader、風險辯論），Decision 只服務 Risk Manager。每個角色獨立解析 provider/model/endpoint/credential（如 `DECISION_OPENAI_API_KEY`），跨 provider 缺 model 為啟動期錯誤，機密不進 UI store 與 log。
-- **有界重試**：`llm_max_retries`（0–3）＝每個邏輯呼叫最多 N+1 次請求；暫時性錯誤（timeout/連線/429/5xx）封頂退避重試，永久性錯誤（401/403）立即停。provider 存取失敗整輪標記 `STOPPED` 並停止自動排程，絕不偽裝成正常 `NO_TRADE`。
-- **選配 Analysis failover**：設定 `analysis_fallback_provider/model` 後，Primary 暫時性失敗可在共享重試預算內轉試 Fallback（不回彈、永久錯誤不 failover），切換記錄無機密 audit 事件。
+- **Analysis / Decision / Screening 三角色分離**：設定任一 `analysis_*` / `decision_*` / `screening_*` key 後，Analysis provider/model 服務所有研究節點（五分析師、多空、research manager、trader、風險辯論），Decision 只服務 Risk Manager，Screening 只服務全市場選股。每個角色獨立解析 provider/model/endpoint/credential（如 `DECISION_OPENAI_API_KEY`），跨 provider 缺 model 為啟動期錯誤，機密不進 UI store 與 log。
+- **有界重試**：`llm_max_retries`（0–3）＝每個邏輯呼叫最多 N+1 次請求；暫時性錯誤（timeout/連線/429/所有 5xx 含 Cloudflare 520-527/530）封頂退避重試，永久性錯誤（401/403）立即停。provider 存取失敗整輪標記 `STOPPED` 並停止自動排程，絕不偽裝成正常 `NO_TRADE`。
+- **選配 provider failover**：設定 `analysis_fallback_provider/model` 後，Analysis、Decision、Screening 三個角色的暫時性失敗都可在**共享重試預算**內轉試同一條 Fallback 路由（Primary+Fallback 合計最多 N+1 次請求；不回彈、永久錯誤不 failover），切換記錄無機密 audit 事件；fallback 設定跨 round 持久。
 
 ### 1.5 全市場自動選股（Screening → Top20）
 
@@ -77,9 +79,9 @@ Alpaca 全量 ACTIVE tradable US_EQUITY（分頁，無 fallback 名單）
 python -m cli.main long-run
 ```
 
-- 30 個日曆天、僅美股交易日（權威 Alpaca 日曆；early close 於收盤前 30 分鐘執行）；首次執行互動補齊設定、唯讀 preflight，並要求一次明確的 Paper-test 授權才進入 `RUNNING`。
-- Crash/重啟後重跑同一指令即恢復原觀察窗口，不重複下單、每個 session 至多執行一次；process 離線期間錯過的 session 記為 `MISSED_PROCESS_DOWN`，絕不以過期分析或補單回填。
-- 硬性安全/provider 失敗會停止觀察並產出部分報告（最終報告：`~/.tradingagents/long_run/runs/<run_id>/final_report.{md,json}`）。
+- 30 個日曆天、僅美股交易日（權威 Alpaca 日曆；early close 於收盤前 30 分鐘執行）；首次執行互動補齊設定（Analysis/Decision/Screening 三角色、選配 Analysis fallback、每日 notional、執行時刻、`allow_shorts` opt-in）、唯讀 preflight（每條 role 路徑一次 LLM probe、Alpaca 唯讀證明），並要求一次明確的 Paper-test 授權才進入 `RUNNING`；授權前零 broker mutation，授權後先執行一次要求 `CLEAN` 的 execution recovery 才建立觀察。
+- Crash/重啟後重跑同一指令即恢復原觀察窗口（單一 runner lock），不重複下單、每個 session 至多執行一次；process 離線期間錯過的 session 記為 `MISSED_PROCESS_DOWN`，絕不以過期分析或補單回填。calendar/scheduler 暫時性例外有 3 次 bounded retry（間隔 5 秒、injected sleep），耗盡仍 fail-closed；round 內普通例外會把觀察 finalize 為 `STOPPED/UNEXPECTED_ROUND_ERROR` 並保留 journal 證據，不再裸逃打斷無人值守行程。
+- 硬性安全/provider 失敗（recovery 不安全、帳戶暫停、kill switch、screening 停止、LLM 預算耗盡、模糊 broker 結果等）會停止觀察並產出部分報告；**停止即終局**（重跑 `long-run` 是全新 30 日窗口），中斷（Ctrl-C/SIGTERM）則可恢復原窗口。最終報告（`~/.tradingagents/long_run/runs/<run_id>/final_report.{md,json}`）涵蓋 coverage、帳戶權益序列、決策/screening/safety/execution/LLM 成本統計，並明列回報率口徑與限制。
 
 ### 1.7 目錄導覽
 
@@ -110,26 +112,26 @@ tests/               離線確定性測試套件（無網路、無真實金鑰�
 | Phase A（P1） | 安全可靠的 Paper 執行：paper-only hard lock、strict TradeIntent、兩層冪等、durable outbox、訂單狀態機與 UNKNOWN 恢復、BrokerSnapshot 權威、三段 reconciliation、新鮮度 gate、單一執行鎖 | **Accepted**（2026-09-04） |
 | Phase B（P2） | 策略與資料品質：SEC filing/公司 IR 第一手來源、corporate-action 隔離（quarantine）、sector 曝險上限、Analysis/Decision 雙角色、LLM 有界重試與 run-stop、Trader/Risk Manager 的 fresh broker 持股 context、exposure headroom 裁切 | **Accepted**（2026-09-05，B01–B24 全 Pass） |
 | Phase C（P3） | 全市場自動選股：ACTIVE US_EQUITY 全量 universe、確定性 Top40、獨立 Screening 角色與嚴格 Top20 契約、Top20 ∪ 持股深度分析、每日 selection cache（含完整性密封）、fail-closed entry gate、權威交易日曆與 SIP feed | **Accepted**（2026-09-05，C01–C23 全 Pass；F1、M1 修復後複驗通過） |
-| Phase D | 30 天無人值守 Paper 觀察編排（`long-run`） | 已實作、離線測試全綠（尚未列入已驗收紀錄） |
+| Phase D | 30 天無人值守 Paper 觀察編排（`long-run`） | 已實作（2026-09-06）並完成多輪審查修復（2026-09-08 全量審查 19 項修復、獨立驗收通過；2026-09-11 paper-readiness 審查 R01–R16 修復）；**30 日測試前最終修復 F-01/F-03/F-04 已於 2026-09-12 獨立驗收 Accepted**。尚未進行真實 30 日觀察 |
 
 **執行驗證證據**：Phase A.2 曾於一次性真實 Alpaca Paper 帳戶完成完整 E2E——paper endpoint 驗證 → durable commit → 真實送單 → broker 成交 → 本地 adopt 同一 broker_order_id → reconcile `CLEAN` → 已驗證平倉 → 帳戶 flat、零 open orders。
 
-**離線測試現況**（2026-09-06，含工作樹中 Phase D 變更）：
+**離線測試現況**（2026-09-12，commit `48f2419`）：
 
 ```bash
 python -m pytest tests/
-# 645 passed, 177 subtests passed
+# 1060 passed, 0 failed, 257 subtests passed
 ```
 
-套件完全離線確定性（無網路、無真實金鑰），乾淨 clone 即可通過。
+套件完全離線確定性（無網路、無真實金鑰），乾淨 clone 即可通過；CI（GitHub Actions，Python 3.11 + 3.12 矩陣）以 `requirements.lock`（222 個精確 pin）安裝並 `pip check` 驗證閉包。
 
 **尚未完成 / 已知限制**：
 
-- 長期 Paper observation（小 notional）尚未開始；啟用長期無人值守 Paper 自動交易前必須完成，且需使用者另行明確授權——已驗收的 build 不會自行啟用交易。
+- 真實 30 日 Paper observation 尚未開始；需使用者另行明確授權——已驗收的 build 不會自行啟用交易。
 - 離線驗收只證明 mock 鏈路與 fail-closed 語義；真實 Alpaca universe/bars 資料品質、真實 Screening vendor 輸出品質尚未驗證。
-- 少量非阻擋維修項（死設定鍵 `llm_retry_backoff_max_seconds`、`ScreeningDeps.llm_factory` 死欄位等）留待一般維修。
+- 已知未修項：F-02（recovery whitelist / `ACCEPTED` / `PARTIAL` recovery 行為，現行語意維持 fail-closed）、少量非阻擋維修項（死設定鍵 `llm_retry_backoff_max_seconds`、`ScreeningDeps.llm_factory` 死欄位等）留待一般維修。
 - Top40 權重是 research baseline，不是 validated alpha；尚未有任何統計驗證的前瞻收益證據。
-- 30 天無人值守 observation 屬於 operational observation（帳戶權益變化），不是 profitability proof：未調整入出金、可能含觀察期前既有部位、非純策略歸因，且未計入全部研究與交易成本。
+- 30 天無人值守 observation 屬於 operational observation（帳戶權益變化），不是 profitability proof：未調整入出金、可能含觀察期前既有部位、非純策略歸因，且未計入全部研究與交易成本（最終報告明列這些限制）。
 - Broker `last_equity` 作為 daily-loss baseline 仍可能受入出金影響；本版本未實作 cash-flow adjusted TWR。
 
 ---
@@ -207,7 +209,7 @@ docker compose up -d --build   # 指定埠：HOST_PORT=7861 docker compose up -d
 ### 3.5 驗證安裝與結果位置
 
 ```bash
-python -m pytest tests/   # 645 passed, 177 subtests passed（離線、無網路）
+python -m pytest tests/   # 1060 passed, 257 subtests passed（離線、無網路）
 ```
 
 | 產物 | 位置 |
@@ -249,7 +251,7 @@ for symbol in ["NVDA", "ETH/USD", "AAPL"]:
 
 WebUI 的 Alpaca 帳戶狀態顯示最近一次持久化執行狀態：`CLEAN` 才允許新增曝險；`PAUSED` 表示不會送出新單，常見原因包括 broker 快照過期/損毀、持倉不符、未知或重複的訂單識別、未解決的部分成交，或另一個 process 持有執行鎖。
 
-恢復方式：停止重複的 app process → 到 Alpaca 確認 Paper 帳戶與訂單 → 重新啟動自動交易。啟動時會沿用持久化的 `client_order_id` 重新 reconcile；**不要**刪除 SQLite 資料列或手改狀態來強迫 `CLEAN`。快照 TTL 預設 30 秒、報價 TTL 15 秒，可用 `TRADINGAGENTS_SNAPSHOT_TTL_SECONDS` / `TRADINGAGENTS_QUOTE_TTL_SECONDS` 覆寫。
+恢復方式：停止重複的 app process → 到 Alpaca 確認 Paper 帳戶與訂單 → 重新啟動自動交易。啟動時會沿用持久化的 `client_order_id` 重新 reconcile；**不要**刪除 SQLite 資料列或手改狀態來強迫 `CLEAN`。若發生已查證的外部事件（如 2:1 股票拆股）造成持倉不符，唯一合法路徑是人工維護 API `Reconciler.rebase_baseline(..., reason="...")`——它會驗證快照新鮮、帳戶已存在、唯一的異常就是持倉不符、且沒有任何未解決本地單或 live broker 單才會替換 baseline；一般執行與恢復路徑永不自動 rebase。快照 TTL 預設 30 秒、報價 TTL 15 秒，可用 `TRADINGAGENTS_SNAPSHOT_TTL_SECONDS` / `TRADINGAGENTS_QUOTE_TTL_SECONDS` 覆寫。
 
 ---
 
