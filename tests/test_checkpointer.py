@@ -35,6 +35,19 @@ class CheckpointerTests(unittest.TestCase):
             clear_checkpoint(tmp, "BTC/USD", "2026-01-02")
             self.assertFalse(has_checkpoint(tmp, "BTC/USD", "2026-01-02"))
 
+    def test_thread_id_is_scoped_by_source_and_observation(self):
+        direct = thread_id("AAPL", "2026-01-02")
+        cli = thread_id("AAPL", "2026-01-02", source="cli_stream")
+        webui = thread_id("AAPL", "2026-01-02", source="webui_stream")
+        observation_a = thread_id(
+            "AAPL", "2026-01-02", source="long_run", observation_id="obs-a"
+        )
+        observation_b = thread_id(
+            "AAPL", "2026-01-02", source="long_run", observation_id="obs-b"
+        )
+
+        self.assertEqual(len({direct, cli, webui, observation_a, observation_b}), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

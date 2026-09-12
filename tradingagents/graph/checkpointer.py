@@ -16,8 +16,30 @@ def _db_path(data_dir: str | Path, ticker: str) -> Path:
     return cp_dir / f"{safe}.db"
 
 
-def thread_id(ticker: str, date: str) -> str:
-    return hashlib.sha256(f"{ticker.upper()}:{date}".encode("utf-8")).hexdigest()[:16]
+def thread_id(
+    ticker: str,
+    date: str,
+    *,
+    source: str = "direct",
+    observation_id: str | None = None,
+) -> str:
+    """Return the checkpoint identity for one compatible analysis run.
+
+    N13: ticker/date alone allowed a long-run observation, CLI run and WebUI
+    run to resume each other's state.  Source separates those entry points;
+    observation_id additionally separates independent unattended observations.
+    NUL separators make the hash input unambiguous without exposing the scope
+    values in SQLite.
+    """
+    identity = "\0".join(
+        (
+            str(ticker).upper(),
+            str(date),
+            str(source or "direct").strip().lower(),
+            str(observation_id or "").strip(),
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
 
 def _sqlite_saver_cls():
@@ -46,27 +68,70 @@ def get_checkpointer(data_dir: str | Path, ticker: str) -> Generator[Any, None, 
         conn.close()
 
 
-def checkpoint_step(data_dir: str | Path, ticker: str, date: str) -> int | None:
+def checkpoint_step(
+    data_dir: str | Path,
+    ticker: str,
+    date: str,
+    *,
+    source: str = "direct",
+    observation_id: str | None = None,
+) -> int | None:
     db = _db_path(data_dir, ticker)
     if not db.exists():
         return None
     with get_checkpointer(data_dir, ticker) as saver:
-        cp = saver.get_tuple({"configurable": {"thread_id": thread_id(ticker, date)}})
+        cp = saver.get_tuple(
+            {
+                "configurable": {
+                    "thread_id": thread_id(
+                        ticker,
+                        date,
+                        source=source,
+                        observation_id=observation_id,
+                    )
+                }
+            }
+        )
         if cp is None:
             return None
         metadata = getattr(cp, "metadata", None) or {}
         return metadata.get("step")
 
 
-def has_checkpoint(data_dir: str | Path, ticker: str, date: str) -> bool:
-    return checkpoint_step(data_dir, ticker, date) is not None
+def has_checkpoint(
+    data_dir: str | Path,
+    ticker: str,
+    date: str,
+    *,
+    source: str = "direct",
+    observation_id: str | None = None,
+) -> bool:
+    return checkpoint_step(
+        data_dir,
+        ticker,
+        date,
+        source=source,
+        observation_id=observation_id,
+    ) is not None
 
 
-def clear_checkpoint(data_dir: str | Path, ticker: str, date: str) -> None:
+def clear_checkpoint(
+    data_dir: str | Path,
+    ticker: str,
+    date: str,
+    *,
+    source: str = "direct",
+    observation_id: str | None = None,
+) -> None:
     db = _db_path(data_dir, ticker)
     if not db.exists():
         return
-    tid = thread_id(ticker, date)
+    tid = thread_id(
+        ticker,
+        date,
+        source=source,
+        observation_id=observation_id,
+    )
     conn = sqlite3.connect(str(db))
     try:
         for table in ("writes", "checkpoints", "blobs"):

@@ -4,7 +4,6 @@ webui/components/analysis.py
 
 import time
 from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.run_logger import get_run_audit_logger
@@ -266,6 +265,8 @@ def run_analysis(
         config["backend_url"] = backend_url or None
         config["output_language"] = output_language or "English"
         config["checkpoint_enabled"] = bool(checkpoint_enabled)
+        # N13: WebUI checkpoints cannot be resumed by direct/CLI/long-run runs.
+        config["_analysis_source"] = "webui_stream"
         for key, value in (provider_settings or {}).items():
             if value not in (None, ""):
                 config[key] = value
@@ -275,6 +276,10 @@ def run_analysis(
         graph = TradingAgentsGraph(selected_analysts, config=config, debug=True)
         graph._resolve_memory_log_outcomes(ticker, current_date)
         init_agent_state = graph.propagator.create_initial_state(ticker, current_date)
+        resume_checkpoint = bool(config.get("checkpoint_enabled", False)) and (
+            graph._has_checkpoint_for_run(ticker, current_date)
+        )
+        graph_input = None if resume_checkpoint else init_agent_state
         run_logger.start_run(
             symbol=ticker,
             trade_date=current_date,
@@ -283,8 +288,9 @@ def run_analysis(
         )
         run_started = True
         run_logger.log_state_snapshot(
-            stage="initial_state",
-            snapshot=init_agent_state,
+            stage="checkpoint_resume" if resume_checkpoint else "initial_state",
+            snapshot={"resumed": True, "source": "webui_stream"}
+            if resume_checkpoint else init_agent_state,
             symbol=ticker,
         )
 
@@ -300,7 +306,7 @@ def run_analysis(
         graph_args["config"]["recursion_limit"] = 100
         compiled_graph, checkpointer_ctx = graph._graph_for_run(ticker, current_date)
         try:
-            for chunk in compiled_graph.stream(init_agent_state, **graph_args):
+            for chunk in compiled_graph.stream(graph_input, **graph_args):
                 # Track progress
                 trace.append(chunk)
 
@@ -324,7 +330,14 @@ def run_analysis(
                 checkpointer_ctx.__exit__(None, None, None)
 
         # Extract final results
-        final_state = trace[-1]
+        if trace:
+            final_state = trace[-1]
+        elif resume_checkpoint:
+            final_state = graph._state_after_empty_checkpoint_stream(
+                compiled_graph, graph_args
+            )
+        else:
+            raise RuntimeError("graph stream completed without a final state")
         trade_intent = final_state.get("final_trade_intent")
         decision = trade_intent_action(trade_intent) or graph.process_signal(final_state["final_trade_decision"])
         graph.curr_state = final_state
@@ -360,7 +373,7 @@ def run_analysis(
             trading_mode=final_state.get("trading_mode", config.get("trading_mode", "investment")),
         )
         if config.get("checkpoint_enabled", False):
-            clear_checkpoint(config["data_cache_dir"], ticker, current_date)
+            graph._clear_checkpoint_for_run(ticker, current_date)
         run_started = False
 
         # NEW: Persist the extracted decision so the trading engine can act on it directly

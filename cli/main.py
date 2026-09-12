@@ -20,7 +20,6 @@ from rich.rule import Rule
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.llm_clients.retry import ProviderFailure
-from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.run_logger import get_run_audit_logger
 from tradingagents.agents.schemas import trade_intent_action
@@ -913,6 +912,8 @@ def _display_screening_plan(plan):
 
 def _run_cli_analysis_for_ticker(selections, config, ticker):
     """Run the existing single-ticker CLI analysis flow for one symbol."""
+    # N13: CLI checkpoints are isolated from direct/WebUI/long-run analyses.
+    config["_analysis_source"] = "cli_stream"
     # Initialize the graph
     graph = TradingAgentsGraph(
         [analyst.value for analyst in selections["analysts"]], config=config, debug=True
@@ -963,6 +964,10 @@ def _run_cli_analysis_for_ticker(selections, config, ticker):
         init_agent_state = graph.propagator.create_initial_state(
             ticker, selections["analysis_date"]
         )
+        resume_checkpoint = bool(config.get("checkpoint_enabled", False)) and (
+            graph._has_checkpoint_for_run(ticker, selections["analysis_date"])
+        )
+        graph_input = None if resume_checkpoint else init_agent_state
         graph._resolve_memory_log_outcomes(ticker, selections["analysis_date"])
         args = graph._graph_args_for_run(ticker, selections["analysis_date"])
         compiled_graph, checkpointer_ctx = graph._graph_for_run(
@@ -976,8 +981,9 @@ def _run_cli_analysis_for_ticker(selections, config, ticker):
         )
         run_started = True
         run_logger.log_state_snapshot(
-            stage="initial_state",
-            snapshot=init_agent_state,
+            stage="checkpoint_resume" if resume_checkpoint else "initial_state",
+            snapshot={"resumed": True, "source": "cli_stream"}
+            if resume_checkpoint else init_agent_state,
             symbol=ticker,
         )
 
@@ -985,7 +991,7 @@ def _run_cli_analysis_for_ticker(selections, config, ticker):
         trace = []
         try:
             try:
-                graph_stream = compiled_graph.stream(init_agent_state, **args)
+                graph_stream = compiled_graph.stream(graph_input, **args)
                 for chunk in graph_stream:
                     if len(chunk["messages"]) > 0:
                         # Get the last message from the chunk
@@ -1229,7 +1235,14 @@ def _run_cli_analysis_for_ticker(selections, config, ticker):
                     checkpointer_ctx.__exit__(None, None, None)
 
             # Get final state and decision
-            final_state = trace[-1]
+            if trace:
+                final_state = trace[-1]
+            elif resume_checkpoint:
+                final_state = graph._state_after_empty_checkpoint_stream(
+                    compiled_graph, args
+                )
+            else:
+                raise RuntimeError("graph stream completed without a final state")
             decision = trade_intent_action(final_state.get("final_trade_intent")) or graph.process_signal(
                 final_state["final_trade_decision"]
             )
@@ -1249,11 +1262,7 @@ def _run_cli_analysis_for_ticker(selections, config, ticker):
                 trading_mode=final_state.get("trading_mode", config.get("trading_mode", "investment")),
             )
             if config.get("checkpoint_enabled", False):
-                clear_checkpoint(
-                    config["data_cache_dir"],
-                    ticker,
-                    selections["analysis_date"],
-                )
+                graph._clear_checkpoint_for_run(ticker, selections["analysis_date"])
             run_started = False
         except ProviderFailure as e:
             # Phase B: provider access failure stops the run; make it visible

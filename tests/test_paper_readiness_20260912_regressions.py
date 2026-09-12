@@ -757,6 +757,90 @@ def test_N12_busy_lock_on_resume_mutates_nothing(isolated, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# N13 — compatible checkpoints resume; incompatible scopes never share state
+# ---------------------------------------------------------------------------
+
+def test_N13_checkpoint_resume_skips_completed_nodes_and_isolates_run_scope(isolated):
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+
+    from tradingagents.graph.checkpointer import has_checkpoint
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    e = isolated
+
+    class State(TypedDict, total=False):
+        value: int
+        final_trade_decision: str
+        final_trade_intent: dict
+
+    calls = {"first": 0, "second": 0}
+
+    def first(state):
+        calls["first"] += 1
+        return {"value": state["value"] + 1}
+
+    def second(state):
+        calls["second"] += 1
+        if calls["second"] == 1:
+            raise RuntimeError("injected failure after first node is checkpointed")
+        return {"final_trade_decision": "HOLD", "final_trade_intent": None}
+
+    workflow = StateGraph(State)
+    workflow.add_node("first", first)
+    workflow.add_node("second", second)
+    workflow.add_edge(START, "first")
+    workflow.add_edge("first", "second")
+    workflow.add_edge("second", END)
+
+    graph = TradingAgentsGraph.__new__(TradingAgentsGraph)
+    graph.config = {
+        **e.config,
+        "checkpoint_enabled": True,
+        "_analysis_source": "long_run",
+        "_long_run_observation_id": "obs-a",
+    }
+    graph.workflow = workflow
+    graph.debug = False
+    graph.propagator = NS(
+        create_initial_state=lambda *a: {"value": 0},
+        get_graph_args=lambda: {"config": {}},
+    )
+    graph._resolve_memory_log_outcomes = lambda *a: None
+    graph._log_state = lambda *a: None
+    graph.process_signal = lambda *a: "HOLD"
+    graph.memory_log = NS(store_decision=lambda **k: None)
+    day = now().date().isoformat()
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        graph.propagate("AAPL", day)
+    assert calls == {"first": 1, "second": 1}
+    assert has_checkpoint(
+        graph.config["data_cache_dir"], "AAPL", day,
+        source="long_run", observation_id="obs-a",
+    )
+
+    # A different observation gets a fresh state and cannot consume obs-a.
+    graph.config["_long_run_observation_id"] = "obs-b"
+    graph.propagate("AAPL", day)
+    assert calls == {"first": 2, "second": 2}
+    assert has_checkpoint(
+        graph.config["data_cache_dir"], "AAPL", day,
+        source="long_run", observation_id="obs-a",
+    )
+
+    # Returning to the compatible scope resumes at the failed second node.
+    graph.config["_long_run_observation_id"] = "obs-a"
+    graph.propagate("AAPL", day)
+    assert calls == {"first": 2, "second": 3}
+    assert not has_checkpoint(
+        graph.config["data_cache_dir"], "AAPL", day,
+        source="long_run", observation_id="obs-a",
+    )
+
+
+# ---------------------------------------------------------------------------
 # N14 — broker outages are error states, never an empty portfolio
 # ---------------------------------------------------------------------------
 

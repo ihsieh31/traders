@@ -37,7 +37,7 @@ from tradingagents.dataflows.config import (
 from tradingagents.dataflows.ticker_utils import TickerUtils, is_crypto_ticker
 from tradingagents.dataflows.utils import safe_ticker_component
 
-from .checkpointer import clear_checkpoint, get_checkpointer, thread_id
+from .checkpointer import clear_checkpoint, get_checkpointer, has_checkpoint, thread_id
 from .conditional_logic import ConditionalLogic
 from .setup import GraphSetup
 from .propagation import Propagator
@@ -344,11 +344,63 @@ class TradingAgentsGraph:
         checkpointer = checkpointer_ctx.__enter__()
         return self.workflow.compile(checkpointer=checkpointer), checkpointer_ctx
 
+    def _checkpoint_scope_for_run(self) -> tuple[str, Optional[str]]:
+        """Return the stable source/observation scope for this graph instance."""
+        source = str(self.config.get("_analysis_source") or "direct").strip().lower()
+        observation = self.config.get("_long_run_observation_id")
+        observation_id = str(observation).strip() if observation else None
+        return source, observation_id
+
+    def _has_checkpoint_for_run(self, ticker: str, trade_date: str) -> bool:
+        if not self.config.get("checkpoint_enabled", False):
+            return False
+        source, observation_id = self._checkpoint_scope_for_run()
+        return has_checkpoint(
+            self.config["data_cache_dir"],
+            ticker,
+            str(trade_date),
+            source=source,
+            observation_id=observation_id,
+        )
+
+    def _clear_checkpoint_for_run(self, ticker: str, trade_date: str) -> None:
+        if not self.config.get("checkpoint_enabled", False):
+            return
+        source, observation_id = self._checkpoint_scope_for_run()
+        clear_checkpoint(
+            self.config["data_cache_dir"],
+            ticker,
+            str(trade_date),
+            source=source,
+            observation_id=observation_id,
+        )
+
+    @staticmethod
+    def _state_after_empty_checkpoint_stream(graph: Any, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Read final values when a resumed checkpoint is already at END.
+
+        A process can die after LangGraph persisted the terminal checkpoint
+        but before our success cleanup.  ``stream(None, ...)`` then yields no
+        chunks; reading that checkpoint's values lets the caller finish its
+        durable logging/cleanup instead of crashing on ``trace[-1]``.
+        """
+        snapshot = graph.get_state(args["config"])
+        values = getattr(snapshot, "values", None)
+        if not isinstance(values, dict) or not values:
+            raise RuntimeError(
+                "checkpoint resume produced no graph output or readable final state"
+            )
+        return values
+
     def _graph_args_for_run(self, ticker: str, trade_date: str) -> Dict[str, Any]:
         args = self.propagator.get_graph_args()
         if self.config.get("checkpoint_enabled", False):
+            source, observation_id = self._checkpoint_scope_for_run()
             args["config"].setdefault("configurable", {})["thread_id"] = thread_id(
-                ticker, str(trade_date)
+                ticker,
+                str(trade_date),
+                source=source,
+                observation_id=observation_id,
             )
         return args
 
@@ -561,6 +613,10 @@ class TradingAgentsGraph:
         init_agent_state = self.propagator.create_initial_state(
             company_name, trade_date
         )
+        resume_checkpoint = self._has_checkpoint_for_run(
+            company_name, str(trade_date)
+        )
+        graph_input = None if resume_checkpoint else init_agent_state
         args = self._graph_args_for_run(company_name, str(trade_date))
         graph, checkpointer_ctx = self._graph_for_run(company_name, str(trade_date))
         # F12: long-run analyses carry their observation identity in the run
@@ -580,8 +636,12 @@ class TradingAgentsGraph:
             metadata=metadata,
         )
         run_logger.log_state_snapshot(
-            stage="initial_state",
-            snapshot=init_agent_state,
+            stage="checkpoint_resume" if resume_checkpoint else "initial_state",
+            snapshot=(
+                {"resumed": True, "source": self._checkpoint_scope_for_run()[0]}
+                if resume_checkpoint
+                else init_agent_state
+            ),
             symbol=company_name,
         )
 
@@ -589,17 +649,26 @@ class TradingAgentsGraph:
             if self.debug:
                 # Debug mode with tracing
                 trace = []
-                for chunk in graph.stream(init_agent_state, **args):
+                for chunk in graph.stream(graph_input, **args):
                     if len(chunk["messages"]) == 0:
                         pass
                     else:
                         chunk["messages"][-1].pretty_print()
                         trace.append(chunk)
 
-                final_state = trace[-1]
+                if trace:
+                    final_state = trace[-1]
+                elif resume_checkpoint:
+                    final_state = self._state_after_empty_checkpoint_stream(
+                        graph, args
+                    )
+                else:
+                    raise RuntimeError(
+                        "graph stream completed without a final state"
+                    )
             else:
                 # Standard mode without tracing
-                final_state = graph.invoke(init_agent_state, **args)
+                final_state = graph.invoke(graph_input, **args)
         except ProviderFailure as exc:
             # Phase B: a provider access failure stops the whole run. Record
             # the identifiable failure (role/provider/model/attempts/category,
@@ -676,8 +745,7 @@ class TradingAgentsGraph:
                     self.config.get("trading_mode", "investment"),
                 ),
             )
-            if self.config.get("checkpoint_enabled", False):
-                clear_checkpoint(self.config["data_cache_dir"], company_name, str(trade_date))
+            self._clear_checkpoint_for_run(company_name, str(trade_date))
             return final_state, final_signal
         except Exception as e:
             run_logger.finish_run(
