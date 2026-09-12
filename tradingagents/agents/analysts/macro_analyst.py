@@ -222,17 +222,23 @@ def create_macro_analyst(llm, toolkit):
                 # Get next response from LLM
                 try:
                     result = chain.invoke(messages_history)
+                except ProviderFailure:
+                    # H-07: a provider outage must stop the round, not be
+                    # eaten as a generic iteration error.
+                    raise
                 except Exception as e:
                     print(f"[MACRO] ❌ Error in LLM chain iteration {iteration_count}: {e}")
                     break
 
-            if tools and getattr(result, "additional_kwargs", {}).get("tool_calls"):
-                result = AIMessage(
-                    content=(
-                        (result.content or "").strip()
-                        + f"\n\nTool-loop halted after {max_iterations} iterations to prevent endless retries."
-                    ).strip()
-                )
+            tool_loop_exhausted = bool(
+                tools
+                and getattr(result, "additional_kwargs", {}).get("tool_calls")
+            )
+            if tool_loop_exhausted:
+                # H-08: the model still demanded tool calls after the last
+                # iteration — there is no report. An empty content keeps the
+                # analyst "failed" so the coverage gate rejects the round.
+                result = AIMessage(content="")
             
             # If we had tool failures, let the LLM know and ask for a general analysis
             if tool_failures and not successful_tools:
@@ -246,6 +252,10 @@ def create_macro_analyst(llm, toolkit):
                     # Get final response without tools
                     chain_no_tools = prompt.partial(tool_names="") | llm
                     result = chain_no_tools.invoke(messages_history)
+                except ProviderFailure:
+                    # H-07: the fallback LLM call must not be repackaged as a
+                    # generic analysis failure either.
+                    raise
                 except Exception as e:
                     print(f"[MACRO] ❌ Error in fallback analysis: {e}")
                     # Provide a minimal fallback report

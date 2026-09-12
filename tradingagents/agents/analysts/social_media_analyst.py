@@ -176,13 +176,15 @@ def create_social_media_analyst(llm, toolkit):
             # Ask the LLM to continue with the new context
             result = chain.invoke(messages_history)
 
-        if tools and getattr(result, "additional_kwargs", {}).get("tool_calls"):
-            result = AIMessage(
-                content=(
-                    (result.content or "").strip()
-                    + f"\n\nTool-loop halted after {max_tool_iterations} iterations to prevent endless retries."
-                ).strip()
-            )
+        tool_loop_exhausted = bool(
+            tools
+            and getattr(result, "additional_kwargs", {}).get("tool_calls")
+        )
+        if tool_loop_exhausted:
+            # H-08: the model still demanded tool calls after the last
+            # iteration — there is no report. An empty content keeps the
+            # analyst "failed" so the coverage gate rejects the round.
+            result = AIMessage(content="")
         
         # The analyst report is exactly what the tool loop produced. No
         # separate final-recommendation call exists: analysts never emit

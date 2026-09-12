@@ -443,7 +443,9 @@ class SafetyGuard:
         # Pre-trade: per-symbol concentration cap.
         conc_pct = float(self.config.get("max_symbol_concentration_pct", 0) or 0)
         if conc_pct > 0:
-            if equity:
+            # M-04: equity==0.0 is a real finite value (fail-closed caps any
+            # new exposure), not "data unavailable"; only None skips the check.
+            if equity is not None:
                 exposure = (_finite_float(position_value) or 0.0) + notional_value
                 limit = equity * conc_pct / 100.0
                 if exposure > limit:
@@ -473,7 +475,7 @@ class SafetyGuard:
 
         # Circuit breaker: daily loss.
         halt_pct = float(self.config.get("daily_loss_halt_pct", 0) or 0)
-        if halt_pct > 0 and equity and last_equity:
+        if halt_pct > 0 and equity is not None and last_equity is not None:
             change_pct = (equity - last_equity) / last_equity * 100.0
             if change_pct <= -halt_pct:
                 reasons.append(
@@ -492,7 +494,7 @@ class SafetyGuard:
 
         # Circuit breaker: drawdown from persisted high-water mark.
         dd_pct = float(self.config.get("max_drawdown_halt_pct", 0) or 0)
-        if equity:
+        if equity is not None:
             # R10: the high-water mark is read-modify-write state shared with
             # other processes; the whole cycle runs under the state flock.
             # Reload happens inside the lock, so this sees another process's
@@ -500,11 +502,15 @@ class SafetyGuard:
             with self._state_file_lock():
                 self._reload_state_locked()
                 hwm = self._state.get("high_water_mark")
-                if hwm is None or equity > float(hwm):
+                # M-04: equity==0.0 is real data, but it is never a valid
+                # high-water mark (state validation requires null or positive)
+                # and cannot exceed an existing one — only a positive equity
+                # may set or raise the persisted mark.
+                if equity > 0 and (hwm is None or equity > float(hwm)):
                     self._state["high_water_mark"] = equity
                     self._save_state()
                     hwm = equity
-            hwm = float(hwm)
+            hwm = float(hwm) if hwm is not None else 0.0
             if dd_pct > 0 and hwm > 0:
                 drawdown_pct = (hwm - equity) / hwm * 100.0
                 if drawdown_pct >= dd_pct:

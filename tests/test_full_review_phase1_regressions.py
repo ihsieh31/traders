@@ -1455,9 +1455,11 @@ class F12ObservationBindingTests(unittest.TestCase):
             "run_id": name, "symbol": "AAA", "trade_date": trade_date,
             "status": status, "started_at": started_at,
             "metadata": {
-                "source": "long_run",
+                # H-09: propagate() writes analysis_source (config key
+                # "_analysis_source" with the underscore stripped), never "source".
+                "analysis_source": "long_run",
                 "long_run_observation_id": observation_id,
-            } if observation_id is not None else {"source": "webui_stream"},
+            } if observation_id is not None else {"analysis_source": "webui_stream"},
             "snapshots": {"final_state": {
                 "final_trade_intent": symbol_intent,
             }},
@@ -1556,13 +1558,13 @@ class F12ObservationBindingTests(unittest.TestCase):
                             started_at="2026-09-08T14:00:00+00:00")
             hit = load_final_state_snapshot(
                 "AAA", "2026-09-08", eval_results_dir=str(tmp),
-                metadata_match={"source": "long_run",
+                metadata_match={"analysis_source": "long_run",
                                 "long_run_observation_id": "obs-1"},
             )
             self.assertIsNotNone(hit)
             miss = load_final_state_snapshot(
                 "AAA", "2026-09-08", eval_results_dir=str(tmp),
-                metadata_match={"source": "long_run",
+                metadata_match={"analysis_source": "long_run",
                                 "long_run_observation_id": "other"},
             )
             self.assertIsNone(miss)
@@ -1643,7 +1645,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
                 return {"success": True, "account_execution_state": "CLEAN",
                         "reconciliation_reasons": []}
 
-            def enforce_exit_deadlines(self):
+            def enforce_exit_deadlines(self, can_submit=None):
                 return {"success": True, "deadline_exits": [],
                         "broker_calls": 0}
 
@@ -1758,7 +1760,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
             return {"success": True, "account_execution_state": "CLEAN",
                     "reconciliation_reasons": []}
 
-        def enforce_exit_deadlines(self):
+        def enforce_exit_deadlines(self, can_submit=None):
             return {"success": True, "deadline_exits": [], "broker_calls": 0}
 
         def execute(self, **kwargs):

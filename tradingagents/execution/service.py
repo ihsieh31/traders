@@ -406,29 +406,13 @@ def _build_protective_request(
 
 def _build_market_request(symbol: str, side: str, notional, quantity, client_order_id: str):
     is_crypto = "/" in (symbol or "").upper()
-    tif_value = "gtc" if is_crypto else "day"
     try:
         from alpaca.trading.requests import MarketOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
-
-        order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-        tif = TimeInForce.GTC if is_crypto else TimeInForce.DAY
-        kwargs: dict[str, Any] = {
-            "symbol": (symbol or "").upper().replace("/", ""),
-            "side": order_side,
-            "time_in_force": tif,
-            "client_order_id": client_order_id,
-        }
-        if notional and float(notional) > 0:
-            kwargs["notional"] = float(notional)
-        elif quantity and float(quantity) > 0:
-            kwargs["qty"] = float(quantity)
-        else:
-            return None
-        return MarketOrderRequest(**kwargs)
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         # Alpaca SDK unavailable (offline unit tests use mock brokers that
         # accept any request object). Return a minimal dict-like payload.
+        tif_value = "gtc" if is_crypto else "day"
         if notional and float(notional) > 0:
             payload = {"notional": float(notional)}
         elif quantity and float(quantity) > 0:
@@ -444,6 +428,22 @@ def _build_market_request(symbol: str, side: str, notional, quantity, client_ord
             }
         )
         return payload
+
+    order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+    tif = TimeInForce.GTC if is_crypto else TimeInForce.DAY
+    kwargs: dict[str, Any] = {
+        "symbol": (symbol or "").upper().replace("/", ""),
+        "side": order_side,
+        "time_in_force": tif,
+        "client_order_id": client_order_id,
+    }
+    if notional and float(notional) > 0:
+        kwargs["notional"] = float(notional)
+    elif quantity and float(quantity) > 0:
+        kwargs["qty"] = float(quantity)
+    else:
+        return None
+    return MarketOrderRequest(**kwargs)
 
 
 def _get_execution_config() -> dict:
@@ -1076,7 +1076,10 @@ class ExecutionService:
         )
 
 
-    def enforce_exit_deadlines(self) -> dict[str, Any]:
+    def enforce_exit_deadlines(
+        self,
+        can_submit: Optional[Callable[[], bool]] = None,
+    ) -> dict[str, Any]:
         """Exit due, fill-proven positions on scheduled checks under the account lock.
 
         Offline time, market closure and ambiguous broker state can delay exits.
@@ -1110,7 +1113,11 @@ class ExecutionService:
             identity = capture_broker_snapshot(broker)
             with AccountExecutionLock(self.db_path, identity.account_id):
                 snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
-                snapshot, reconciliation = self._recover_locked(broker, snapshot)
+                snapshot, reconciliation = self._recover_locked(
+                    broker,
+                    snapshot,
+                    can_submit=can_submit,
+                )
                 for symbol, due in due_positions(self._store, utc_now()).items():
                     position = snapshot.position(symbol)
                     if position is None:
@@ -1291,7 +1298,7 @@ class ExecutionService:
                 current_position=current_position,
                 can_submit=can_submit,
             )
-        deadlines = self.enforce_exit_deadlines()
+        deadlines = self.enforce_exit_deadlines(can_submit=can_submit)
         if not deadlines.get("success"):
             return deadlines
         if deadlines.get("deadline_exits"):
@@ -1372,7 +1379,11 @@ class ExecutionService:
                 snapshot = capture_broker_snapshot(
                     broker, expected_account_id=identity.account_id
                 )
-                snapshot, reconciliation = self._recover_locked(broker, snapshot)
+                snapshot, reconciliation = self._recover_locked(
+                    broker,
+                    snapshot,
+                    can_submit=can_submit,
+                )
                 opening_this_call = any(
                     spec.get("role") == "open" for spec in specs
                 ) and not (

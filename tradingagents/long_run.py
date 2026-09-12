@@ -46,6 +46,20 @@ SECRET_KEY_NAMES = (
 SECRET_ENV_MARKERS = ("_API_KEY", "_SECRET", "_TOKEN", "AZURE_OPENAI")
 PLACEHOLDER_MARKERS = ("your_", "here", "changeme", "xxx")
 
+# M-01: pure LLM accounting counters that contain "token" as a substring
+# but are counts, not credentials. Matched exactly (lowercased) BEFORE the
+# secret-substring test so they survive sanitize_for_log(); any other key
+# containing "token" stays redacted.
+SAFE_TOKEN_COUNT_KEYS = {
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "unpriced_tokens",
+    "llm_tokens",
+}
+
 
 class LongRunStop(RuntimeError):
     """Hard stop: safe unattended continuation cannot be proven."""
@@ -118,7 +132,9 @@ def sanitize_for_log(obj: Any) -> Any:
         out = {}
         for key, value in obj.items():
             lowered = str(key).lower()
-            if any(name in lowered for name in SECRET_KEY_NAMES) or any(
+            if lowered in SAFE_TOKEN_COUNT_KEYS:
+                out[key] = sanitize_for_log(value)
+            elif any(name in lowered for name in SECRET_KEY_NAMES) or any(
                 str(key).upper().endswith(m) or m in str(key).upper()
                 for m in SECRET_ENV_MARKERS
             ):
@@ -348,10 +364,10 @@ def validate_long_run_config(
     except ValueError as exc:
         errors.append(str(exc))
         target = None
-    if target is not None and not (SESSION_OPEN_ET <= target <= SESSION_CLOSE_ET):
+    if target is not None and not (SESSION_OPEN_ET <= target < SESSION_CLOSE_ET):
         errors.append(
             f"run_time_et {cfg.get('run_time_et')!r} can never be a regular-session "
-            "time (09:30-16:00 ET)"
+            "time (09:30 <= run_time_et < 16:00 ET)"
         )
     notional = cfg.get("base_trade_notional_usd")
     if (
@@ -650,6 +666,15 @@ def mark_session_missed_after_close(
     journal = load_round_journal(run_id, session_date)
     if journal is not None:
         return False  # started earlier (even if unfinished): recovery owns it
+    # H-04: read_json() returns None for both a missing file and an
+    # unreadable one. A journal that exists but cannot be parsed must stop
+    # as STATE_CORRUPT — writing a fresh MISSED journal over it would
+    # destroy the only evidence of a session that may have started.
+    if round_path(run_id, session_date).exists():
+        raise LongRunStop(
+            "STATE_CORRUPT",
+            f"round journal for {session_date} exists but is unreadable",
+        )
     eastern = eastern_now(now)
     # CalendarError propagates to the loop's bounded scheduler retry (F-03);
     # after the final attempt the observation fails closed with
@@ -1148,6 +1173,44 @@ def _validate_long_run_execution_config(runtime: Dict[str, Any]) -> None:
             "CONFIG_APPLY_FAILED", f"global execution config unreadable: {exc}"
         )
     effective = get_config() or {}
+    raw_budget = effective.get("daily_llm_token_budget", 0)
+    if (
+        isinstance(raw_budget, bool)
+        or not isinstance(raw_budget, (int, float))
+        or not math.isfinite(float(raw_budget))
+    ):
+        raise LongRunStop(
+            "LLM_BUDGET_INVALID",
+            "daily_llm_token_budget must be a finite numeric value",
+        )
+    if raw_budget < 0:
+        raise LongRunStop(
+            "LLM_BUDGET_INVALID",
+            "daily_llm_token_budget must be >= 0",
+        )
+    if raw_budget > 20_000_000:
+        raise LongRunStop(
+            "LLM_BUDGET_TOO_HIGH",
+            "unattended long-run daily_llm_token_budget must be <= 20000000",
+        )
+    if raw_budget == 0:
+        # B-02: 0 stays "unlimited" in general mode, but an unattended
+        # long run must never run uncapped. Normalize the effective budget
+        # to the fixed 20M/day hard cap and persist it, so check_llm_budget()
+        # and any lazily built SafetyGuard see the cap instead of 0.
+        try:
+            from tradingagents.dataflows.config import set_config
+            from tradingagents.safety import reset_safety_guard
+
+            merged = dict(get_config() or {})
+            merged["daily_llm_token_budget"] = 20_000_000
+            set_config(merged)
+            reset_safety_guard()
+        except Exception as exc:
+            raise LongRunStop(
+                "CONFIG_APPLY_FAILED",
+                f"could not persist normalized LLM token budget: {exc}",
+            )
     if not effective.get("auto_screening_enabled"):
         raise LongRunStop(
             "SAFETY_DISABLED",
@@ -1316,7 +1379,10 @@ def _recover_intent_from_run_log(
             session_date,
             eval_results_dir=results_dir,
             metadata_match={
-                "source": "long_run",
+                # H-09: propagate() writes analysis_source/long_run_observation_id;
+                # a "source" key never exists in run-log metadata, so the exact
+                # match must use the key that is actually written.
+                "analysis_source": "long_run",
                 "long_run_observation_id": observation_id,
             },
         )
@@ -1525,7 +1591,7 @@ def run_daily_round(
             f"{recovery.get('reconciliation_reasons')}",
         )
 
-    deadlines = service.enforce_exit_deadlines()
+    deadlines = service.enforce_exit_deadlines(can_submit=_recovery_can_submit)
     _record_maintenance(
         "deadline", deadlines.get("deadline_maintenance") or _empty_maintenance_summary()
     )

@@ -85,7 +85,7 @@ class FakeBroker:
 class FakeService:
     """Durable-outbox stand-in: same decision_id never POSTs twice."""
 
-    def enforce_exit_deadlines(self):
+    def enforce_exit_deadlines(self, can_submit=None):
         return {"success": True, "deadline_exits": [], "broker_calls": 0}
 
     def __init__(self):
@@ -698,8 +698,10 @@ class DailyRoundTest(IsolatedTest):
             "run_id": "r1", "symbol": "AAA", "trade_date": SESSION_A,
             "status": "completed", "started_at": f"{SESSION_A}T15:00:00+00:00",
             # F12: long-run run logs carry their observation identity;
-            # recovery only accepts an exact metadata match.
-            "metadata": {"source": "long_run",
+            # recovery only accepts an exact metadata match. The keys mirror
+            # what propagate() actually writes (config "_analysis_source" /
+            # "_long_run_observation_id" with the leading underscore stripped).
+            "metadata": {"analysis_source": "long_run",
                          "long_run_observation_id": "run-4"},
             "snapshots": {"final_state": {"final_trade_intent":
                                           _buy_intent("AAA")}},

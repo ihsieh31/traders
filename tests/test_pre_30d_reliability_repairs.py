@@ -89,7 +89,7 @@ class FakeBroker:
 
 
 class FakeService:
-    def enforce_exit_deadlines(self):
+    def enforce_exit_deadlines(self, can_submit=None):
         return {"success": True, "deadline_exits": [], "broker_calls": 0}
 
     def startup_recover(self, can_submit=None):
