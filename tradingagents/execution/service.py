@@ -2532,7 +2532,9 @@ class ExecutionService:
         # UNKNOWN): a later authorized resume re-enters the normal
         # adopt-or-resubmit path, and this round's reconciliation reports it
         # unresolved.
-        if can_submit is not None and not can_submit():
+        # ponytail: keep the policy at this existing recovery boundary; add a
+        # shared authority object only if another independent submit path appears.
+        if not risk_reducing and can_submit is not None and not can_submit():
             raise BrokerAuthorityError(
                 f"recovery resubmit deferred by stop/window authority: "
                 f"{local['client_order_id']} (no broker POST was made; the "

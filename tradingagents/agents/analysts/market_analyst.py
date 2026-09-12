@@ -316,7 +316,11 @@ def create_market_analyst(llm, toolkit):
             "analysis_errors": (
                 {
                     **(state.get("analysis_errors") or {}),
-                    "market": "market analyst returned an empty report",
+                    "market": (
+                        "TOOL_LOOP_EXHAUSTED: market analyst exhausted its tool loop"
+                        if tool_loop_exhausted
+                        else "market analyst returned an empty report"
+                    ),
                 }
                 if analysis_status == "failed"
                 else state.get("analysis_errors") or {}

@@ -381,8 +381,10 @@ class SafetyGuard:
     ) -> SafetyVerdict:
         """Deterministic gate every outbound order must pass.
 
-        `account` carries {"equity", "last_equity"} when available; checks
-        that need missing data are reported as skipped rather than guessed.
+        `account` carries {"equity", "last_equity"} when available. ``None``
+        means unavailable and skips dependent checks; ``equity=0`` is a real
+        value and fails closed for new exposure. ``last_equity=0`` cannot be
+        a percentage-change baseline, so only that value is treated as unavailable.
         Risk-reducing exits bypass exposure and circuit-breaker checks so a
         loss halt cannot trap an existing position. The explicit kill switch
         still blocks all broker order flow.

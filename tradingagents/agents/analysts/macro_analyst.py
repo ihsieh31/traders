@@ -292,7 +292,11 @@ def create_macro_analyst(llm, toolkit):
                 "analysis_errors": (
                     {
                         **(state.get("analysis_errors") or {}),
-                        "macro": "macro analyst returned an empty report",
+                        "macro": (
+                            "TOOL_LOOP_EXHAUSTED: macro analyst exhausted its tool loop"
+                            if tool_loop_exhausted
+                            else "macro analyst returned an empty report"
+                        ),
                     }
                     if merged_status == "failed"
                     else state.get("analysis_errors") or {}

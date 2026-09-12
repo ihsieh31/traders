@@ -27,6 +27,8 @@ from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from tradingagents.redaction import sanitize_for_log, sanitize_url
+
 LONG_RUN_SCHEMA_VERSION = 1
 DEFAULT_DURATION_CALENDAR_DAYS = 30
 DEFAULT_RUN_TIME_ET = "11:00"
@@ -39,26 +41,7 @@ SESSION_CLOSE_ET = dtime(16, 0)
 # Providers with no usable provider-default endpoint: a backend URL is required.
 PROVIDERS_REQUIRING_URL = ("local_openai", "ollama")
 
-SECRET_KEY_NAMES = (
-    "api_key", "secret_key", "token", "secret", "password",
-    "alpaca_api_key", "alpaca_secret_key",
-)
-SECRET_ENV_MARKERS = ("_API_KEY", "_SECRET", "_TOKEN", "AZURE_OPENAI")
 PLACEHOLDER_MARKERS = ("your_", "here", "changeme", "xxx")
-
-# M-01: pure LLM accounting counters that contain "token" as a substring
-# but are counts, not credentials. Matched exactly (lowercased) BEFORE the
-# secret-substring test so they survive sanitize_for_log(); any other key
-# containing "token" stays redacted.
-SAFE_TOKEN_COUNT_KEYS = {
-    "total_tokens",
-    "input_tokens",
-    "output_tokens",
-    "prompt_tokens",
-    "completion_tokens",
-    "unpriced_tokens",
-    "llm_tokens",
-}
 
 
 class LongRunStop(RuntimeError):
@@ -108,45 +91,6 @@ def round_path(run_id: str, session_date: str) -> Path:
 def _looks_placeholder(value: Any) -> bool:
     text = str(value or "").strip().lower()
     return any(m in text for m in PLACEHOLDER_MARKERS)
-
-
-def sanitize_url(url: Any) -> str:
-    """Strip query/userinfo (possible credentials) before display/logging."""
-    if not url:
-        return ""
-    try:
-        parts = urllib.parse.urlsplit(str(url))
-        netloc = parts.hostname or ""
-        if parts.port:
-            netloc = f"{netloc}:{parts.port}"
-        return urllib.parse.urlunsplit(
-            (parts.scheme, netloc, parts.path, "", "")
-        )
-    except Exception:
-        return str(url).split("?", 1)[0].split("#", 1)[0]
-
-
-def sanitize_for_log(obj: Any) -> Any:
-    """Recursively redact secret values and URL credentials."""
-    if isinstance(obj, dict):
-        out = {}
-        for key, value in obj.items():
-            lowered = str(key).lower()
-            if lowered in SAFE_TOKEN_COUNT_KEYS:
-                out[key] = sanitize_for_log(value)
-            elif any(name in lowered for name in SECRET_KEY_NAMES) or any(
-                str(key).upper().endswith(m) or m in str(key).upper()
-                for m in SECRET_ENV_MARKERS
-            ):
-                out[key] = "***"
-            elif lowered.endswith("_url") or lowered == "backend_url" or lowered == "endpoint":
-                out[key] = sanitize_url(value)
-            else:
-                out[key] = sanitize_for_log(value)
-        return out
-    if isinstance(obj, list):
-        return [sanitize_for_log(v) for v in obj]
-    return obj
 
 
 def scan_files_for_secrets(paths: List[Path], markers: List[str]) -> List[str]:
@@ -1206,6 +1150,18 @@ def _validate_long_run_execution_config(runtime: Dict[str, Any]) -> None:
             merged["daily_llm_token_budget"] = 20_000_000
             set_config(merged)
             reset_safety_guard()
+            append_jsonl(
+                base_dir() / "events.jsonl",
+                {
+                    "at": utc_now_iso(),
+                    "type": "llm_budget_normalized",
+                    "detail": {
+                        "original": raw_budget,
+                        "normalized": 20_000_000,
+                        "scope": "unattended_long_run",
+                    },
+                },
+            )
         except Exception as exc:
             raise LongRunStop(
                 "CONFIG_APPLY_FAILED",

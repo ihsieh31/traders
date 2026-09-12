@@ -112,7 +112,8 @@ DEFAULT_CONFIG = {
     "daily_loss_halt_pct": 10.0,  # Circuit breaker: halt trading when equity falls this % vs yesterday
     "max_drawdown_halt_pct": 15.0,  # Circuit breaker: halt when equity falls this % below the high-water mark
     "max_consecutive_rejections": 5,  # Circuit breaker: halt after this many broker rejections in a row
-    "daily_llm_token_budget": 0,  # Refuse new analyses after this many LLM tokens per day; 0 = unlimited
+    # 0 = unlimited in manual/WebUI mode; unattended long-run normalizes 0 to 20M/day.
+    "daily_llm_token_budget": 0,
     # Operational alerts (Telegram / webhook; stdlib-only, failure-isolated)
     "alerts_enabled": True,  # Master switch; channels below must also be configured
     "alert_telegram_bot_token": None,  # Or env ALERT_TELEGRAM_BOT_TOKEN

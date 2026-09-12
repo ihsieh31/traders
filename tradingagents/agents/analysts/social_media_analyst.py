@@ -204,7 +204,11 @@ def create_social_media_analyst(llm, toolkit):
             "analysis_errors": (
                 {
                     **(state.get("analysis_errors") or {}),
-                    "social": "social analyst returned an empty report",
+                    "social": (
+                        "TOOL_LOOP_EXHAUSTED: social analyst exhausted its tool loop"
+                        if tool_loop_exhausted
+                        else "social analyst returned an empty report"
+                    ),
                 }
                 if merged_status == "failed"
                 else state.get("analysis_errors") or {}

@@ -103,6 +103,25 @@ def test_R01_execute_recovery_resubmits_when_can_submit_true(isolated):
     assert len(e.broker.submits) >= 1, result
 
 
+def test_R01_stop_window_still_allows_verified_recovery_close(isolated):
+    e = isolated
+    e.broker.qty = 10
+    seed_pending(
+        e,
+        {"kind": "liquidation", "action": "SELL", "target_position": "NEUTRAL"},
+        quantity=10,
+        decision_id="pending-close",
+        side="sell",
+        role="close",
+    )
+
+    result = e.service.startup_recover(can_submit=lambda: False)
+
+    assert result["success"], result
+    assert len(e.broker.submits) == 1
+    assert e.broker.qty == 0
+
+
 def test_R01_run_daily_round_passes_can_submit_to_deadline_recovery(isolated, monkeypatch):
     import tradingagents.long_run as lr
     from tradingagents.screening.selection_store import SelectionStore
@@ -345,7 +364,7 @@ def test_R05_tool_loop_exhaustion_yields_failed_analyst(
                               "messages": []})
     assert out[report_key] == "", out[report_key]
     assert out["analysis_status"][status_key] == "failed"
-    assert out["analysis_errors"][status_key]  # existing empty-report error
+    assert out["analysis_errors"][status_key].startswith("TOOL_LOOP_EXHAUSTED:")
     assert "Tool-loop halted" not in str(out["messages"][-1].content)
 
 
@@ -412,6 +431,19 @@ def test_R03_budget_zero_normalization_is_persisted_for_check_llm_budget(long_ru
     assert verdict.allowed
     # The lazily built guard sees the 20M cap, not 0=unlimited.
     assert get_safety_guard().config["daily_llm_token_budget"] == 20_000_000
+
+
+def test_R03_budget_zero_normalization_is_audited(long_run_config):
+    ns = long_run_config
+    ns.lr._validate_long_run_execution_config(dict(ns.config))
+
+    event = json.loads((ns.lr.base_dir() / "events.jsonl").read_text().splitlines()[-1])
+    assert event["type"] == "llm_budget_normalized"
+    assert event["detail"] == {
+        "original": 0,
+        "normalized": 20_000_000,
+        "scope": "unattended_long_run",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +589,8 @@ def test_R09_token_count_keys_are_not_masked():
     payload = {
         "total_tokens": 12345, "input_tokens": 1, "output_tokens": 2,
         "prompt_tokens": 3, "completion_tokens": 4, "unpriced_tokens": 5,
-        "llm_tokens": {"2026-09-12": 100},
+        "llm_tokens": {"2026-09-12": 100}, "reasoning_tokens": 6,
+        "daily_llm_token_budget": 20_000_000,
     }
     out = lr.sanitize_for_log(payload)
     assert out == payload
@@ -579,6 +612,41 @@ def test_R09_url_credentials_still_stripped():
 
     out = lr.sanitize_for_log({"backend_url": "https://user:pass@example.com/x"})
     assert "pass" not in str(out) and "user" not in str(out)
+
+
+def test_R09_run_logger_and_long_run_share_secret_policy():
+    from tradingagents.long_run import sanitize_for_log
+    from tradingagents.run_logger import _redact_sensitive_config
+
+    payload = {"service_token_value": "secret", "reasoning_tokens": 12}
+    assert sanitize_for_log(payload) == {
+        "service_token_value": "***",
+        "reasoning_tokens": 12,
+    }
+    assert _redact_sensitive_config(payload) == {
+        "service_token_value": "[REDACTED]",
+        "reasoning_tokens": 12,
+    }
+
+
+def test_H11_run_log_flush_is_atomic(tmp_path, monkeypatch):
+    from tradingagents.run_logger import RunAuditLogger
+
+    monkeypatch.chdir(tmp_path)
+    logger = RunAuditLogger()
+    run_id = logger.start_run("AAPL", "2026-09-13")
+    path = next(Path("eval_results").glob("**/runs/*.json"))
+    original = path.read_bytes()
+
+    monkeypatch.setattr(
+        "tradingagents.run_logger.json.dump",
+        Mock(side_effect=RuntimeError("serialization interrupted")),
+    )
+    with pytest.raises(RuntimeError, match="serialization interrupted"):
+        logger.log_event("test", run_id=run_id)
+
+    assert path.read_bytes() == original
+    assert not list(path.parent.glob(f"{path.name}.*.tmp"))
 
 
 # ---------------------------------------------------------------------------

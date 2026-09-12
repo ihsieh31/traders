@@ -239,7 +239,11 @@ def create_news_analyst(llm, toolkit):
             "analysis_errors": (
                 {
                     **(state.get("analysis_errors") or {}),
-                    "news": "news analyst returned an empty report",
+                    "news": (
+                        "TOOL_LOOP_EXHAUSTED: news analyst exhausted its tool loop"
+                        if tool_loop_exhausted
+                        else "news analyst returned an empty report"
+                    ),
                 }
                 if merged_status == "failed"
                 else state.get("analysis_errors") or {}

@@ -3,11 +3,15 @@ from __future__ import annotations
 import atexit
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 import threading
 import uuid
 from typing import Any, Dict, Optional
+
+from tradingagents.redaction import sanitize_for_log
 
 
 def _utc_now_iso() -> str:
@@ -37,39 +41,7 @@ def _json_safe(value: Any) -> Any:
 
 def _redact_sensitive_config(value: Any) -> Any:
     """Remove credentials before persisting a run configuration."""
-    if isinstance(value, dict):
-        redacted = {}
-        for key, item in value.items():
-            normalized = str(key).strip().lower()
-            sensitive = (
-                normalized in {
-                    "api_key",
-                    "secret",
-                    "password",
-                    "token",
-                    "webhook_url",
-                    "alert_webhook_url",
-                }
-                or normalized.endswith(
-                    (
-                        "_api_key",
-                        "_api_secret",
-                        "_secret_key",
-                        "_client_secret",
-                        "_password",
-                        "_bot_token",
-                        "_chat_id",
-                    )
-                )
-            )
-            redacted[str(key)] = (
-                "[REDACTED]" if sensitive and item not in (None, "")
-                else _redact_sensitive_config(item)
-            )
-        return redacted
-    if isinstance(value, (list, tuple, set)):
-        return [_redact_sensitive_config(item) for item in value]
-    return value
+    return sanitize_for_log(value, redacted="[REDACTED]")
 
 
 class RunAuditLogger:
@@ -440,8 +412,19 @@ class RunAuditLogger:
 
         path = Path(run_data["file_path"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(run_data, f, indent=2, ensure_ascii=False)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(run_data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
 
 def load_final_state_snapshot(
