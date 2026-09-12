@@ -244,6 +244,24 @@ def test_R05b_macro_exhaustion_with_all_tools_failed_skips_general_fallback(isol
     assert llm.invocations == 2  # a third (fallback) invoke must never happen
 
 
+def test_R05c_macro_fallback_generic_error_yields_failed_not_filler(isolated, monkeypatch):
+    # All tools failed and the loop exited normally (no exhaustion), but the
+    # fallback LLM call itself raised a generic error: the analyst must be
+    # failed with an EMPTY report — never the fabricated filler markdown.
+    llm = ScriptedLLM([
+        tool_calls_message("no_such_tool"),      # all tools fail -> fallback
+        AIMessage(content="interim"),            # loop exits normally
+        RuntimeError("fallback LLM exploded"),   # generic, non-ProviderFailure
+    ])
+    out = _run_analyst(monkeypatch, "tradingagents.agents.analysts.macro_analyst.create_macro_analyst",
+                       llm, _macro_toolkit())
+    assert out["macro_report"] == ""
+    assert "Macro Economic Analysis" not in out["macro_report"]
+    assert out["analysis_status"]["macro"] == "failed"
+    assert out["analysis_errors"]["macro"]
+    assert llm.invocations == 3
+
+
 # ---------------------------------------------------------------------------
 # R5 (H-08) — tool-loop exhaustion is a failed analyst, never a fake report
 # ---------------------------------------------------------------------------

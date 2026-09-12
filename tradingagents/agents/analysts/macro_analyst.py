@@ -260,43 +260,11 @@ def create_macro_analyst(llm, toolkit):
                     # generic analysis failure either.
                     raise
                 except Exception as e:
+                    # A fabricated filler report must never masquerade as a
+                    # completed analysis: an empty report keeps the analyst
+                    # "failed" for the coverage gate, same as everywhere else.
                     print(f"[MACRO] ❌ Error in fallback analysis: {e}")
-                    # Provide a minimal fallback report
-                    result = type('MockResult', (), {
-                        'content': f"""
-# Macro Economic Analysis - {current_date}
-
-## Analysis Status
-⚠️ **Limited Analysis**: Economic data tools unavailable (FRED API key required)
-
-## General Market Environment
-Based on current market conditions as of {current_date}:
-
-### Federal Reserve Policy
-- Monitor FOMC meetings and policy statements
-- Watch for changes in federal funds rate guidance
-- Consider impact on different sectors
-
-### Market Conditions  
-- **Growth Stocks**: Sensitive to interest rate changes
-- **Financial Sector**: Generally benefits from rising rates
-- **Utilities/REITs**: Pressure from rising rates
-- **Technology**: Vulnerable to rate uncertainty
-
-### Trading Recommendations
-- **Defensive**: Consider defensive sectors during uncertainty
-- **Quality Focus**: Emphasize companies with strong fundamentals
-- **Diversification**: Maintain balanced exposure across sectors
-
-| Indicator | Status | Impact |
-|-----------|--------|--------|
-| FRED Data | ❌ Unavailable | High |
-| Analysis Quality | ⚠️ Limited | Medium |
-| Recommendation | 📊 General Guidance | Medium |
-
-**Note**: For complete macro analysis, configure FRED_API_KEY environment variable.
-"""
-                    })()
+                    result = AIMessage(content="")
 
             # The analyst report is exactly what the tool loop produced. No
             # separate final-recommendation call exists: analysts never emit
