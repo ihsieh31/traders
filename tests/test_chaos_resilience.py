@@ -380,16 +380,20 @@ class MalformedBrokerPayloadTests(unittest.TestCase):
                     AlpacaUtils.get_current_position_state("AAPL"), "NEUTRAL"
                 )
 
-    def test_account_fetch_outage_returns_zeroed_info_not_exception(self):
+    def test_account_fetch_outage_raises_instead_of_claiming_zero(self):
+        # N14 (contract change): a broker outage must surface as an error so
+        # the WebUI renders its failure state; a zeroed dict would display a
+        # live account as $0 cash / $0 buying power.
         client = Mock()
         client.get_account.side_effect = ConnectionError("nginx: 502")
         with patch(
             "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
             return_value=client,
         ):
-            info = AlpacaUtils.get_account_info()
-        self.assertEqual(info["buying_power"], 0)
-        self.assertEqual(info["cash"], 0)
+            with self.assertRaises(RuntimeError) as ctx:
+                AlpacaUtils.get_account_info()
+        self.assertIn("account info unavailable", str(ctx.exception))
+        self.assertIn("ConnectionError", str(ctx.exception))
 
 
 class PositionFetchOutageTests(unittest.TestCase):

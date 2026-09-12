@@ -508,9 +508,19 @@ class RemediationRegressionTests(unittest.TestCase):
     def test_repeat_liquidation_without_decision_id_is_not_silently_deduped(self):
         # A terminal (rejected) first liquidation must not make a later
         # legitimate exit of the same symbol a no-op "success".
+        # N11: only a structured HTTP 4xx proves a rejection, so the injected
+        # failure carries one instead of relying on exception wording.
+        from alpaca.common.exceptions import APIError
+        from requests import HTTPError, Response
+
+        rejection = Response()
+        rejection.status_code = 422
         with tempfile.TemporaryDirectory() as tmp:
             broker = FakeBroker(positions=[_position()])
-            broker.submit_error = Exception("order rejected: market closed")
+            broker.submit_error = APIError(
+                '{"code":42210000,"message":"order rejected: market closed"}',
+                HTTPError(response=rejection),
+            )
             svc = _service(tmp, broker)
             with patch(
                 "tradingagents.safety.get_safety_guard",

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 _PRICE_PATTERN = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
 
@@ -154,6 +154,23 @@ class TradeIntent(BaseModel):
     entry_guidance: Optional[str] = None
     time_horizon: Optional[str] = None
     rationale_summary: str = Field(description="Compact rationale suitable for audit logs.")
+
+    @model_validator(mode="after")
+    def _validate_canonical_consistency(self) -> "TradeIntent":
+        """N09: every payload field must match the single canonical plan.
+
+        ``action + trading_mode + current_position`` deterministically derive
+        ``target_position``, ``position_transition``, ``planned_actions`` and
+        the primary ``order_intent`` (see the module-level helpers). A payload
+        whose action disagrees with its broker side would otherwise pass
+        type/enum validation and open exposure the decision never authorized.
+        Raises with the fixed ``inconsistent TradeIntent:`` prefix so callers
+        can rely on a stable error boundary.
+        """
+        error = trade_intent_consistency_error(self)
+        if error:
+            raise ValueError(error)
+        return self
 
 
 class ResearchPlan(BaseModel):
@@ -412,6 +429,147 @@ def _primary_order_intent(planned_actions: list[PlannedBrokerAction], asset_clas
         sizing_basis=primary.sizing_basis,
         time_in_force=time_in_force,
     )
+
+
+def _intent_field(intent: Any, name: str) -> Any:
+    """Read a field from a TradeIntent model instance or an already-shaped dict."""
+    if isinstance(intent, dict):
+        return intent.get(name)
+    return getattr(intent, name, None)
+
+
+def _normalize_action(value: Any) -> str:
+    if isinstance(value, ExecutableAction):
+        return value.value
+    return str(value or "").upper()
+
+
+def _normalize_target(value: Any) -> str:
+    if isinstance(value, TargetPosition):
+        return value.value
+    return str(value or "").upper()
+
+
+def _normalize_transition(value: Any) -> str:
+    if isinstance(value, PositionTransition):
+        return value.value
+    return str(value or "").upper()
+
+
+def trade_intent_consistency_error(intent: Any) -> Optional[str]:
+    """First canonical-plan inconsistency in a TradeIntent, or None.
+
+    Works on a ``TradeIntent`` model instance and on the equivalent plain
+    dict, so dict- and model-shaped payloads cross the same boundary (N09).
+    The module-level helpers are the canonical source; nothing is re-derived
+    here with different rules.
+    """
+    if intent is None:
+        return None
+    action = _normalize_action(_intent_field(intent, "action"))
+    try:
+        action_enum = ExecutableAction(action)
+    except ValueError:
+        return None  # enum/type validation owns unknown actions
+    mode = str(_intent_field(intent, "trading_mode") or "investment")
+    try:
+        current = TargetPosition(_normalize_target(_intent_field(intent, "current_position")))
+    except ValueError:
+        return None
+    symbol = str(_intent_field(intent, "symbol") or "")
+
+    expected_target = _target_position(action_enum, mode, current)
+    actual_target_raw = _intent_field(intent, "target_position")
+    try:
+        actual_target = TargetPosition(_normalize_target(actual_target_raw))
+    except ValueError:
+        actual_target = None
+    if actual_target is not None and actual_target is not expected_target:
+        return (
+            f"inconsistent TradeIntent: target_position "
+            f"({_normalize_target(actual_target_raw)}) does not match the canonical "
+            f"plan for action={action}, trading_mode={mode}, "
+            f"current_position={current.value} (expected {expected_target.value})"
+        )
+
+    expected_transition = _position_transition(current, expected_target)
+    actual_transition_raw = _intent_field(intent, "position_transition")
+    try:
+        actual_transition = PositionTransition(_normalize_transition(actual_transition_raw))
+    except ValueError:
+        actual_transition = None
+    if actual_transition is not None and (
+        actual_transition is not expected_transition
+        or actual_transition is PositionTransition.UNKNOWN
+    ):
+        return (
+            f"inconsistent TradeIntent: position_transition "
+            f"({_normalize_transition(actual_transition_raw) or 'missing'}) does not "
+            f"match the canonical plan for current_position={current.value} -> "
+            f"target_position={expected_target.value} (expected "
+            f"{expected_transition.value})"
+        )
+
+    expected_planned = _planned_actions(expected_transition)
+    actual_planned = _intent_field(intent, "planned_actions") or []
+    actual_rows = [
+        row for row in actual_planned
+        if isinstance(row, (dict, PlannedBrokerAction))
+    ]
+    if len(actual_rows) != len(expected_planned):
+        return (
+            f"inconsistent TradeIntent: planned_actions has {len(actual_rows)} "
+            f"steps but the canonical plan for "
+            f"{expected_transition.value} requires {len(expected_planned)}"
+        )
+    for index, (expected_step, actual_step) in enumerate(zip(expected_planned, actual_rows)):
+        actual = (
+            actual_step
+            if isinstance(actual_step, dict)
+            else actual_step.model_dump()
+        )
+        for field in ("action", "order_type", "side", "sizing_basis"):
+            expected_value = getattr(expected_step, field)
+            actual_value = actual.get(field)
+            if field == "side":
+                actual_value = str(actual_value).lower() if actual_value else None
+                expected_value = expected_value.lower() if expected_value else None
+            if actual_value != expected_value:
+                return (
+                    f"inconsistent TradeIntent: planned_actions[{index}].{field} "
+                    f"({actual_value!r}) does not match the canonical plan for "
+                    f"{expected_transition.value} (expected {expected_value!r})"
+                )
+
+    asset_class = "crypto" if "/" in symbol else "equity"
+    expected_primary = _primary_order_intent(expected_planned, asset_class)
+    actual_primary = _intent_field(intent, "order_intent") or {}
+    if not isinstance(actual_primary, dict):
+        actual_primary = actual_primary.model_dump()
+    for field in ("order_type", "side", "sizing_basis"):
+        expected_value = getattr(expected_primary, field)
+        actual_value = actual_primary.get(field)
+        if field == "side":
+            actual_value = str(actual_value).lower() if actual_value else None
+            expected_value = expected_value.lower() if expected_value else None
+        if actual_value != expected_value:
+            return (
+                f"inconsistent TradeIntent: order_intent.{field} ({actual_value!r}) "
+                f"does not match the canonical primary order for "
+                f"{expected_transition.value} (expected {expected_value!r})"
+            )
+
+    constraints = _intent_field(intent, "execution_constraints") or {}
+    if not isinstance(constraints, dict):
+        constraints = constraints.model_dump()
+    actual_asset_class = str(constraints.get("asset_class") or "").lower()
+    if actual_asset_class and actual_asset_class != asset_class:
+        return (
+            f"inconsistent TradeIntent: execution_constraints.asset_class "
+            f"({actual_asset_class}) does not match the asset class implied by "
+            f"symbol {symbol!r} (expected {asset_class})"
+        )
+    return None
 
 
 def build_trade_intent_from_risk_decision(

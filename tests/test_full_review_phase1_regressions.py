@@ -873,7 +873,17 @@ class F04ProtectionGapTests(_GuardIsolated, unittest.TestCase):
                 lambda n: getattr(request, n, None)
             )
             if reject_close:
-                raise RuntimeError("422 rejected: close failed")
+                # N11: a provable close rejection carries a structured HTTP
+                # 4xx; message text alone never proves the status.
+                from alpaca.common.exceptions import APIError as _api_error
+                from requests import HTTPError as _http_error, Response as _response
+
+                rejection = _response()
+                rejection.status_code = 422
+                raise _api_error(
+                    '{"code":42210000,"message":"422 rejected: close failed"}',
+                    _http_error(response=rejection),
+                )
             order = SimpleNamespace(
                 id="b-close", client_order_id=get("client_order_id"),
                 symbol=str(get("symbol")),
@@ -1085,7 +1095,17 @@ class F04ShortCloseRegressionTests(_GuardIsolated, unittest.TestCase):
                 lambda n: getattr(request, n, None)
             )
             if reject_close:
-                raise RuntimeError("422 rejected: close failed")
+                # N11: a provable close rejection carries a structured HTTP
+                # 4xx; message text alone never proves the status.
+                from alpaca.common.exceptions import APIError as _api_error
+                from requests import HTTPError as _http_error, Response as _response
+
+                rejection = _response()
+                rejection.status_code = 422
+                raise _api_error(
+                    '{"code":42210000,"message":"422 rejected: close failed"}',
+                    _http_error(response=rejection),
+                )
             order = SimpleNamespace(
                 id="b-close", client_order_id=get("client_order_id"),
                 symbol=str(get("symbol")),

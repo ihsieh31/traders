@@ -9,7 +9,8 @@ failures keep the requested amount untouched.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import functools
+from typing import Any, Callable, Optional
 
 
 def execute_auto_trade(
@@ -22,8 +23,14 @@ def execute_auto_trade(
     execution_service: Any = None,
     decision_id: Optional[str] = None,
     run_id: Optional[str] = None,
+    can_submit: Optional[Callable[[], bool]] = None,
 ) -> dict[str, Any]:
-    """Prepare and execute one auto trade through the single execution entry."""
+    """Prepare and execute one auto trade through the single execution entry.
+
+    N03: ``can_submit`` (the caller's stop/window authority) is forwarded to
+    ExecutionService.execute and re-checked at the final opening-POST
+    boundary. ``None`` keeps the legacy behavior for manual callers.
+    """
     from tradingagents.agents.schemas import trade_intent_action
 
     if trade_intent is None:
@@ -73,7 +80,12 @@ def execute_auto_trade(
                 ticker,
                 action,
                 amount,
-                gather_state=gather_portfolio_state_via_alpaca,
+                # N10: the gather hook must be a zero-argument callable bound
+                # to THIS symbol. Passing the raw function made every call
+                # raise "missing 1 required positional argument: 'symbol'",
+                # which the sizing failure policy silently swallowed, so the
+                # portfolio layer never ran for new long exposure.
+                gather_state=functools.partial(gather_portfolio_state_via_alpaca, ticker),
                 config=PortfolioLimitsConfig.from_config(config or {}),
             )
         except Exception:
@@ -91,4 +103,5 @@ def execute_auto_trade(
         dollar_amount=amount,
         allow_shorts=allow_shorts,
         risk_params=(config.get("risk_sizing_params") or {}) if config.get("risk_sizing_enabled", False) else None,
+        can_submit=can_submit,
     )

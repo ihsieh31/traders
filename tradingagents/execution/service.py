@@ -102,6 +102,57 @@ def _is_ambiguous_error(exc: BaseException) -> bool:
     return any(m in text for m in _TIMEOUT_MARKERS)
 
 
+def _definitive_rejection(exc: BaseException) -> bool:
+    """N11: True only for a provable broker rejection after a POST was sent.
+
+    Only a structured HTTP 4xx found in the exception chain (never 408, and
+    never guessed from message text) proves the broker read and refused the
+    request. HTTP 200 responses that fail JSON/schema decoding, missing
+    broker order identity, timeouts, resets, 408 and 5xx all leave the
+    outcome unprovable: the submit may have been accepted, so the row must
+    stay UNKNOWN and reconcile by its client order id.
+    """
+    status = _exception_http_status(exc)
+    return status is not None and 400 <= status <= 499 and status != 408
+
+
+class StaleRecoveryPositionError(BrokerAuthorityError):
+    """N02: a recovery resubmit was blocked before any POST because the
+    persisted position assumption would trade through the fresh broker
+    position. Carries the flag so callers can surface
+    ``stale_position_transition`` instead of a generic authority failure."""
+
+    stale_position_transition = True
+
+
+def _new_maintenance_collector() -> dict[str, Any]:
+    """N15: mutation collector for one round-maintenance pass.
+
+    Counts every POST/DELETE attempt exactly once at the broker boundary;
+    adopting an existing broker order is never a mutation.
+    """
+    return {"submit_calls": 0, "cancel_calls": 0, "submitted_symbols": set(),
+            "has_unknown": False}
+
+
+def _maintenance_summary(
+    collector: dict[str, Any], *, paused: bool, error: str = "",
+) -> dict[str, Any]:
+    submits = int(collector.get("submit_calls") or 0)
+    cancels = int(collector.get("cancel_calls") or 0)
+    return {
+        "broker_calls": submits + cancels,
+        "submit_calls": submits,
+        "cancel_calls": cancels,
+        "submitted_symbols": sorted(
+            str(s).upper() for s in (collector.get("submitted_symbols") or set())
+        ),
+        "has_unknown": bool(collector.get("has_unknown")),
+        "paused": bool(paused),
+        "error": str(error or "")[:300],
+    }
+
+
 def resolve_execution_db_path(explicit: Optional[str | Path] = None) -> str:
     """Single execution-DB path resolver (F13): service and reports share it.
 
@@ -123,7 +174,12 @@ def _default_db_path() -> str:
 
 
 def validate_trade_intent(trade_intent: Any) -> tuple[Optional[dict[str, Any]], Optional[str]]:
-    """Return (validated_dict, error). Invalid => (None, reason), zero broker calls."""
+    """Return (validated_dict, error). Invalid => (None, reason), zero broker calls.
+
+    N09: a pre-built ``TradeIntent`` model is re-validated from its dump so the
+    canonical-consistency model validator can never be bypassed by callers that
+    already constructed the model.
+    """
     if trade_intent is None:
         return None, "missing trade_intent: strict boundary requires schema-valid TradeIntent"
     try:
@@ -132,7 +188,8 @@ def validate_trade_intent(trade_intent: Any) -> tuple[Optional[dict[str, Any]], 
         return None, f"TradeIntent schema unavailable: {exc}"
     try:
         if isinstance(trade_intent, _TI):
-            return trade_intent.model_dump(mode="json"), None
+            validated = _TI.model_validate(trade_intent.model_dump(mode="json"))
+            return validated.model_dump(mode="json"), None
         validated = _TI.model_validate(trade_intent)
         return validated.model_dump(mode="json"), None
     except Exception as exc:
@@ -458,6 +515,9 @@ def _evaluate_opening_caps(
     # live increasing order carries a quantity but no notional. The
     # candidate's validated quote seeds the map; every other required symbol
     # gets its own validated quote or the whole evaluation fails closed.
+    # N05: terminal historical orders (FILLED/CANCELED/REJECTED/EXPIRED per
+    # broker_status_to_local) never demand a quote — an old canceled ticket
+    # must not block unrelated new exposure.
     reference_prices: dict[str, float] = {}
     if quote_price is not None:
         reference_prices[(symbol or "").upper().replace("/", "")] = quote_price
@@ -465,6 +525,8 @@ def _evaluate_opening_caps(
         order.symbol
         for order in snapshot.orders
         if order.notional is None
+        and broker_status_to_local(order.status)
+        not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
         and float(order.qty or 0) - float(order.filled_qty or 0) > 0
     }
     for required in sorted(needs_price):
@@ -648,6 +710,25 @@ class ExecutionService:
         self._reconcile_snapshot(broker, fresh)
         if not self._broker_order_live(fresh, order.broker_order_id):
             return fresh, 0  # broker cascade already completed this child
+        # N04: the kill switch may have engaged while the fresh snapshot GET
+        # ran. Re-check it AFTER the GET and BEFORE the DELETE: an engaged
+        # kill switch means DELETE=0 and the protection order stays live
+        # (the caller's verified-exit check then refuses the close, fail
+        # closed). This closes only the pre-check race window; a DELETE that
+        # already entered the network cannot be recalled.
+        try:
+            from tradingagents.safety import get_safety_guard
+
+            _guard = get_safety_guard()
+        except Exception:
+            _guard = None
+        if (
+            _guard is not None
+            and getattr(_guard, "enabled", True)
+            and callable(getattr(_guard, "kill_switch_active", None))
+            and _guard.kill_switch_active() is True
+        ):
+            return fresh, 0
         try:
             broker.cancel_order_by_id(order.broker_order_id)
         except Exception:
@@ -843,13 +924,21 @@ class ExecutionService:
     # -- general protection coverage invariant (R09) ------------------------
 
     def _protection_coverage_gaps(self, snapshot: BrokerSnapshot) -> list[str]:
-        """R09: symbols whose program-built protection disappeared while the
-        position is still live.
+        """R09/N07: symbols whose program-built protection is unprovable while
+        the position is still live.
 
         Only positions the durable ledger can prove came from THIS program's
-        protected entry (a registered protective child relation) are judged —
-        manual holdings are never forced under this rule. For each such live
-        position the provable coverage is:
+        protected entry are judged — manual holdings are never forced under
+        this rule. Protection obligation is proven EITHER by a registered
+        protective child relation (a child was actually observed on the
+        broker) OR — N07 — by a durable, FILLED program-owned opening parent
+        whose intent payload required a broker stop (``risk_controls.
+        stop_loss_price`` plus the protective entry contract: the payload's
+        target side matches the parent's side). A parent that filled without
+        its protective child ever appearing anywhere must therefore still be
+        judged: missing proof is a gap, not a manual position.
+
+        For each such live position the provable coverage is:
 
         - live program-owned protective children, grouped by their opening
           parent: a sibling stop/target pair contributes its LARGEST single
@@ -886,6 +975,38 @@ class ExecutionService:
                         break
                 except Exception:
                     continue
+            if not has_protected_entry:
+                # N07: no child relation was ever registered — prove the
+                # protection obligation from the durable opening intent
+                # itself. A FILLED program-owned opening parent whose payload
+                # required a broker stop owes protection even if no child
+                # was ever seen on any snapshot.
+                opening_side = "buy" if position.qty > 0 else "sell"
+                expected_target = "LONG" if position.qty > 0 else "SHORT"
+                for row in rows:
+                    if str(row.get("status") or "").upper() != "FILLED":
+                        continue
+                    if str(row.get("side") or "").lower() != opening_side:
+                        continue
+                    try:
+                        intent = self._store.get_intent_for_order(row["order_id"]) or {}
+                        payload = json.loads(intent.get("payload_json") or "{}")
+                    except Exception:
+                        continue
+                    if payload.get("kind") == "liquidation":
+                        continue  # exits never create a protection obligation
+                    if str(payload.get("target_position") or "").upper() != expected_target:
+                        continue  # not the opening leg that formed this position
+                    controls = payload.get("risk_controls")
+                    stop_price = (
+                        controls.get("stop_loss_price")
+                        if isinstance(controls, dict)
+                        else getattr(controls, "stop_loss_price", None)
+                    )
+                    if not stop_price:
+                        continue
+                    has_protected_entry = True
+                    break
             if not has_protected_entry:
                 continue  # never a program-protected entry: manual position
             reducing_side = "sell" if position.qty > 0 else "buy"
@@ -964,9 +1085,27 @@ class ExecutionService:
         from .lifecycle import due_positions
         results = []
         cancellation_calls = 0
+        # N15: deadline maintenance facts for the round journal — counted at
+        # the mutation boundaries, never inferred from ledger rows.
+        deadline_submit_calls = 0
+        deadline_submit_symbols: set[str] = set()
+        deadline_has_unknown = False
+
+        def _deadline_maintenance(*, paused: bool = False, error: str = "") -> dict[str, Any]:
+            return _maintenance_summary(
+                {
+                    "submit_calls": deadline_submit_calls,
+                    "cancel_calls": cancellation_calls,
+                    "submitted_symbols": deadline_submit_symbols,
+                    "has_unknown": deadline_has_unknown,
+                },
+                paused=paused, error=error,
+            )
+
         try:
             if not due_positions(self._store, utc_now()):
-                return {"success": True, "deadline_exits": [], "broker_calls": 0}
+                return {"success": True, "deadline_exits": [], "broker_calls": 0,
+                        "deadline_maintenance": _deadline_maintenance()}
             broker = self._broker_factory()
             identity = capture_broker_snapshot(broker)
             with AccountExecutionLock(self.db_path, identity.account_id):
@@ -1076,6 +1215,11 @@ class ExecutionService:
                                                    _quantity=abs(current.qty), _side=closing_side,
                                                    _outbox=prepared_outbox)
                     results.append(result)
+                    if int(result.get("broker_calls") or 0) > 0:
+                        deadline_submit_calls += 1
+                        deadline_submit_symbols.add(str(symbol).upper())
+                    if str(result.get("status") or "").upper() == "UNKNOWN":
+                        deadline_has_unknown = True
                     snapshot = capture_broker_snapshot(broker, expected_account_id=identity.account_id)
                     post = self._reconcile_snapshot(broker, snapshot)
                     if not result.get("success"):
@@ -1091,20 +1235,28 @@ class ExecutionService:
                     if not result.get("success") or not post.clean:
                         return {"success": False, "paused": True, "deadline_exits": results,
                                 "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
-                                "error": "Deadline exit requires reconciliation before further trading"}
+                                "error": "Deadline exit requires reconciliation before further trading",
+                                "deadline_maintenance": _deadline_maintenance(
+                                    paused=True,
+                                    error="Deadline exit requires reconciliation before further trading")}
                 return {"success": True, "deadline_exits": results,
-                        "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results)}
+                        "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
+                        "deadline_maintenance": _deadline_maintenance()}
         except _DeadlineGapOutcome as gap_exc:
             out = {"success": False,
                    "deadline_exits": results,
-                   "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results)}
+                   "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
+                   "deadline_maintenance": _deadline_maintenance(
+                       paused=True, error=str(gap_exc.gap.get("error") or "protection gap"))}
             out.update(gap_exc.gap)
             return out
         except Exception as exc:
             return {"success": False, "paused": True, "fail_closed": True,
                     "deadline_exits": results,
                     "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
-                    "error": f"Deadline enforcement paused: {exc}"}
+                    "error": f"Deadline enforcement paused: {exc}",
+                    "deadline_maintenance": _deadline_maintenance(
+                        paused=True, error=f"Deadline enforcement paused: {exc}")}
 
     # -- main entry ------------------------------------------------------
 
@@ -1118,8 +1270,15 @@ class ExecutionService:
         allow_shorts: bool = False,
         risk_params: Optional[dict] = None,
         current_position: Optional[str] = None,
+        can_submit: Optional[Callable[[], bool]] = None,
     ) -> dict[str, Any]:
-        """Execute under one verified account lock and one authority snapshot."""
+        """Execute under one verified account lock and one authority snapshot.
+
+        N03: ``can_submit`` (long-run callers pass their stop/window
+        authority) is re-checked inside each exposure-opening submit after
+        every blocking broker GET, immediately before the POST. ``None``
+        keeps the legacy behavior for manual/WebUI callers.
+        """
         intent_dict, err = validate_trade_intent(trade_intent)
         if err or intent_dict is None:
             return self._execute_core(
@@ -1130,6 +1289,7 @@ class ExecutionService:
                 allow_shorts=allow_shorts,
                 risk_params=risk_params,
                 current_position=current_position,
+                can_submit=can_submit,
             )
         deadlines = self.enforce_exit_deadlines()
         if not deadlines.get("success"):
@@ -1157,6 +1317,7 @@ class ExecutionService:
                 allow_shorts=allow_shorts,
                 risk_params=risk_params,
                 current_position=current_position,
+                can_submit=can_submit,
             )
         if opening_this_call:
             from .policy import entry_check
@@ -1198,6 +1359,11 @@ class ExecutionService:
                     "broker_attempted": False,
                     "broker_calls": 0,
                     "error": " ".join(reasons),
+                    "safety_reason_codes": [
+                        str(code) for code in dict.fromkeys(
+                            getattr(verdict, "reason_codes", []) or []
+                        )
+                    ],
                 }
         try:
             broker = self._broker_factory()
@@ -1335,6 +1501,7 @@ class ExecutionService:
                     allow_shorts=allow_shorts,
                     risk_params=risk_params,
                     current_position=verified_position,
+                    can_submit=can_submit,
                     _broker=broker,
                     _snapshot=snapshot,
                     _quote=quote,
@@ -1349,6 +1516,10 @@ class ExecutionService:
                         broker, expected_account_id=snapshot.account_id
                     )
                     post = self._reconcile_snapshot(broker, after)
+                    # N07: a filled protected opening without provable live
+                    # coverage must PAUSE the account on the execution path
+                    # too, not only during startup recovery.
+                    post = self._apply_protection_coverage(after, post)
                     result["snapshot_version"] = after.version
                     result["account_execution_state"] = post.state
                     result["reconciliation_reasons"] = list(post.reasons)
@@ -1409,6 +1580,7 @@ class ExecutionService:
         allow_shorts: bool = False,
         risk_params: Optional[dict] = None,
         current_position: Optional[str] = None,
+        can_submit: Optional[Callable[[], bool]] = None,
         _broker: Any = None,
         _snapshot: Optional[BrokerSnapshot] = None,
         _quote: Any = None,
@@ -1892,6 +2064,11 @@ class ExecutionService:
                                 if safety_error is not None
                                 else " ".join(getattr(verdict, "reasons", ["blocked"]))
                             ),
+                            "safety_reason_codes": [
+                                str(code) for code in dict.fromkeys(
+                                    getattr(verdict, "reason_codes", []) or []
+                                )
+                            ] if safety_error is None else [],
                         }
                     )
                     continue
@@ -1906,6 +2083,7 @@ class ExecutionService:
             submit_outcome = self._submit_one(
                 order_row=orow, spec=spec, symbol=symbol, intent_dict=intent_dict,
                 broker=_broker, _snapshot=_snapshot, _quote=_quote,
+                can_submit=can_submit,
             )
             broker_calls += int(submit_outcome.get("broker_calls", 0))
             if (
@@ -1957,6 +2135,16 @@ class ExecutionService:
             )
             if first_block.get("error"):
                 out["error"] = first_block["error"]
+        # N08: propagate stable safety reason codes (deduped, order kept) so
+        # the long-run hard-stop can distinguish circuit breakers from
+        # single-order refusals without parsing English reasons.
+        safety_codes: list[str] = []
+        for r in results:
+            for code in (r.get("safety_reason_codes") or []):
+                if code not in safety_codes:
+                    safety_codes.append(str(code))
+        if safety_codes:
+            out["safety_reason_codes"] = safety_codes
         if is_reversal_flip and deferral_results and success:
             # F05: the close phase completed; the opposite open must come
             # from a later fresh analysis against fresh broker facts. This
@@ -2098,9 +2286,47 @@ class ExecutionService:
             filled_qty=float(local.get("filled_qty") or 0),
         )
 
+    @staticmethod
+    def _recovery_crossing_block(
+        snapshot: BrokerSnapshot, symbol: str, opening_side: str,
+        authorized_close: bool,
+    ) -> Optional[str]:
+        """N02: fixed fail-closed reason when a recovery resubmit would cross
+        or reverse the FRESH broker position, else None.
+
+        Deliberately narrower than execute()'s R14 rule: recovery only blocks
+        openings that would trade THROUGH the live position (buy against a
+        fresh SHORT, sell against a fresh LONG). Same-direction increases
+        (buy onto LONG, sell onto SHORT) and canonical authorized closes
+        stay on the existing recovery path, where the current allow_shorts
+        policy, caps, entry policy and protection gates still bind them.
+        """
+        if authorized_close:
+            return None
+        position = snapshot.position(symbol)
+        if position is None or abs(position.qty) <= 1e-9:
+            return None  # fresh NEUTRAL: the opening proceeds through the other gates
+        fresh_side = "LONG" if position.qty > 0 else "SHORT"
+        if opening_side == "buy" and fresh_side == "SHORT":
+            return (
+                f"stale position transition: recovery resubmit buy for {symbol} "
+                f"would cross/reverse the fresh broker SHORT position "
+                f"({position.qty:g} shares); fresh analysis is required before "
+                "any opening order"
+            )
+        if opening_side == "sell" and fresh_side == "LONG":
+            return (
+                f"stale position transition: recovery resubmit sell for {symbol} "
+                f"would cross/reverse the fresh broker LONG position "
+                f"({position.qty:g} shares); fresh analysis is required before "
+                "any opening order"
+            )
+        return None
+
     def _resubmit_recovered(
         self, broker: Any, local: dict[str, Any], snapshot: BrokerSnapshot,
         can_submit: Optional[Callable[[], bool]] = None,
+        maintenance: Optional[dict[str, Any]] = None,
     ) -> None:
         if local.get("quantity") is None and local.get("notional") is None:
             raise BrokerAuthorityError(
@@ -2132,6 +2358,36 @@ class ExecutionService:
         if risk_reducing and not self._verified_reducing_exit(snapshot, local["symbol"],
                 [{"role": "close", "side": side, "quantity": local["quantity"]}]):
             raise BrokerAuthorityError("Recovery close conflicts with a live order")
+        # N02: a stale opening assumption must never trade THROUGH the fresh
+        # broker position. Fail closed BEFORE any mutation or protective-leg
+        # work: the row is provably POST-free, so it becomes CANCELED.
+        crossing = self._recovery_crossing_block(
+            snapshot, local["symbol"], side, authorized_close
+        )
+        if crossing:
+            self._store.transition_order(local["order_id"], "CANCELED")
+            raise StaleRecoveryPositionError(
+                f"recovery resubmit blocked for {local['symbol']}: {crossing}"
+            )
+        # N01: re-derive the CURRENT short-exposure policy from the live
+        # config — never from the persisted payload's old
+        # execution_constraints. Only a genuinely about-to-POST opening sell
+        # is gated here; canonical close buys (covering an existing short)
+        # and broker-existing adoptions never reach this block.
+        if not authorized_close and side == "sell":
+            is_crypto_symbol = "/" in str(local.get("symbol") or "").upper()
+            current_allow_shorts = bool(_get_execution_config().get("allow_shorts", False))
+            if is_crypto_symbol or not current_allow_shorts:
+                reason = (
+                    "Crypto short exposure is not supported by Alpaca spot trading"
+                    if is_crypto_symbol
+                    else "Short exposure is disabled for this session"
+                )
+                self._store.transition_order(local["order_id"], "CANCELED")
+                raise BrokerAuthorityError(
+                    f"recovery resubmit blocked by the current short-exposure "
+                    f"policy for {local['symbol']}: {reason}"
+                )
         # Phase C: exposure-increasing US-equity recovery resubmits must
         # re-run today's program-derived entry gate (trading day + validated
         # current Top20) before any broker POST. Broker-existing orders are
@@ -2237,18 +2493,60 @@ class ExecutionService:
         if verdict is not None and not verdict.allowed:
             self._store.transition_order(local["order_id"], "CANCELED")
             return
-        # R02 Layer 2: the submit-boundary guard, checked BEFORE the
-        # PENDING/UNKNOWN -> SUBMITTING transition. The caller's stop/window
-        # authority may have flipped while recovery's GET lookups ran; this is
-        # the last check before the POST. Refusal is NOT a rejection and NOT
-        # a CLEAN outcome — and it provably made no POST, so the row keeps its
-        # exact pre-transition status (PENDING stays PENDING, UNKNOWN stays
-        # UNKNOWN) instead of being masked as an ambiguous-outcome UNKNOWN:
-        # a later authorized resume re-enters the normal adopt-or-resubmit
-        # path, and this round's reconciliation reports it unresolved.
+        # R05: recovery resubmits share the same final-POST boundary proof as
+        # initial submits — one helper, one semantics. Every potentially
+        # blocking broker GET (including the market-clock GET inside
+        # dispatch revalidation) runs BEFORE the stop/window and kill-switch
+        # final checks below, so control cannot revoke authority while a
+        # GET is in flight and still let the POST through (N03/N04). The row
+        # is still pre-transition and provably POST-free here, so CANCELED
+        # is the safe terminal state for gate failures.
+        if not risk_reducing:
+            blocked = self._validate_opening_dispatch(
+                intent_dict=payload,
+                symbol=local["symbol"],
+                spec={"notional": effective_notional, "quantity": effective_quantity},
+                quote=quote,
+                snapshot=snapshot,
+                broker=broker,
+            )
+            if blocked:
+                self._store.transition_order(local["order_id"], "CANCELED")
+                raise BrokerAuthorityError(block)
+        # R02 Layer 2 / N03: the submit-boundary authority check, run AFTER
+        # every blocking GET and immediately before the PENDING/UNKNOWN ->
+        # SUBMITTING transition. Refusal is NOT a rejection and NOT a CLEAN
+        # outcome — and it provably made no POST, so the row keeps its exact
+        # pre-transition status (PENDING stays PENDING, UNKNOWN stays
+        # UNKNOWN): a later authorized resume re-enters the normal
+        # adopt-or-resubmit path, and this round's reconciliation reports it
+        # unresolved.
         if can_submit is not None and not can_submit():
             raise BrokerAuthorityError(
                 f"recovery resubmit deferred by stop/window authority: "
+                f"{local['client_order_id']} (no broker POST was made; the "
+                "order stays in its current durable state for a later "
+                "authorized resume)"
+            )
+        # N04: kill-switch final check, after the clock GET, before the POST.
+        # A kill switch that engaged while recovery's GETs ran must not let
+        # the resubmit through. The row keeps its pre-transition status and
+        # the account stays unresolved (PAUSED via the failed recovery).
+        _guard_now = None
+        try:
+            from tradingagents.safety import get_safety_guard as _gsg
+
+            _guard_now = _gsg()
+        except Exception:
+            _guard_now = None
+        if (
+            _guard_now is not None
+            and getattr(_guard_now, "enabled", True)
+            and callable(getattr(_guard_now, "kill_switch_active", None))
+            and _guard_now.kill_switch_active() is True
+        ):
+            raise BrokerAuthorityError(
+                f"recovery resubmit blocked by kill switch: "
                 f"{local['client_order_id']} (no broker POST was made; the "
                 "order stays in its current durable state for a later "
                 "authorized resume)"
@@ -2274,25 +2572,26 @@ class ExecutionService:
             raise BrokerAuthorityError(
                 f"recovery order has no valid size: {local['client_order_id']}"
             )
-        # R05: recovery resubmits share the same final-POST boundary proof as
-        # initial submits — one helper, one semantics. The row is SUBMITTING
-        # here and provably POST-free, so CANCELED is the safe terminal state.
-        if not risk_reducing:
-            blocked = self._validate_opening_dispatch(
-                intent_dict=payload,
-                symbol=local["symbol"],
-                spec={"notional": effective_notional, "quantity": effective_quantity},
-                quote=quote,
-                snapshot=snapshot,
-                broker=broker,
+        # N15: count the mutation exactly once at the broker POST boundary.
+        # Adopting an existing broker order (upstream) is never a mutation.
+        if maintenance is not None:
+            maintenance["submit_calls"] = int(maintenance.get("submit_calls") or 0) + 1
+            maintenance["submitted_symbols"] = set(
+                maintenance.get("submitted_symbols") or set()
             )
-            if blocked:
-                self._store.transition_order(current["order_id"], "CANCELED")
-                raise BrokerAuthorityError(block)
+            maintenance["submitted_symbols"].add(str(local["symbol"]).upper())
         try:
             response = broker.submit_order(request)
         except Exception as exc:
-            terminal = not _is_ambiguous_error(exc)
+            # N11: only a structured 4xx (never 408) proves the broker read
+            # and refused the POST. Any other failure after the request left
+            # — including an HTTP 200 whose body cannot be decoded/validated
+            # — leaves the outcome unprovable and must stay UNKNOWN so the
+            # original client order id keeps reconciling.
+            terminal = _definitive_rejection(exc)
+            if maintenance is not None:
+                if not terminal:
+                    maintenance["has_unknown"] = True
             self._store.transition_order(
                 current["order_id"], "REJECTED" if terminal else "UNKNOWN"
             )
@@ -2355,6 +2654,7 @@ class ExecutionService:
         broker: Any,
         snapshot: BrokerSnapshot,
         can_submit: Optional[Callable[[], bool]] = None,
+        maintenance: Optional[dict[str, Any]] = None,
     ) -> tuple[BrokerSnapshot, Any]:
         """Resolve durable nonterminal rows before permitting new exposure.
 
@@ -2372,6 +2672,10 @@ class ExecutionService:
         R02: ``can_submit`` is the caller's stop/window authority, checked
         one final time inside each resubmit immediately before its broker
         POST. ``None`` keeps the legacy behavior for non-long-run callers.
+        N15: ``maintenance`` (when supplied by the round-level
+        ``startup_recover`` call) collects the real broker mutation counts
+        for the round journal; nested internal recovery calls pass None so
+        the same mutation is never counted twice.
         """
         try:
             self._store.ensure_account_binding(snapshot.account_id)
@@ -2430,7 +2734,8 @@ class ExecutionService:
                 self._adopt_recovery_order(local, found)
                 changed = True
             elif status in {"PENDING", "UNKNOWN"}:
-                self._resubmit_recovered(broker, local, snapshot, can_submit=can_submit)
+                self._resubmit_recovered(broker, local, snapshot, can_submit=can_submit,
+                                         maintenance=maintenance)
                 changed = True
             else:
                 # SUBMITTING/PARTIAL without a broker fact is not safe to replay.
@@ -2477,7 +2782,12 @@ class ExecutionService:
         resubmit POST, closing the TOCTOU window between the caller's outer
         precheck and the broker mutation. A refusal leaves the row durably
         unresolved (no fake REJECTED, no CLEAN claim).
+
+        N15: the returned ``recovery_maintenance`` carries the real broker
+        mutation facts of THIS recovery pass (submit attempts counted at the
+        POST boundary, adoption excluded) for the round journal.
         """
+        maintenance = _new_maintenance_collector()
         try:
             broker = self._broker_factory()
             identity = capture_broker_snapshot(broker)
@@ -2486,7 +2796,7 @@ class ExecutionService:
                     broker, expected_account_id=identity.account_id
                 )
                 snapshot, result = self._recover_locked(
-                    broker, snapshot, can_submit=can_submit
+                    broker, snapshot, can_submit=can_submit, maintenance=maintenance
                 )
                 return {
                     "success": result.clean,
@@ -2494,14 +2804,23 @@ class ExecutionService:
                     "reconciliation_reasons": list(result.reasons),
                     "snapshot_version": snapshot.version,
                     "account_id": snapshot.account_id,
+                    "recovery_maintenance": _maintenance_summary(
+                        maintenance, paused=not result.clean
+                    ),
                 }
         except (BrokerAuthorityError, AccountLockBusy) as exc:
-            return {
+            out: dict[str, Any] = {
                 "success": False,
                 "account_execution_state": "PAUSED",
                 "reconciliation_reasons": [str(exc)],
                 "error": str(exc),
+                "recovery_maintenance": _maintenance_summary(
+                    maintenance, paused=True, error=str(exc)
+                ),
             }
+            if getattr(exc, "stale_position_transition", False):
+                out["stale_position_transition"] = True
+            return out
 
     def account_status(self) -> dict[str, Any]:
         """Return the last durable CLEAN/PAUSED status for operator displays."""
@@ -2689,6 +3008,7 @@ class ExecutionService:
         broker: Any = None,
         _snapshot: Optional[BrokerSnapshot] = None,
         _quote: Any = None,
+        can_submit: Optional[Callable[[], bool]] = None,
     ) -> dict[str, Any]:
         client_oid = order_row["client_order_id"]
         order_id = order_row["order_id"]
@@ -2773,6 +3093,56 @@ class ExecutionService:
                         "broker_calls": 0,
                         "error": blocked,
                     }
+            # N03: final stop/window authority check — every potentially
+            # blocking broker GET (including the market-clock GET inside
+            # dispatch revalidation) has completed by now, and the caller's
+            # authority may have flipped while they ran. The row is already
+            # SUBMITTING and provably POST-free, so a legal transition to
+            # CANCELED records the refusal; SUBMITTING is never left behind
+            # pretending the order might still be in flight.
+            if spec.get("role") == "open" and can_submit is not None and not can_submit():
+                self._store.transition_order(order_id, "CANCELED")
+                return {
+                    "ok": False,
+                    "status": "CANCELED",
+                    "pre_submit_blocked": True,
+                    "fail_closed": True,
+                    "client_order_id": client_oid,
+                    "broker_calls": 0,
+                    "error": (
+                        "execution deferred by stop/window authority at the "
+                        "final submit boundary (no broker POST was made)"
+                    ),
+                }
+            # N04: kill-switch final check — the switch may have engaged while
+            # the dispatch GETs ran. Re-read AFTER those GETs and BEFORE the
+            # POST; POST=0 and the row becomes CANCELED (proven).
+            if spec.get("role") == "open":
+                try:
+                    from tradingagents.safety import get_safety_guard as _get_guard
+
+                    _guard = _get_guard()
+                except Exception:
+                    _guard = None
+                if (
+                    _guard is not None
+                    and getattr(_guard, "enabled", True)
+                    and callable(getattr(_guard, "kill_switch_active", None))
+                    and _guard.kill_switch_active() is True
+                ):
+                    self._store.transition_order(order_id, "CANCELED")
+                    return {
+                        "ok": False,
+                        "status": "CANCELED",
+                        "pre_submit_blocked": True,
+                        "fail_closed": True,
+                        "client_order_id": client_oid,
+                        "broker_calls": 0,
+                        "error": (
+                            "kill switch engaged before the final submit "
+                            "(no broker POST was made)"
+                        ),
+                    }
             resp = None
             broker_calls = 0
             order_class: Optional[str] = None
@@ -2781,8 +3151,10 @@ class ExecutionService:
                     resp = broker.submit_order(protective_request)
                     broker_calls = 1
                 except Exception as exc:
-                    if _is_ambiguous_error(exc):
-                        # Ambiguous bracket outcome: the parent may have been
+                    if not _definitive_rejection(exc):
+                        # N11: an unprovable bracket outcome (ambiguous
+                        # transport failure, or an HTTP 200 whose body cannot
+                        # be decoded/validated) — the parent may have been
                         # accepted, so never fall through to a second POST.
                         self._store.transition_order(order_id, "UNKNOWN")
                         return {
@@ -2792,8 +3164,9 @@ class ExecutionService:
                             "broker_calls": 1,
                             "error": f"ambiguous submit outcome: {exc}",
                         }
-                    # An explicit validation/rejection is terminal. Do not
-                    # turn it into a second, less-protected POST.
+                    # An explicit structured 4xx validation/rejection is
+                    # terminal. Do not turn it into a second,
+                    # less-protected POST.
                     self._store.transition_order(order_id, "REJECTED")
                     return {
                         "ok": False,
@@ -2811,9 +3184,11 @@ class ExecutionService:
                     resp = broker.submit_order(request)
                     broker_calls = 1
                 except Exception as exc:
-                    if _is_ambiguous_error(exc):
-                        # Ambiguous POST outcome: mark UNKNOWN, never retry here.
-                        # Lookup by client_order_id (A2 orchestration) resolves later.
+                    if not _definitive_rejection(exc):
+                        # N11: ambiguous POST outcome (transport failure, or
+                        # an HTTP 200 whose body cannot be decoded/validated):
+                        # mark UNKNOWN, never retry here. Lookup by
+                        # client_order_id (A2 orchestration) resolves later.
                         self._store.transition_order(order_id, "UNKNOWN")
                         return {
                             "ok": False,
@@ -2875,27 +3250,28 @@ class ExecutionService:
                     submitted["take_profit_price"] = spec.get("take_profit_price")
             return submitted
         except Exception as exc:
-            if _is_ambiguous_error(exc):
-                # Ambiguous POST outcome: mark UNKNOWN, never retry here.
-                # Lookup by client_order_id (A2 orchestration) resolves later.
-                # Report the real POST count: the inner submit handlers account
-                # for their own attempts; this handler also serves pre-submit
-                # failures, where zero POSTs happened.
-                self._store.transition_order(order_id, "UNKNOWN")
+            # N11: only a structured HTTP 4xx (never 408) proves the broker
+            # read and refused the POST. Any other failure — including one
+            # raised after a 200 arrived but before the row could be updated
+            # — leaves the outcome unprovable and must stay UNKNOWN with the
+            # real POST count so the original client order id keeps
+            # reconciling.
+            if _definitive_rejection(exc):
+                self._store.transition_order(order_id, "REJECTED")
                 return {
                     "ok": False,
-                    "status": "UNKNOWN",
+                    "status": "REJECTED",
                     "client_order_id": client_oid,
                     "broker_calls": broker_calls,
-                    "error": f"ambiguous submit outcome: {exc}",
+                    "error": str(exc),
                 }
-            self._store.transition_order(order_id, "REJECTED")
+            self._store.transition_order(order_id, "UNKNOWN")
             return {
                 "ok": False,
-                "status": "REJECTED",
+                "status": "UNKNOWN",
                 "client_order_id": client_oid,
-                "broker_calls": 0,
-                "error": str(exc),
+                "broker_calls": broker_calls,
+                "error": f"ambiguous submit outcome: {exc}",
             }
 
     # -- liquidation (same trust boundary) ---------------------------------
@@ -3223,12 +3599,44 @@ class ExecutionService:
                 "intent_id": intent_row["intent_id"],
                 "decision_id": did,
             }
+        # N04: the kill switch may have engaged while the earlier steps of the
+        # close flow (protection cancellation, fresh GETs) ran. The final
+        # close POST must re-prove that order flow is still permitted — the
+        # standing policy is that an engaged kill switch also blocks exits.
+        # The row is SUBMITTING and provably POST-free, so CANCELED is legal.
+        try:
+            from tradingagents.safety import get_safety_guard as _get_guard
+
+            _guard = _get_guard()
+        except Exception:
+            _guard = None
+        if (
+            _guard is not None
+            and getattr(_guard, "enabled", True)
+            and callable(getattr(_guard, "kill_switch_active", None))
+            and _guard.kill_switch_active() is True
+        ):
+            self._store.transition_order(orow["order_id"], "CANCELED")
+            return {
+                "success": False,
+                "status": "CANCELED",
+                "broker_attempted": False,
+                "broker_calls": 0,
+                "error": (
+                    "kill switch engaged before the close submit "
+                    "(no broker POST was made)"
+                ),
+                "intent_id": intent_row["intent_id"],
+                "decision_id": did,
+            }
+        posted = False
         try:
             request = _build_market_request(
                 sym, _side, None, _quantity, client_oid
             )
             if request is None:
                 raise ValueError("verified close quantity is unavailable")
+            posted = True
             resp = broker.submit_order(request)
             broker_oid = getattr(resp, "id", None) or (
                 resp.get("order_id") if isinstance(resp, dict) else None
@@ -3267,7 +3675,22 @@ class ExecutionService:
                 "orders": self._store.list_orders_for_intent(intent_row["intent_id"]),
             }
         except Exception as exc:
-            if _is_ambiguous_error(exc):
+            # N11: only a structured HTTP 4xx (never 408) proves the broker
+            # read and refused the POST. A local pre-POST failure (request
+            # construction) is a terminal REJECTED with zero broker calls;
+            # anything after the request left stays UNKNOWN.
+            if not posted and not _definitive_rejection(exc):
+                self._store.transition_order(orow["order_id"], "REJECTED")
+                return {
+                    "success": False,
+                    "status": "REJECTED",
+                    "broker_attempted": False,
+                    "broker_calls": 0,
+                    "error": str(exc),
+                    "intent_id": intent_row["intent_id"],
+                    "decision_id": did,
+                }
+            if posted and not _definitive_rejection(exc):
                 self._store.transition_order(orow["order_id"], "UNKNOWN")
                 return {
                     "success": False,
@@ -3282,8 +3705,8 @@ class ExecutionService:
             return {
                 "success": False,
                 "status": "REJECTED",
-                "broker_attempted": True,
-                "broker_calls": 1,
+                "broker_attempted": posted,
+                "broker_calls": 1 if posted else 0,
                 "error": str(exc),
                 "intent_id": intent_row["intent_id"],
                 "decision_id": did,

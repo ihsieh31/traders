@@ -1646,24 +1646,37 @@ def long_run():
         raise typer.Exit(code=1)
     if active is not None:
         # Resume path: same window, recovery first, no new prompts.
+        # N12: the runner lock is acquired ONCE and held through the whole
+        # resume — the active state is RE-READ inside the lock and the fresh
+        # copy is what restart_count and the loop use. No active read, no
+        # state write, and no recovery happens outside the lock, so a
+        # concurrent runner can never be overtaken by a stale decision.
         try:
             with lr.runner_lock():
-                pass
+                fresh = lr.load_active_state()
+                if fresh is None:
+                    # The observation was finalized/cleared by another
+                    # runner while this process was starting up.
+                    console.print("[bold yellow]The observation is no longer "
+                                  "active (another runner may have finalized "
+                                  "it). Re-run the command.[/bold yellow]")
+                    raise typer.Exit(code=2)
+                active = fresh
+                active["restart_count"] = int(active.get("restart_count") or 0) + 1
+                lr.save_active_state(active)
+                long_cfg = dict(lr.default_long_run_config())
+                long_cfg.update(active.get("config") or {})
+                runtime = lr.build_runtime_config(long_cfg)
+                console.print(f"[green]Resuming observation {active['run_id']} "
+                              f"(restart #{active['restart_count']}).[/green]")
+                result = lr.run_observation_loop(active, long_cfg, runtime, lr.LongRunDeps())
         except lr.RunnerLockBusy:
+            # N12: a busy lock mutates nothing — no restart_count, no
+            # active write, no recovery.
             console.print("[bold yellow]A Phase-D runner is already active.[/bold yellow]")
             console.print(f"run_id: {active.get('run_id')}")
             console.print(f"status: {active.get('status')}")
             raise typer.Exit(code=2)
-        active["restart_count"] = int(active.get("restart_count") or 0) + 1
-        lr.save_active_state(active)
-        long_cfg = dict(lr.default_long_run_config())
-        long_cfg.update(active.get("config") or {})
-        runtime = lr.build_runtime_config(long_cfg)
-        console.print(f"[green]Resuming observation {active['run_id']} "
-                      f"(restart #{active['restart_count']}).[/green]")
-        try:
-            with lr.runner_lock():
-                result = lr.run_observation_loop(active, long_cfg, runtime, lr.LongRunDeps())
         except lr.LongRunStop as exc:
             console.print(f"[bold red]Observation stopped: {exc.code}: {exc.detail}[/bold red]")
             raise typer.Exit(code=1)
@@ -1713,44 +1726,68 @@ def long_run():
         console.print("Not authorized; no observation was created.")
         raise typer.Exit(code=1)
 
-    # Authorized: mandatory recovery gate BEFORE any observation exists.
-    # Preflight above was genuinely read-only (F06); only now may recovery
-    # resubmit a missing PENDING/UNKNOWN order. Failure exits without
-    # creating an active observation.
-    try:
-        recovery = lr.run_post_authorization_recovery(lr.LongRunDeps(), runtime)
-    except lr.LongRunStop as exc:
-        console.print(f"[bold red]Execution recovery failed: {exc.code}: {exc.detail}[/bold red]")
-        raise typer.Exit(code=1)
-    console.print("[green]Post-authorization execution recovery CLEAN.[/green]")
-
-    # Authoritative session list for the window, then create state + RUNNING.
-    eastern = lr.eastern_now()
-    start_day = eastern.date()
-    end_day = start_day + _timedelta(days=int(cfg["duration_calendar_days"]))
-    try:
-        expected = [d.isoformat() for d in lr.fetch_session_dates(start_day, end_day)]
-    except Exception as exc:
-        console.print(f"[bold red]Cannot prove observation sessions: {exc}[/bold red]")
-        raise typer.Exit(code=1)
-    state = lr.new_observation_state(cfg, expected_sessions=expected)
-    manifest = {
-        "run_id": state["run_id"], "created_at": state["started_at"],
-        "starts_at": state["started_at"], "ends_at": state["ends_at"],
-        "config": state["config"], "expected_sessions": expected,
-        "baseline_commit": state["baseline_commit"],
-    }
-    lr.atomic_write_json(lr.run_dir(state["run_id"]) / "manifest.json", manifest)
-    lr.append_jsonl(lr.run_dir(state["run_id"]) / "account_snapshots.jsonl",
-                    {"phase": "startup", **recovery["snapshot"]})
-    lr.log_event(state["run_id"], "observation_created",
-                 {"expected_sessions": len(expected)})
-    lr.save_active_state(state)
-    console.print(f"[green]Observation {state['run_id']} entering RUNNING. "
-                  "No further input is required.[/green]")
+    # Authorized: from here on, ONE runner lock covers the fresh active
+    # re-read, the mandatory recovery gate, all observation state mutation
+    # (manifest/active/restart evidence), and the observation loop itself
+    # (N12). Interactive setup, read-only preflight and the authorization
+    # question above intentionally ran WITHOUT the lock; every decision that
+    # can mutate active/run state is made again inside it, so a second
+    # runner that created an observation while this process was setting up
+    # can never be overwritten.
     try:
         with lr.runner_lock():
+            fresh_active = lr.load_active_state()
+            if fresh_active is not None:
+                console.print(
+                    "[bold yellow]Another runner already created an observation "
+                    "while this one was setting up. Nothing was modified.[/bold yellow]"
+                )
+                console.print(f"run_id: {fresh_active.get('run_id')}")
+                console.print(f"status: {fresh_active.get('status')}")
+                console.print("Re-run this command to resume that observation.")
+                raise typer.Exit(code=2)
+            # Mandatory recovery gate BEFORE any observation exists.
+            # Preflight above was genuinely read-only (F06); only now may
+            # recovery resubmit a missing PENDING/UNKNOWN order. Failure
+            # exits without creating an active observation.
+            try:
+                recovery = lr.run_post_authorization_recovery(lr.LongRunDeps(), runtime)
+            except lr.LongRunStop as exc:
+                console.print(f"[bold red]Execution recovery failed: {exc.code}: {exc.detail}[/bold red]")
+                raise typer.Exit(code=1)
+            console.print("[green]Post-authorization execution recovery CLEAN.[/green]")
+
+            # Authoritative session list for the window, then create state + RUNNING.
+            eastern = lr.eastern_now()
+            start_day = eastern.date()
+            end_day = start_day + _timedelta(days=int(cfg["duration_calendar_days"]))
+            try:
+                expected = [d.isoformat() for d in lr.fetch_session_dates(start_day, end_day)]
+            except Exception as exc:
+                console.print(f"[bold red]Cannot prove observation sessions: {exc}[/bold red]")
+                raise typer.Exit(code=1)
+            state = lr.new_observation_state(cfg, expected_sessions=expected)
+            manifest = {
+                "run_id": state["run_id"], "created_at": state["started_at"],
+                "starts_at": state["started_at"], "ends_at": state["ends_at"],
+                "config": state["config"], "expected_sessions": expected,
+                "baseline_commit": state["baseline_commit"],
+            }
+            lr.atomic_write_json(lr.run_dir(state["run_id"]) / "manifest.json", manifest)
+            lr.append_jsonl(lr.run_dir(state["run_id"]) / "account_snapshots.jsonl",
+                            {"phase": "startup", **recovery["snapshot"]})
+            lr.log_event(state["run_id"], "observation_created",
+                         {"expected_sessions": len(expected)})
+            lr.save_active_state(state)
+            console.print(f"[green]Observation {state['run_id']} entering RUNNING. "
+                          "No further input is required.[/green]")
             result = lr.run_observation_loop(state, cfg, runtime, lr.LongRunDeps())
+    except lr.RunnerLockBusy:
+        # N12: a busy lock mutates nothing — no recovery, no manifest, no
+        # active state, no restart bookkeeping.
+        console.print("[bold yellow]A Phase-D runner is already active; "
+                      "no observation was created.[/bold yellow]")
+        raise typer.Exit(code=2)
     except lr.LongRunStop as exc:
         console.print(f"[bold red]Observation stopped: {exc.code}: {exc.detail}[/bold red]")
         raise typer.Exit(code=1)

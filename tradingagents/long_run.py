@@ -1237,6 +1237,15 @@ SYMBOL_DONE = "DONE"
 SYMBOL_FAILED = "FAILED"
 
 
+def _empty_maintenance_summary() -> Dict[str, Any]:
+    """N15: the zero-mutation maintenance summary shape (recovery/deadline)."""
+    return {
+        "broker_calls": 0, "submit_calls": 0, "cancel_calls": 0,
+        "submitted_symbols": [], "has_unknown": False, "paused": False,
+        "error": "",
+    }
+
+
 def new_round_journal(
     session_date: str, symbols: List[str], *, scheduled_at: str = "",
     schedule_adjustment: str = "NONE",
@@ -1354,6 +1363,9 @@ def summarize_execution_result(result: Dict[str, Any]) -> Dict[str, Any]:
         "hold": bool(result.get("hold")),
         "deduped": bool(result.get("deduped")),
         "safety_blocked": bool(result.get("safety_blocked")),
+        "safety_reason_codes": [
+            str(code) for code in (result.get("safety_reason_codes") or [])
+        ],
         "entry_gate_blocked": bool(result.get("entry_gate_blocked")),
         "quarantined": bool(result.get("quarantined")),
         "paused": bool(result.get("paused")),
@@ -1475,10 +1487,37 @@ def run_daily_round(
     def _recovery_can_submit() -> bool:
         return _control_stop_reason(deps, ends_at) is None
 
+    # N15: a fresh round has no journal yet. Create and save the empty
+    # PENDING journal BEFORE recovery, so recovery/deadline mutation
+    # evidence survives even when screening later fails before symbols are
+    # known. An empty symbols map is never read as a completed round.
+    if journal is None:
+        journal = new_round_journal(
+            session_date, [],
+            scheduled_at=(schedule_info or {}).get("effective_at", ""),
+            schedule_adjustment=(schedule_info or {}).get("schedule_adjustment", "NONE"),
+        )
+        save_round_journal(run_id, journal)
+
+    def _record_maintenance(section: str, summary: Dict[str, Any]) -> None:
+        # N15: persist the maintenance summary immediately after the call
+        # returns and BEFORE any raise or the next step, so the evidence is
+        # on disk even when the round hard-stops right after.
+        journal.setdefault("maintenance_execution", {})[section] = summary
+        save_round_journal(run_id, journal)
+
     try:
         recovery = service.startup_recover(can_submit=_recovery_can_submit)
     except Exception as exc:
+        _record_maintenance("recovery", {
+            "broker_calls": 0, "submit_calls": 0, "cancel_calls": 0,
+            "submitted_symbols": [], "has_unknown": False, "paused": True,
+            "error": f"{type(exc).__name__}: {exc}"[:300],
+        })
         raise LongRunStop("RECOVERY_FAILED", f"startup_recover raised: {exc}")
+    _record_maintenance(
+        "recovery", recovery.get("recovery_maintenance") or _empty_maintenance_summary()
+    )
     if not recovery.get("success"):
         raise LongRunStop(
             "RECOVERY_UNSAFE",
@@ -1487,6 +1526,9 @@ def run_daily_round(
         )
 
     deadlines = service.enforce_exit_deadlines()
+    _record_maintenance(
+        "deadline", deadlines.get("deadline_maintenance") or _empty_maintenance_summary()
+    )
     if not deadlines.get("success"):
         raise LongRunStop("DEADLINE_EXIT_UNSAFE", deadlines.get("error", "Deadline exit blocked"))
 
@@ -1558,12 +1600,9 @@ def run_daily_round(
     else:
         plan = None
 
-    if journal is None:
-        journal = new_round_journal(
-            session_date, list(getattr(plan, "deep_analysis_set", []) or []),
-            scheduled_at=(schedule_info or {}).get("effective_at", ""),
-            schedule_adjustment=(schedule_info or {}).get("schedule_adjustment", "NONE"),
-        )
+    # N15: the round journal already exists (created before recovery for
+    # fresh rounds, or loaded for a resume); its symbols are filled in from
+    # the screening result below via setdefault.
     journal["status"] = "RUNNING"
     if not journal.get("started_at"):
         journal["started_at"] = utc_now_iso()
@@ -1628,6 +1667,7 @@ def run_daily_round(
                 deps, service, symbol, intent, notional,
                 run_id=run_id, session_date=session_date,
                 allow_shorts=bool(runtime.get("allow_shorts", False)),
+                can_submit=_recovery_can_submit,
             )
         except LongRunStop:
             raise
@@ -1675,6 +1715,7 @@ def run_daily_round(
                     deps, service, symbol, intent, notional,
                     run_id=run_id, session_date=session_date,
                     allow_shorts=bool(runtime.get("allow_shorts", False)),
+                    can_submit=_recovery_can_submit,
                 )
             except LongRunStop:
                 raise
@@ -1944,7 +1985,8 @@ def _screening_with_audit_scope(
     return plan
 
 
-def _execute_intent(deps, service, symbol, intent, notional, *, run_id, session_date, allow_shorts=False):
+def _execute_intent(deps, service, symbol, intent, notional, *, run_id, session_date,
+                    allow_shorts=False, can_submit: Optional[Callable[[], bool]] = None):
     from tradingagents.execution.auto_trade import execute_auto_trade
 
     return execute_auto_trade(
@@ -1956,6 +1998,9 @@ def _execute_intent(deps, service, symbol, intent, notional, *, run_id, session_
         execution_service=service,
         decision_id=f"{run_id}-{session_date}-{symbol}",
         run_id=f"{run_id}-{session_date}-{symbol}",
+        # N03: the stop/window authority rides down to the final opening-POST
+        # boundary, where it is re-checked after every blocking broker GET.
+        can_submit=can_submit,
     )
 
 
@@ -1974,7 +2019,14 @@ def _record_execution(journal, run_id, symbol, result) -> None:
 
 
 def _check_execution_hard_stop(symbol: str, result: Dict[str, Any]) -> None:
-    """Unknown/ambiguous broker state or a paused account stops everything."""
+    """Unknown/ambiguous broker state or a paused account stops everything.
+
+    N08: safety circuit breakers (daily loss, drawdown, consecutive
+    rejections) are distinguished by their stable reason codes — the
+    observation stops with SAFETY_CIRCUIT_BREAKER instead of continuing to
+    analyze/queue. Single-order refusals (notional cap, concentration) do
+    NOT stop the observation.
+    """
     if result.get("has_unknown"):
         raise LongRunStop(
             "EXECUTION_AMBIGUOUS",
@@ -1984,6 +2036,23 @@ def _check_execution_hard_stop(symbol: str, result: Dict[str, Any]) -> None:
         raise LongRunStop(
             "ACCOUNT_PAUSED",
             f"{symbol}: account paused: {result.get('error') or result.get('reconciliation_reasons')}",
+        )
+    breaker_codes: List[str] = []
+    try:
+        from tradingagents.safety.guardrails import OBSERVATION_HALT_CODES
+
+        breaker_codes = [
+            str(code)
+            for code in (result.get("safety_reason_codes") or [])
+            if str(code) in OBSERVATION_HALT_CODES and str(code) != "KILL_SWITCH"
+        ]
+    except Exception:
+        breaker_codes = []
+    if breaker_codes:
+        raise LongRunStop(
+            "SAFETY_CIRCUIT_BREAKER",
+            f"{symbol}: safety circuit breaker engaged "
+            f"({', '.join(breaker_codes)}): {result.get('error') or 'no detail'}",
         )
     try:
         from tradingagents.safety import get_safety_guard
@@ -2424,11 +2493,28 @@ def aggregate_final_report(
         previous = current
 
     # Broker execution tallies from journals (execution.db stays authoritative).
+    # N15: round maintenance (recovery/deadline) mutations are part of the
+    # same tallies — broker_calls sums per-symbol execution AND maintenance;
+    # submitted_symbols counts distinct symbols with actual submit events,
+    # never ledger-row counts (a bracket POST may create parent + 2 child rows).
     exec_tally = {"submitted_symbols": 0, "broker_calls": 0, "holds": 0,
                   "safety_blocks": 0, "entry_gate_blocks": 0,
-                  "quarantined": 0, "unknown": 0, "deduped": 0}
+                  "quarantined": 0, "unknown": 0, "deduped": 0,
+                  "maintenance_broker_calls": 0}
+    submitted_symbol_names: set = set()
     round_durations: List[Dict[str, Any]] = []
     for journal in rounds:
+        maintenance = journal.get("maintenance_execution") or {}
+        for section in ("recovery", "deadline"):
+            summary = maintenance.get(section) or {}
+            maintenance_calls = int(summary.get("broker_calls") or 0)
+            exec_tally["broker_calls"] += maintenance_calls
+            exec_tally["maintenance_broker_calls"] += maintenance_calls
+            if int(summary.get("submit_calls") or 0) > 0:
+                for name in (summary.get("submitted_symbols") or []):
+                    submitted_symbol_names.add(str(name).upper())
+            if summary.get("has_unknown"):
+                exec_tally["unknown"] += 1
         for symbol, entry in (journal.get("symbols") or {}).items():
             summary = entry.get("execution_result_summary") or {}
             if entry.get("status") != SYMBOL_DONE and not summary:
@@ -2437,7 +2523,7 @@ def aggregate_final_report(
                 exec_tally["holds"] += 1
                 continue
             if summary.get("broker_calls"):
-                exec_tally["submitted_symbols"] += 1
+                submitted_symbol_names.add(symbol)
                 exec_tally["broker_calls"] += int(summary["broker_calls"])
             elif (entry.get("signal") or "") == "HOLD":
                 exec_tally["holds"] += 1
@@ -2461,6 +2547,7 @@ def aggregate_final_report(
                 })
             except ValueError:
                 pass
+    exec_tally["submitted_symbols"] = len(submitted_symbol_names)
 
     # LLM operations from existing cost aggregation (best-effort, no estimates).
     # F13: scoped to THIS observation's exact run-log metadata so manual,
@@ -2743,6 +2830,8 @@ def render_final_markdown(report: Dict[str, Any]) -> str:
     lines += [
         f"- symbols with broker submissions: {exe['submitted_symbols']}",
         f"- broker POST calls: {exe['broker_calls']}",
+        f"- round maintenance broker calls (recovery/deadline): "
+        f"{exe.get('maintenance_broker_calls', 0)}",
         f"- HOLD / no-order outcomes: {exe['holds']}",
         f"- safety-gate refusals: {exe['safety_blocks']}",
         f"- entry-gate refusals: {exe['entry_gate_blocks']}",

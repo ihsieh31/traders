@@ -365,6 +365,29 @@ class ExecutionIntegrationTests(unittest.TestCase):
 
     def test_second_order_cannot_reuse_filled_headroom(self):
         broker = self._broker()
+        # The harness broker must model protective children so a filled
+        # program entry can prove its protection (N07 coverage invariant).
+        original_submit = broker.submit_order
+
+        def submit_with_children(request):
+            order = original_submit(request)
+            if getattr(request, "stop_loss", None) is not None:
+                order.legs = []
+                kinds = ("stop", "target") if getattr(request, "take_profit", None) else ("stop",)
+                for kind in kinds:
+                    child = SimpleNamespace(
+                        id=f"{kind}-{order.id}", client_order_id=f"{kind}-{order.id}",
+                        symbol=order.symbol, side="sell", status="new",
+                        qty=order.qty, notional=None, filled_qty="0",
+                        filled_avg_price=None, updated_at=_now(),
+                    )
+                    order.legs.append(child)
+                    broker.state["orders"].append(child)
+            return order
+
+        broker.submit_order = submit_with_children
+        broker.get_order_by_id = lambda oid, filter=None: next(
+            (o for o in broker.state["orders"] if o.id == oid), None)
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._service(tmp, broker)
             # Account: no holdings, cap 20% -> 2000 clip for a 5000 order.
@@ -378,37 +401,43 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 )
                 self.assertTrue(first["success"])
                 self.assertEqual(first["broker_calls"], 1)
-                # Simulate the fill: the broker now holds 18000 of AAPL and
-                # the first order is filled (no longer live). Keep its real
-                # client_order_id so reconciliation still matches the row.
+                # Simulate the fill: the broker now holds the true filled
+                # state (entry_check risk-clipped 18000 to 16835 -> 166
+                # shares at ~100). The first order is filled (no longer
+                # live); its protective children stay live so the N07
+                # coverage invariant holds. Keep the real client_order_id so
+                # reconciliation matches.
                 first_client_id = first["orders"][0]["client_order_id"]
-                broker.state["positions"] = [_pos_dict("AAPL", 180, 18000.0)]
-                broker.state["orders"] = [
-                    SimpleNamespace(
-                        id="broker-1", client_order_id=first_client_id,
-                        symbol="AAPL", side="buy", status="filled", qty="180",
-                        notional=None, filled_qty="180", filled_avg_price="100",
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ]
-                # R14: the second decision must be made on the fresh facts
-                # (the account now holds the 18% LONG) — a decision still
-                # claiming NEUTRAL is stale and fails closed. The builder
-                # maps current=LONG to a HOLD, so the increase intent keeps
-                # its OPEN_LONG planned action with the corrected
-                # current_position.
-                increase_intent = self._intent()
-                increase_intent["current_position"] = "LONG"
-                second = svc.execute(
-                    trade_intent=increase_intent, dollar_amount=5000.0,
-                    decision_id="dec-second-buy",
+                broker.state["positions"] = [_pos_dict("AAPL", 166, 16600.0)]
+                for row in broker.state["orders"]:
+                    if row.client_order_id == first_client_id:
+                        row.status = "filled"
+                        row.filled_qty = row.qty
+                        row.filled_avg_price = "100"
+                # N09: a same-symbol increase can no longer be expressed as a
+                # hand-crafted OPEN_LONG intent claiming current=LONG (the
+                # canonical plan for BUY+LONG is a HOLD). The durably
+                # committed second order therefore enters through recovery,
+                # which recomputes the caps from the fresh snapshot before
+                # its POST.
+                svc.store.create_outbox(
+                    decision_id="dec-second-buy", run_id=None, symbol="AAPL",
+                    action="BUY", target_position="LONG",
+                    payload_json=json.dumps(self._intent()),
+                    orders=[{"client_order_id": "ta-second-buy", "symbol": "AAPL",
+                             "side": "buy", "quantity": 49.0, "notional": None}],
                 )
-            self.assertTrue(second["success"])
-            clipped = float(second["orders"][0]["quantity"]) * 101
-            # Headroom was recomputed from the fresh snapshot: the B13
-            # acceptance example — 18% held, cap 20% -> only 2% (2000) fits.
-            self.assertLessEqual(clipped, 2000.0)
-            self.assertGreater(clipped, 1899.0)
+                second = svc.startup_recover()
+            self.assertTrue(second["success"], second)
+            self.assertEqual(len(broker.state["submit_calls"]), 2)
+            resubmitted = next(o for o in broker.state["orders"]
+                               if o.client_order_id == "ta-second-buy")
+            clipped = float(resubmitted.qty) * 101
+            # Headroom was recomputed from the fresh snapshot: 16600 held
+            # under the 20000 cap leaves 3400 — the 5000 resubmit is clipped
+            # to it (33 shares x 101) instead of reusing any stale size.
+            self.assertLessEqual(clipped, 3400.0)
+            self.assertGreater(clipped, 3300.0)
 
     def test_pending_buy_order_consumes_headroom(self):
         # A live (not yet filled) opening buy from a prior decision must be

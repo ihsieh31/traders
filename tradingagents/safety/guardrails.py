@@ -118,6 +118,27 @@ class SafetyVerdict:
     allowed: bool
     reasons: List[str] = field(default_factory=list)
     checks: Dict[str, dict] = field(default_factory=dict)
+    # N08: stable machine-readable codes so callers (long-run hard stop)
+    # can distinguish circuit breakers from single-order refusals without
+    # parsing English reason text.
+    reason_codes: List[str] = field(default_factory=list)
+
+
+# N08: the fixed code vocabulary and which codes stop a whole unattended
+# observation (vs. refusing only the current order).
+KILL_SWITCH = "KILL_SWITCH"
+MAX_TRADE_NOTIONAL = "MAX_TRADE_NOTIONAL"
+MAX_SYMBOL_CONCENTRATION = "MAX_SYMBOL_CONCENTRATION"
+DAILY_LOSS_HALT = "DAILY_LOSS_HALT"
+MAX_DRAWDOWN_HALT = "MAX_DRAWDOWN_HALT"
+CONSECUTIVE_REJECTIONS_HALT = "CONSECUTIVE_REJECTIONS_HALT"
+
+OBSERVATION_HALT_CODES = frozenset({
+    KILL_SWITCH,
+    DAILY_LOSS_HALT,
+    MAX_DRAWDOWN_HALT,
+    CONSECUTIVE_REJECTIONS_HALT,
+})
 
 
 def _today(when: Optional[str] = None) -> str:
@@ -372,6 +393,7 @@ class SafetyGuard:
             )
 
         reasons: List[str] = []
+        codes: List[str] = []
         checks: Dict[str, dict] = {}
         equity = _finite_float(account.get("equity")) if account else None
         last_equity = _finite_float(account.get("last_equity")) if account else None
@@ -382,6 +404,7 @@ class SafetyGuard:
         if self.kill_switch_active():
             reason = self.kill_switch_reason() or "engaged"
             reasons.append(f"Kill switch is engaged: {reason}")
+            codes.append(KILL_SWITCH)
             checks["kill_switch"] = {"status": "fail", "detail": reason}
         else:
             checks["kill_switch"] = {"status": "pass"}
@@ -402,6 +425,7 @@ class SafetyGuard:
                 allowed=not reasons,
                 reasons=reasons,
                 checks=checks,
+                reason_codes=codes,
             )
 
         # Pre-trade: per-order notional cap.
@@ -411,6 +435,7 @@ class SafetyGuard:
             reasons.append(
                 f"Order notional ${notional_value:,.2f} exceeds max_trade_notional_usd ${cap:,.2f}."
             )
+            codes.append(MAX_TRADE_NOTIONAL)
             checks["trade_notional"] = {"status": "fail", "notional": notional_value, "cap": cap}
         else:
             checks["trade_notional"] = {"status": "pass", "notional": notional_value, "cap": cap}
@@ -426,6 +451,7 @@ class SafetyGuard:
                         f"{symbol} exposure ${exposure:,.2f} would exceed "
                         f"{conc_pct:g}% of equity (${limit:,.2f})."
                     )
+                    codes.append(MAX_SYMBOL_CONCENTRATION)
                     checks["concentration"] = {
                         "status": "fail",
                         "exposure": exposure,
@@ -454,6 +480,7 @@ class SafetyGuard:
                     f"Daily loss circuit breaker: equity is {change_pct:+.2f}% vs "
                     f"yesterday (halt at -{halt_pct:g}%)."
                 )
+                codes.append(DAILY_LOSS_HALT)
                 checks["daily_loss"] = {"status": "fail", "change_pct": change_pct}
             else:
                 checks["daily_loss"] = {"status": "pass", "change_pct": change_pct}
@@ -485,6 +512,7 @@ class SafetyGuard:
                         f"Drawdown circuit breaker: equity is {drawdown_pct:.2f}% below the "
                         f"${hwm:,.2f} high-water mark (halt at {dd_pct:g}%)."
                     )
+                    codes.append(MAX_DRAWDOWN_HALT)
                     checks["drawdown"] = {"status": "fail", "drawdown_pct": drawdown_pct}
                 else:
                     checks["drawdown"] = {"status": "pass", "drawdown_pct": drawdown_pct}
@@ -508,11 +536,13 @@ class SafetyGuard:
                 f"{streak} consecutive orders were rejected (halt at {max_rejects}); "
                 "possible data or connectivity problem."
             )
+            codes.append(CONSECUTIVE_REJECTIONS_HALT)
             checks["rejection_streak"] = {"status": "fail", "streak": streak}
         else:
             checks["rejection_streak"] = {"status": "pass", "streak": streak}
 
-        return SafetyVerdict(allowed=not reasons, reasons=reasons, checks=checks)
+        return SafetyVerdict(allowed=not reasons, reasons=reasons, checks=checks,
+                             reason_codes=codes)
 
     # ----- status for dashboards ---------------------------------------------
 

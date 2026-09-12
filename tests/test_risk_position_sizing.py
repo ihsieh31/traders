@@ -487,16 +487,15 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         import tempfile
 
         broker = self._broker()
+        # N09: an opening payload must match the canonical plan derived from
+        # action+trading_mode+current_position, so a same-side increase can
+        # no longer be expressed by mutating current_position while keeping
+        # the OPEN_LONG planned action. The sizing gate is asserted for new
+        # risk opened while the account already carries gross exposure (a
+        # foreign-symbol holding), which the sizing engine must account for.
         broker.get_all_positions.return_value = [
-            SimpleNamespace(symbol="AAPL", qty="5", market_value="500")
+            SimpleNamespace(symbol="MSFT", qty="5", market_value="500")
         ]
-        # R14: the increase decision must carry the position facts it was
-        # made against (the account already holds the LONG); a decision still
-        # claiming NEUTRAL is stale and fails closed. The builder maps
-        # current=LONG to a HOLD, so keep the OPEN_LONG planned action and
-        # correct current_position.
-        intent = _buy_intent()
-        intent["current_position"] = "LONG"
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             AlpacaUtils, "compute_risk_sized_amount", return_value=SizingDecision(approved=True, notional=1000, stop_loss_price=96, risk_amount=40, caps_applied=[], reason="test")
         ) as snapshot, patch(
@@ -504,16 +503,15 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             return_value=self._disabled_guard(),
         ):
             result = self._service(tmp, broker).execute(
-                trade_intent=intent,
+                trade_intent=_buy_intent(),
                 dollar_amount=10_000,
                 allow_shorts=False,
                 risk_params={},
-                current_position="LONG",
             )
 
         self.assertTrue(result["success"])
         snapshot.assert_called_once()
-        # Increasing an existing position is new risk and must be sized.
+        # Opening new risk against existing gross exposure must be sized.
         self.assertFalse(result.get("hold", False))
         self.assertEqual(broker.submit_order.call_count, 1)
         self.assertTrue(result["risk_sizing"]["applied"])

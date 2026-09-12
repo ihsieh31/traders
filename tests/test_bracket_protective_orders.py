@@ -195,7 +195,17 @@ class BracketExecutionTests(unittest.TestCase):
         self.client.submit_order.assert_not_called()
 
     def test_bracket_rejection_is_terminal_without_plain_retry(self):
-        self.client.submit_order.side_effect = Exception("bracket orders not allowed")
+        # N11: a provable rejection carries a structured HTTP 4xx; a plain
+        # exception without one would be UNKNOWN and reconcile later.
+        from alpaca.common.exceptions import APIError
+        from requests import HTTPError, Response
+
+        rejection = Response()
+        rejection.status_code = 422
+        self.client.submit_order.side_effect = APIError(
+            '{"code":42210000,"message":"bracket orders not allowed"}',
+            HTTPError(response=rejection),
+        )
 
         result = self._execute(_intent(stop_loss="182.50", take_profit="195"))
 

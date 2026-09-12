@@ -669,42 +669,55 @@ class AlpacaUtils:
 
     @staticmethod
     def get_positions_data():
-        """Get current positions from Alpaca account"""
+        """Get current positions from Alpaca account.
+
+        N14: a broker/API/parse failure raises (with the exception type and
+        message only — never secrets or headers) so the WebUI renders its
+        error state. Only a real, successful response may produce output: a
+        legal empty account returns [] and is displayed as empty.
+        """
         try:
             client = get_alpaca_trading_client()
             positions = client.get_all_positions()
-            
-            # Convert positions to a list of dictionaries
-            positions_data = []
-            for position in positions:
+        except Exception as e:
+            raise RuntimeError(
+                f"Alpaca positions unavailable ({type(e).__name__}): {e}"
+            ) from e
+
+        # Convert positions to a list of dictionaries
+        positions_data = []
+        for position in positions:
+            try:
                 current_price = float(position.current_price)
                 avg_entry_price = float(position.avg_entry_price)
                 qty = float(position.qty)
                 market_value = float(position.market_value)
                 cost_basis = avg_entry_price * qty
-                
+
                 # Calculate P/L values
                 today_pl_dollars = float(position.unrealized_intraday_pl)
                 total_pl_dollars = float(position.unrealized_pl)
                 today_pl_percent = (today_pl_dollars / cost_basis) * 100 if cost_basis != 0 else 0
                 total_pl_percent = (total_pl_dollars / cost_basis) * 100 if cost_basis != 0 else 0
-                
-                positions_data.append({
-                    "Symbol": position.symbol,
-                    "Qty": qty,
-                    "Market Value": f"${market_value:.2f}",
-                    "Avg Entry": f"${avg_entry_price:.2f}",
-                    "Cost Basis": f"${cost_basis:.2f}",
-                    "Today's P/L (%)": f"{today_pl_percent:.2f}%",
-                    "Today's P/L ($)": f"${today_pl_dollars:.2f}",
-                    "Total P/L (%)": f"{total_pl_percent:.2f}%",
-                    "Total P/L ($)": f"${total_pl_dollars:.2f}"
-                })
-            
-            return positions_data
-        except Exception as e:
-            print(f"Error fetching positions: {e}")
-            return []
+            except (TypeError, ValueError, AttributeError) as e:
+                raise RuntimeError(
+                    f"Alpaca position payload for {getattr(position, 'symbol', '?')} "
+                    f"is unreadable ({type(e).__name__}): {e}"
+                ) from e
+
+            positions_data.append({
+                "Symbol": position.symbol,
+                "Qty": qty,
+                "Market Value": f"${market_value:.2f}",
+                "Avg Entry": f"${avg_entry_price:.2f}",
+                "Cost Basis": f"${cost_basis:.2f}",
+                "Today's P/L (%)": f"{today_pl_percent:.2f}%",
+                "Today's P/L ($)": f"${today_pl_dollars:.2f}",
+                "Total P/L (%)": f"{total_pl_percent:.2f}%",
+                "Total P/L ($)": f"${total_pl_dollars:.2f}"
+            })
+
+        return positions_data
 
     @staticmethod
     def get_recent_orders(page=1, page_size=7):
@@ -713,7 +726,11 @@ class AlpacaUtils:
 
     @staticmethod
     def get_recent_orders_page(page=1, page_size=5, max_orders=500):
-        """Get recent Alpaca orders and pagination metadata for the WebUI."""
+        """Get recent Alpaca orders and pagination metadata for the WebUI.
+
+        N14: a broker/API failure raises so the WebUI shows its error state;
+        a successful response with no orders is a real, different fact.
+        """
         try:
             client = get_alpaca_trading_client()
             req = GetOrdersRequest(
@@ -756,47 +773,42 @@ class AlpacaUtils:
             }
 
         except Exception as e:
-            print(f"Error fetching orders: {e}")
-            return {
-                "orders": [],
-                "page": max(1, int(page or 1)),
-                "page_size": page_size,
-                "total_orders": 0,
-                "total_pages": 1,
-                "has_more": False,
-            }
+            raise RuntimeError(
+                f"Alpaca orders unavailable ({type(e).__name__}): {e}"
+            ) from e
 
     @staticmethod
     def get_account_info():
-        """Get account information from Alpaca"""
+        """Get account information from Alpaca.
+
+        N14: a broker/API/parse failure raises instead of returning a zero
+        dict — an outage must never be displayed as $0 buying power/cash.
+        A real account that legitimately reports 0 still renders 0.
+        """
         try:
             client = get_alpaca_trading_client()
             account = client.get_account()
-            
+
             # Extract the required values
             buying_power = float(account.buying_power)
             cash = float(account.cash)
-            
+
             # Calculate daily change
             equity = float(account.equity)
             last_equity = float(account.last_equity)
-            daily_change_dollars = equity - last_equity
-            daily_change_percent = (daily_change_dollars / last_equity) * 100 if last_equity != 0 else 0
-            
-            return {
-                "buying_power": buying_power,
-                "cash": cash,
-                "daily_change_dollars": daily_change_dollars,
-                "daily_change_percent": daily_change_percent
-            }
         except Exception as e:
-            print(f"Error fetching account info: {e}")
-            return {
-                "buying_power": 0,
-                "cash": 0,
-                "daily_change_dollars": 0,
-                "daily_change_percent": 0
-            } 
+            raise RuntimeError(
+                f"Alpaca account info unavailable ({type(e).__name__}): {e}"
+            ) from e
+        daily_change_dollars = equity - last_equity
+        daily_change_percent = (daily_change_dollars / last_equity) * 100 if last_equity != 0 else 0
+
+        return {
+            "buying_power": buying_power,
+            "cash": cash,
+            "daily_change_dollars": daily_change_dollars,
+            "daily_change_percent": daily_change_percent
+        }
 
     @staticmethod
     def get_current_position_state(symbol: str, strict: bool = False) -> str:

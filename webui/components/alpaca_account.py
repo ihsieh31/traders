@@ -389,20 +389,17 @@ def render_account_summary():
         ], className="enhanced-account-summary error-state")
 
 def get_positions_data():
-    """Get positions data for table callback"""
-    try:
-        return AlpacaUtils.get_positions_data()
-    except Exception as e:
-        print(f"Error getting positions data: {e}")
-        return []
+    """Get positions data for table callbacks.
+
+    N14: failures propagate so callers can render an explicit error state
+    instead of mistaking a broker outage for an empty portfolio.
+    """
+    return AlpacaUtils.get_positions_data()
+
 
 def get_recent_orders(page=1, page_size=ORDERS_PAGE_SIZE):
-    """Get recent orders data for table callback"""
-    try:
-        return AlpacaUtils.get_recent_orders(page=page, page_size=page_size)
-    except Exception as e:
-        print(f"Error getting orders data: {e}")
-        return []
+    """Get recent orders data for table callbacks (failures propagate, N14)."""
+    return AlpacaUtils.get_recent_orders(page=page, page_size=page_size)
 
 def render_alpaca_account_section():
     """Render the complete Alpaca Paper account section (paper-only)."""

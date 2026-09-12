@@ -10,8 +10,8 @@ Timeframes: 1h, 4h, 1d (fixed set).
 from __future__ import annotations
 
 import warnings
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime, time as dtime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,6 +26,7 @@ from .ta_schema import (
     Strength,
     TechnicalBrief,
     TimeframeBrief,
+    TimeframeDataQuality,
     TrendState,
     VolatilityState,
     VolumeState,
@@ -153,47 +154,26 @@ def _obv(close: pd.Series, volume: pd.Series) -> pd.Series:
 #  Core: fetch OHLCV and compute all indicators for one timeframe
 # ═════════════════════════════════════════════════════════════════════════
 
-def compute_indicators(
+def _fetch_frame(
     symbol: str,
     curr_date: str,
     timeframe_key: str,
 ) -> Optional[pd.DataFrame]:
-    """
-    Fetch OHLCV from Alpaca and add derived indicator columns.
-
-    Returns a DataFrame with at least columns:
-        open, high, low, close, volume, vwap,
-        ema_8, ema_21, sma_50, rsi_14, macd, macds, macdh,
-        atr_14, boll_ub, boll_lb, boll_bw, obv
-    or ``None`` if data is unavailable.
-    """
+    """Raw OHLCV fetch for one timeframe (N16 split of compute_indicators)."""
     alpaca_tf, lookback_days = TIMEFRAMES[timeframe_key]
     curr_dt = pd.to_datetime(curr_date)
     start_dt = curr_dt - timedelta(days=lookback_days)
 
-    df = AlpacaUtils.get_stock_data(
+    return AlpacaUtils.get_stock_data(
         symbol=symbol,
         start_date=start_dt.strftime("%Y-%m-%d"),
         end_date=curr_date,
         timeframe=alpaca_tf,
     )
 
-    if df is None or df.empty or len(df) < 30:
-        print(f"[TA-BRIEF] Insufficient data for {symbol} @ {timeframe_key} "
-              f"(got {0 if df is None else len(df)} bars)")
-        return None
 
-    # Ensure lowercase column names
-    df.columns = [c.lower() for c in df.columns]
-
-    # Guarantee required columns
-    for col in ("open", "high", "low", "close", "volume"):
-        if col not in df.columns:
-            print(f"[TA-BRIEF] Missing column '{col}' in {symbol} @ {timeframe_key}")
-            return None
-
-    df = df.sort_values("timestamp" if "timestamp" in df.columns else df.columns[0]).reset_index(drop=True)
-
+def _compute_indicator_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add all derived indicator columns to a sorted OHLCV frame in place."""
     # ── Trend indicators ──
     df["ema_8"] = _ema(df["close"], 8)
     df["ema_21"] = _ema(df["close"], 21)
@@ -221,6 +201,45 @@ def compute_indicators(
         df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
 
     return df
+
+
+def compute_indicators(
+    symbol: str,
+    curr_date: str,
+    timeframe_key: str,
+) -> Optional[pd.DataFrame]:
+    """
+    Fetch OHLCV from Alpaca and add derived indicator columns.
+
+    Returns a DataFrame with at least columns:
+        open, high, low, close, volume, vwap,
+        ema_8, ema_21, sma_50, rsi_14, macd, macds, macdh,
+        atr_14, boll_ub, boll_lb, boll_bw, obv
+    or ``None`` if data is unavailable.
+
+    Note (N16): this helper performs NO freshness gating — it keeps the raw
+    indicator contract for direct callers. ``build_technical_brief`` owns
+    the timestamp/freshness pipeline.
+    """
+    df = _fetch_frame(symbol, curr_date, timeframe_key)
+
+    if df is None or df.empty or len(df) < 30:
+        print(f"[TA-BRIEF] Insufficient data for {symbol} @ {timeframe_key} "
+              f"(got {0 if df is None else len(df)} bars)")
+        return None
+
+    # Ensure lowercase column names
+    df.columns = [c.lower() for c in df.columns]
+
+    # Guarantee required columns
+    for col in ("open", "high", "low", "close", "volume"):
+        if col not in df.columns:
+            print(f"[TA-BRIEF] Missing column '{col}' in {symbol} @ {timeframe_key}")
+            return None
+
+    df = df.sort_values("timestamp" if "timestamp" in df.columns else df.columns[0]).reset_index(drop=True)
+
+    return _compute_indicator_columns(df)
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -789,22 +808,304 @@ def generate_signal_summary(
 
 
 # ═════════════════════════════════════════════════════════════════════════
+#  Data freshness (N16)
+# ═════════════════════════════════════════════════════════════════════════
+
+_ET = "America/New_York"
+
+# Crypto freshness windows: the last COMPLETED bar may be at most this old
+# relative to the reference time (no calendar needed — 24/7 sessions).
+_CRYPTO_TTLS = {
+    "1h": timedelta(hours=2),
+    "4h": timedelta(hours=8),
+    "1d": timedelta(hours=36),
+}
+
+
+def _reference_instant(
+    curr_date: str,
+    *,
+    now: Any = None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> pd.Timestamp:
+    """The instant freshness is judged against (N16, point-in-time safe).
+
+    A request for TODAY is judged against now. A HISTORICAL request (an ET
+    date earlier than now's ET date) is judged against that day's
+    authoritative close — 2026 "now" must never mark a 2025 historical
+    request stale. If the calendar cannot prove the historical close, the
+    fallback is that date's ET end-of-day: pure clock arithmetic, never a
+    trading-calendar claim.
+    """
+    now_dt = now if now is not None else datetime.now(timezone.utc)
+    if isinstance(now_dt, pd.Timestamp):
+        now_dt = now_dt.to_pydatetime()
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    try:
+        curr_day = date.fromisoformat(str(curr_date))
+    except (TypeError, ValueError):
+        return pd.Timestamp(now_dt).tz_convert("UTC")
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo(_ET)
+    if curr_day >= now_dt.astimezone(eastern).date():
+        return pd.Timestamp(now_dt).tz_convert("UTC")
+    try:
+        from .market_calendar import session_close_et_auth
+
+        close_t = session_close_et_auth(
+            curr_day, client=calendar_client, calendar_rows=calendar_rows
+        )
+        return pd.Timestamp(
+            datetime.combine(curr_day, close_t), tz=eastern
+        ).tz_convert("UTC")
+    except Exception:
+        end_of_day = pd.Timestamp(
+            datetime.combine(curr_day, dtime(23, 59, 59)), tz=eastern
+        ).tz_convert("UTC")
+        return end_of_day
+
+
+def _clean_frame(df: Optional[pd.DataFrame], reference: pd.Timestamp) -> Optional[pd.DataFrame]:
+    """N16: enforce parseable UTC timestamps, drop future bars, sort.
+
+    Frames without a timestamp column, rows whose timestamp cannot be
+    parsed, and bars stamped after the reference time are all rejected —
+    a frame of only-future bars is empty.
+    """
+    if df is None or df.empty:
+        return None
+    cleaned = df.copy()
+    cleaned.columns = [c.lower() for c in cleaned.columns]
+    if "timestamp" not in cleaned.columns:
+        return None
+    for col in ("open", "high", "low", "close", "volume"):
+        if col not in cleaned.columns:
+            return None
+    cleaned["timestamp"] = pd.to_datetime(cleaned["timestamp"], utc=True, errors="coerce")
+    cleaned = cleaned.dropna(subset=["timestamp"])
+    if cleaned.empty:
+        return None
+    cleaned = cleaned[cleaned["timestamp"] <= reference]
+    if cleaned.empty:
+        return None
+    return cleaned.sort_values("timestamp").reset_index(drop=True)
+
+
+def _evaluate_frame_quality(
+    *,
+    symbol: str,
+    timeframe_key: str,
+    df: Optional[pd.DataFrame],
+    reference: pd.Timestamp,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> Tuple[Optional[pd.DataFrame], TimeframeDataQuality]:
+    """Clean one raw frame, drop bars not yet completed, judge freshness.
+
+    Returns (completed_frame_or_None, quality). Bars whose completion is
+    after the reference time are removed BEFORE the last bar is judged:
+
+    - crypto: completion = bar start + timeframe duration; fresh when the
+      last completed bar is within the TTL (1h→2h, 4h→8h, 1d→36h).
+    - US equity: freshness is proven ONLY against the Alpaca authoritative
+      calendar (never a static table). Bar completion for the reference's
+      own session is min(start + duration, that session's actual close), so
+      early closes are honored. Daily: the last bar's ET session must equal
+      the most recent completed authoritative session. Intraday: the last
+      bar must belong to the current session or the immediately previous
+      one — it must never skip an expected session.
+
+    Calendar unavailability makes the timeframe ``unavailable`` (fail
+    closed), never stale-by-guess.
+    """
+    is_crypto = "/" in str(symbol or "").upper()
+    duration = {
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "1d": timedelta(days=1),
+    }[timeframe_key]
+
+    if df is None or df.empty:
+        return None, TimeframeDataQuality(
+            timeframe=timeframe_key, status="unavailable", as_of=None,
+            reason="no data returned for this timeframe",
+        )
+    cleaned = _clean_frame(df, reference)
+    if cleaned is None:
+        return None, TimeframeDataQuality(
+            timeframe=timeframe_key, status="unavailable", as_of=None,
+            reason="frame has no timestamp column, no parseable timestamps, "
+                   "or is missing OHLCV columns",
+        )
+
+    if is_crypto:
+        completion = cleaned["timestamp"] + pd.Timedelta(duration)
+        cleaned = cleaned[completion <= reference].reset_index(drop=True)
+        if cleaned.empty:
+            return None, TimeframeDataQuality(
+                timeframe=timeframe_key, status="unavailable", as_of=None,
+                reason="no completed bars as of the reference time",
+            )
+        last_ts = cleaned["timestamp"].iloc[-1]
+        as_of = last_ts.isoformat()
+        age = reference - (last_ts + pd.Timedelta(duration))
+        ttl = _CRYPTO_TTLS[timeframe_key]
+        if age <= pd.Timedelta(ttl):
+            quality = TimeframeDataQuality(
+                timeframe=timeframe_key, status="fresh", as_of=as_of, reason=None,
+            )
+        else:
+            quality = TimeframeDataQuality(
+                timeframe=timeframe_key, status="stale", as_of=as_of,
+                reason=f"last completed bar is {age} old; "
+                       f"fresh window is {ttl} for crypto {timeframe_key}",
+            )
+        return cleaned, quality
+
+    # US equity: every freshness claim needs the authoritative calendar.
+    try:
+        from zoneinfo import ZoneInfo
+
+        from .market_calendar import (
+            CalendarError,
+            current_trading_date_auth,
+            most_recent_completed_session_auth,
+            previous_trading_day_auth,
+            session_close_et_auth,
+        )
+
+        eastern = ZoneInfo(_ET)
+        completion = cleaned["timestamp"] + pd.Timedelta(duration)
+        try:
+            # Bars of the reference's own session complete no later than that
+            # session's actual close (early closes honored). When the
+            # reference day is not a session at all (weekend/holiday) no
+            # such bars exist and the plain duration applies.
+            ref_et = reference.tz_convert(eastern)
+            today = ref_et.date()
+            today_close = session_close_et_auth(
+                today, client=calendar_client, calendar_rows=calendar_rows
+            )
+            close_ts = pd.Timestamp(
+                datetime.combine(today, today_close), tz=eastern
+            ).tz_convert("UTC")
+            completion = completion.clip(upper=close_ts)
+        except CalendarError:
+            pass
+        cleaned = cleaned[completion <= reference].reset_index(drop=True)
+        if cleaned.empty:
+            return None, TimeframeDataQuality(
+                timeframe=timeframe_key, status="unavailable", as_of=None,
+                reason="no completed bars as of the reference time",
+            )
+        last_ts = cleaned["timestamp"].iloc[-1]
+        as_of = last_ts.isoformat()
+        last_session = last_ts.tz_convert(eastern).date()
+        now_arg = reference.to_pydatetime()
+        if timeframe_key == "1d":
+            completed = most_recent_completed_session_auth(
+                now=now_arg, client=calendar_client, calendar_rows=calendar_rows
+            )
+            if last_session == completed:
+                quality = TimeframeDataQuality(
+                    timeframe=timeframe_key, status="fresh", as_of=as_of, reason=None,
+                )
+            else:
+                quality = TimeframeDataQuality(
+                    timeframe=timeframe_key, status="stale", as_of=as_of,
+                    reason=f"last daily bar is from session {last_session.isoformat()} "
+                           f"but the most recent completed session is "
+                           f"{completed.isoformat()}",
+                )
+        else:
+            current = current_trading_date_auth(
+                now=now_arg, client=calendar_client, calendar_rows=calendar_rows
+            )
+            if last_session == current:
+                quality = TimeframeDataQuality(
+                    timeframe=timeframe_key, status="fresh", as_of=as_of, reason=None,
+                )
+            else:
+                previous = previous_trading_day_auth(
+                    current, client=calendar_client, calendar_rows=calendar_rows
+                )
+                if last_session == previous:
+                    quality = TimeframeDataQuality(
+                        timeframe=timeframe_key, status="fresh", as_of=as_of, reason=None,
+                    )
+                else:
+                    quality = TimeframeDataQuality(
+                        timeframe=timeframe_key, status="stale", as_of=as_of,
+                        reason=f"last {timeframe_key} bar is from session "
+                               f"{last_session.isoformat()}, which skips past the "
+                               f"previous completed session {previous.isoformat()}",
+                    )
+        return cleaned, quality
+    except Exception as exc:
+        # Calendar outage / unreadable rows: freshness cannot be proven, so
+        # the timeframe is unavailable (never analyzed with guessed rules).
+        as_of = None
+        if not cleaned.empty:
+            as_of = cleaned["timestamp"].iloc[-1].isoformat()
+        return None, TimeframeDataQuality(
+            timeframe=timeframe_key, status="unavailable", as_of=as_of,
+            reason=f"authoritative calendar unavailable ({type(exc).__name__}: {exc})",
+        )
+
+
+# ═════════════════════════════════════════════════════════════════════════
 #  Orchestrator
 # ═════════════════════════════════════════════════════════════════════════
 
-def build_technical_brief(symbol: str, curr_date: str) -> TechnicalBrief:
+def build_technical_brief(
+    symbol: str,
+    curr_date: str,
+    *,
+    now: Any = None,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> TechnicalBrief:
     """
     Master function: compute indicators for 1h / 4h / 1d, detect regimes,
     extract levels, and return a ``TechnicalBrief``.
+
+    N16: every timeframe carries a provenance entry in ``data_quality`` and
+    only FRESH timeframes enter ``timeframes``/indicator/signal computation.
+    When the daily frame is not fresh, ``raw_prices`` is all null — 0 is
+    never used to fake a market. ``now``/``calendar_client``/``calendar_rows``
+    are injectable for tests; the two-argument production call is unchanged.
     """
+    reference = _reference_instant(
+        curr_date, now=now, calendar_client=calendar_client,
+        calendar_rows=calendar_rows,
+    )
     dfs_by_tf: Dict[str, pd.DataFrame] = {}
     tf_briefs: List[TimeframeBrief] = []
+    data_quality: List[TimeframeDataQuality] = []
 
     for tf_key in ("1h", "4h", "1d"):
         print(f"[TA-BRIEF] Computing indicators for {symbol} @ {tf_key} ...")
-        df = compute_indicators(symbol, curr_date, tf_key)
-        if df is None:
+        raw = _fetch_frame(symbol, curr_date, tf_key)
+        cleaned, quality = _evaluate_frame_quality(
+            symbol=symbol, timeframe_key=tf_key, df=raw, reference=reference,
+            calendar_client=calendar_client, calendar_rows=calendar_rows,
+        )
+        if quality.status == "fresh" and (cleaned is None or len(cleaned) < 30):
+            # Fresh but too short for the 50-period indicator set.
+            quality = TimeframeDataQuality(
+                timeframe=tf_key, status="unavailable", as_of=quality.as_of,
+                reason=f"only {0 if cleaned is None else len(cleaned)} completed "
+                       "bars; indicator warmup needs at least 30",
+            )
+        data_quality.append(quality)
+        if quality.status != "fresh" or cleaned is None:
+            print(f"[TA-BRIEF]   {tf_key}: {quality.status}"
+                  f"{'' if not quality.reason else f' ({quality.reason})'}")
             continue
+        df = _compute_indicator_columns(cleaned)
         dfs_by_tf[tf_key] = df
 
         brief = TimeframeBrief(
@@ -827,10 +1128,15 @@ def build_technical_brief(symbol: str, curr_date: str) -> TechnicalBrief:
     signal = generate_signal_summary(tf_briefs, levels)
     print(f"[TA-BRIEF] Signal: {signal.setup} ({signal.confidence}) -- {signal.description}")
 
-    # Raw prices snapshot
-    raw_prices = {"last_close": 0.0, "prev_close": 0.0, "daily_change_pct": 0.0}
+    # Raw prices snapshot — only from a FRESH daily frame; never fake with 0.
+    daily_quality = next((q for q in data_quality if q.timeframe == "1d"), None)
     daily_df = dfs_by_tf.get("1d")
-    if daily_df is not None and len(daily_df) >= 2:
+    if (
+        daily_quality is not None
+        and daily_quality.status == "fresh"
+        and daily_df is not None
+        and len(daily_df) >= 2
+    ):
         last_c = float(daily_df["close"].iloc[-1])
         prev_c = float(daily_df["close"].iloc[-2])
         raw_prices = {
@@ -838,12 +1144,15 @@ def build_technical_brief(symbol: str, curr_date: str) -> TechnicalBrief:
             "prev_close": round(prev_c, 2),
             "daily_change_pct": round((last_c / prev_c - 1) * 100, 2) if prev_c else 0.0,
         }
+    else:
+        raw_prices = {"last_close": None, "prev_close": None, "daily_change_pct": None}
 
     return TechnicalBrief(
         symbol=symbol,
-        generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         timeframes=tf_briefs,
         key_levels=levels,
         signal_summary=signal,
         raw_prices=raw_prices,
+        data_quality=data_quality,
     )

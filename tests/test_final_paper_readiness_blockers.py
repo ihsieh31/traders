@@ -418,11 +418,14 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
 
             def submit_order(self, request):
                 self.submits.append(request)
-                self.qty += 9
+                # The resubmit stays LIVE (accepted, unfilled): a filled
+                # protected opening without broker-side child facts is a
+                # N07 protection gap and must pause, so this fake keeps the
+                # parent unfilled for the state-transition assertions.
                 order = NS(id=f"recovered-{len(self.submits)}",
                            client_order_id=request.client_order_id,
-                           symbol="AAPL", side="buy", qty=9, filled_qty=9,
-                           filled_avg_price=100, status="filled",
+                           symbol="AAPL", side="buy", qty=9, filled_qty=0,
+                           filled_avg_price=None, status="accepted",
                            updated_at=now(), legs=[], notional=None)
                 self.orders.append(order)
                 return order
@@ -433,8 +436,8 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
         self.assertEqual(len(broker.submits), 1, "the authorized resume POSTs")
         row = next(o for o in store.list_all_orders()
                    if o["client_order_id"].startswith("ta-"))
-        # The broker immediately filled the resubmitted parent; the durable
-        # row adopts the broker-derived terminal status via reconciliation.
+        # The broker accepted the resubmitted parent (live, unfilled); the
+        # durable row adopts the broker-derived status via reconciliation.
         self.assertIn(str(row["status"]).upper(), {"FILLED", "ACCEPTED"})
         self.assertTrue(result["success"], result)
 

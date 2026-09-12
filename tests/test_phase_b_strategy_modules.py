@@ -94,20 +94,16 @@ class KellyStaysOffTests(unittest.TestCase):
         from tradingagents.execution.service import ExecutionService
         from tests.test_phase_b_caps import ExecutionIntegrationTests
 
-        broker = ExecutionIntegrationTests._broker(
-            object(), positions=[SimpleNamespace(
-                symbol="AAPL", qty="5", market_value="500",
-                avg_entry_price=None, unrealized_pl=None, current_price=None,
-            )]
-        )
+        broker = ExecutionIntegrationTests._broker(object())
         broker.get_account = lambda: SimpleNamespace(
             id="paper-1", equity="100000", last_equity="100000", cash="80000", buying_power="160000"
         )
         intent = ExecutionIntegrationTests._intent(object(), current="NEUTRAL")
-        # R14: this opening decision is executed against an account that
-        # already holds the LONG, so the decision must carry those facts —
-        # keep the OPEN_LONG planned action and set current_position=LONG.
-        intent["current_position"] = "LONG"
+        # N09: an opening payload must match the canonical plan derived from
+        # action+trading_mode+current_position, so a same-side increase can
+        # no longer be expressed by mutating current_position while keeping
+        # the OPEN_LONG planned action. The Kelly gate is asserted on a
+        # canonical fresh opening against a flat account.
         with tempfile.TemporaryDirectory() as tmp:
             svc = ExecutionService(
                 db_path=str(Path(tmp) / "execution.db"),
