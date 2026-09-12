@@ -704,6 +704,85 @@ class Reconciler:
         )
         return result
 
+    def rebase_baseline(
+        self, snapshot: BrokerSnapshot, *, reason: str
+    ) -> ReconciliationResult:
+        """Explicit operator maintenance: accept the broker's current
+        positions as the new reconciliation baseline (e.g. a verified stock
+        split). This is a manual maintenance action, never recovery: nothing
+        in startup_recover(), the observation loop, or quarantine may call
+        it — a position mismatch must keep hard-stopping unattended runs.
+
+        Every precondition is mandatory; any failure raises
+        BrokerAuthorityError and leaves the stored baseline untouched:
+        - non-empty operator reason (acknowledged maintenance action);
+        - fresh snapshot under the existing snapshot TTL rules;
+        - an existing account state (a rebase never creates a first
+          baseline — normal reconciliation does);
+        - a normal reconcile() runs first so broker order/fill state is
+          settled per the existing rules;
+        - the ONLY remaining anomaly is exactly one reason, broker/local
+          position mismatch — no other reason is whitelisted away;
+        - no local non-terminal order (it could still fill and move the
+          position after the rebase);
+        - no live broker order of ANY namespace (manual orders included).
+        """
+        if not str(reason or "").strip():
+            raise BrokerAuthorityError(
+                "baseline rebase requires a non-empty operator reason"
+            )
+        validate_freshness(
+            snapshot.observed_at,
+            ttl_seconds=float(
+                os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
+            ),
+            label="broker snapshot",
+        )
+        if self.store.get_account_state(snapshot.account_id) is None:
+            raise BrokerAuthorityError(
+                f"no existing account state for {snapshot.account_id!r}; "
+                "rebase cannot create the first baseline"
+            )
+        current = self.reconcile(snapshot)
+        if current.state != "PAUSED" or set(current.reasons) != {
+            "broker/local position mismatch"
+        }:
+            raise BrokerAuthorityError(
+                "baseline rebase requires the only anomaly to be broker/local "
+                f"position mismatch, got state={current.state} "
+                f"reasons={list(current.reasons)}"
+            )
+        terminal_local = {"CANCELED", "FILLED", "REJECTED", "EXPIRED"}
+        for local in self.store.list_all_orders():
+            if str(local.get("status") or "").upper() not in terminal_local:
+                raise BrokerAuthorityError(
+                    "baseline rebase refused: local order "
+                    f"{local.get('client_order_id')} is still "
+                    f"{local.get('status')}"
+                )
+        for broker_order in snapshot.orders:
+            if broker_status_to_local(broker_order.status) not in terminal_local:
+                raise BrokerAuthorityError(
+                    "baseline rebase refused: broker order "
+                    f"{broker_order.client_order_id} is still live "
+                    f"({broker_order.status})"
+                )
+        broker_positions = {
+            p.symbol: p.qty for p in snapshot.positions if abs(p.qty) > 1e-9
+        }
+        self.store.rebase_account_state(
+            account_id=snapshot.account_id,
+            snapshot_version=snapshot.version,
+            baseline_positions=broker_positions,
+            baseline_at=snapshot.observed_at.isoformat(),
+        )
+        verified = self.reconcile(snapshot)
+        if not verified.clean:
+            raise BrokerAuthorityError(
+                f"baseline rebase verification failed: {verified.reasons}"
+            )
+        return verified
+
 
 def broker_status_to_local(status: Any) -> str:
     """Map a broker order status to the local state machine.

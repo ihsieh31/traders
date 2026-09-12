@@ -651,9 +651,10 @@ def mark_session_missed_after_close(
     if journal is not None:
         return False  # started earlier (even if unfinished): recovery owns it
     eastern = eastern_now(now)
-    # CalendarError propagates: the loop's calendar handling must stop the
-    # observation rather than let an unprovable close time trade a stale
-    # session (fail closed).
+    # CalendarError propagates to the loop's bounded scheduler retry (F-03);
+    # after the final attempt the observation fails closed with
+    # CALENDAR_UNAVAILABLE rather than letting an unprovable close time
+    # trade a stale session.
     close = session_close_et(
         session_date,
         calendar_client=calendar_client, calendar_rows=calendar_rows,
@@ -2068,6 +2069,53 @@ def sweep_missed_sessions(
     return missed
 
 
+# F-03: a transient calendar/scheduling failure must not scrap a 30-day
+# unattended observation. Fixed bounded retry only — no exponential backoff,
+# no failure windows, no circuit breaker. After the final attempt the failure
+# still fails closed (CALENDAR_UNAVAILABLE → STOPPED).
+SCHEDULER_RETRY_ATTEMPTS = 3
+SCHEDULER_RETRY_DELAY_SECONDS = 5.0
+
+
+def _run_scheduler_operation_with_retry(
+    operation: Callable[[], Any],
+    *,
+    deps: LongRunDeps,
+    run_id: str,
+    label: str,
+) -> Any:
+    """Run one calendar-backed scheduler operation with a bounded retry.
+
+    Only ordinary Exception is retried. LongRunStop is a deliberate
+    fail-closed/terminal verdict (corrupt state, hard safety stop) and keeps
+    its immediate-stop semantics. Persistent failure is re-raised as
+    CALENDAR_UNAVAILABLE so the observation finalizes STOPPED with evidence
+    instead of letting the exception kill the unattended process.
+    """
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, SCHEDULER_RETRY_ATTEMPTS + 1):
+        try:
+            return operation()
+        except LongRunStop:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= SCHEDULER_RETRY_ATTEMPTS:
+                break
+            log_event(run_id, "scheduler_retry", {
+                "label": label,
+                "attempt": attempt,
+                "max_attempts": SCHEDULER_RETRY_ATTEMPTS,
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+            })
+            deps.sleep_fn(SCHEDULER_RETRY_DELAY_SECONDS)
+    raise LongRunStop(
+        "CALENDAR_UNAVAILABLE",
+        f"{label} failed after {SCHEDULER_RETRY_ATTEMPTS} attempts: "
+        f"{type(last_exc).__name__}: {last_exc}",
+    )
+
+
 def run_observation_loop(
     state: Dict[str, Any],
     long_cfg: Dict[str, Any],
@@ -2101,14 +2149,18 @@ def run_observation_loop(
                                         final_status="COMPLETED")
 
         eastern = eastern_now(now)
-        try:
+
+        # F-03: sweep + due-session selection form one scheduler operation.
+        # sweep_missed_sessions() is idempotent over the persisted journal,
+        # so re-running the pair after a transient calendar error is safe.
+        def _scheduling_operation():
             sweep_missed_sessions(
                 run_id=run_id,
                 expected=[s for s in (state.get("expected_sessions") or [])
                           if s < ends_at.astimezone(eastern.tzinfo).date().isoformat()],
                 today=eastern.date().isoformat(),
             )
-            target = next_due_session(
+            return next_due_session(
                 now=now,
                 run_time_et=str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
                 started_at=datetime.fromisoformat(state["started_at"]),
@@ -2117,12 +2169,20 @@ def run_observation_loop(
                 calendar_client=deps.calendar_client,
                 calendar_rows=deps.calendar_rows,
             )
+
+        try:
+            target = _run_scheduler_operation_with_retry(
+                _scheduling_operation,
+                deps=deps, run_id=run_id,
+                label="scheduling/session proof",
+            )
         except LongRunStop as exc:
             # A hard stop at the scheduling stage (calendar authority
-            # unavailable, corrupt round journal) must end the observation
-            # exactly like a mid-round stop: STOPPED state, partial final
-            # report, active window closed. Raising past the loop would leave
-            # the window RUNNING forever with no report to inspect.
+            # unavailable after bounded retry, corrupt round journal) must
+            # end the observation exactly like a mid-round stop: STOPPED
+            # state, partial final report, active window closed. Raising
+            # past the loop would leave the window RUNNING forever with no
+            # report to inspect.
             return finalize_observation(state, long_cfg, runtime, deps,
                                         final_status="STOPPED",
                                         stop_code=exc.code, stop_detail=exc.detail)
@@ -2152,14 +2212,26 @@ def run_observation_loop(
         # close has already passed is settled MISSED here — it must not run
         # as an overdue round (stale data, after-hours entry) and, being
         # settled, can never be replayed on a later day.
-        if mark_session_missed_after_close(
-            run_id=run_id,
-            session_date=target["session_date"],
-            now=now,
-            run_time_et=str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
-            calendar_client=deps.calendar_client,
-            calendar_rows=deps.calendar_rows,
-        ):
+        # F-03: the calendar-backed close proof gets the same bounded retry;
+        # persistent failure fails closed instead of crashing the loop.
+        try:
+            settled_here = _run_scheduler_operation_with_retry(
+                lambda: mark_session_missed_after_close(
+                    run_id=run_id,
+                    session_date=target["session_date"],
+                    now=now,
+                    run_time_et=str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
+                    calendar_client=deps.calendar_client,
+                    calendar_rows=deps.calendar_rows,
+                ),
+                deps=deps, run_id=run_id,
+                label="mark_session_missed_after_close",
+            )
+        except LongRunStop as exc:
+            return finalize_observation(state, long_cfg, runtime, deps,
+                                        final_status="STOPPED",
+                                        stop_code=exc.code, stop_detail=exc.detail)
+        if settled_here:
             continue
         try:
             run_daily_round(
@@ -2181,6 +2253,23 @@ def run_observation_loop(
             return finalize_observation(state, long_cfg, runtime, deps,
                                         final_status="STOPPED",
                                         stop_code=exc.code, stop_detail=exc.detail)
+        except Exception as exc:
+            # F-04 fence: an ordinary bug/SDK failure inside a round is still
+            # observation evidence — it must finalize STOPPED (journal kept,
+            # report written) instead of escaping and leaving the window
+            # RUNNING with no report. BaseException (KeyboardInterrupt,
+            # SystemExit) deliberately propagates.
+            detail = f"{type(exc).__name__}: {exc}"[:300]
+            journal = load_round_journal(run_id, target["session_date"])
+            if journal is not None and journal.get("status") != "COMPLETED":
+                journal["status"] = "STOPPED"
+                journal["stop_reason"] = f"UNEXPECTED_ROUND_ERROR: {detail}"[:300]
+                journal["finished_at"] = utc_now_iso()
+                save_round_journal(run_id, journal)
+            return finalize_observation(state, long_cfg, runtime, deps,
+                                        final_status="STOPPED",
+                                        stop_code="UNEXPECTED_ROUND_ERROR",
+                                        stop_detail=detail)
 
 
 # ---------------------------------------------------------------------------

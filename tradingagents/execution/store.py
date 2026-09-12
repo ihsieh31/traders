@@ -930,3 +930,64 @@ class ExecutionStore:
             )
         finally:
             conn.close()
+
+    def rebase_account_state(
+        self,
+        *,
+        account_id: str,
+        snapshot_version: str,
+        baseline_positions: dict[str, float],
+        baseline_at: str,
+    ) -> None:
+        """Explicit operator replacement of the frozen reconciliation baseline.
+
+        Only this maintenance method may replace baseline_positions/
+        baseline_at/snapshot_version; normal save_account_state() keeps
+        freezing the original baseline so reconciliation keeps detecting
+        unexplained broker drift (manual trades, missed fills, bugs).
+        Requires an existing account state — the first baseline is always
+        created by normal reconciliation, never by a rebase. Identity,
+        current state, and current reasons are preserved.
+        """
+        existing = self.get_account_state(account_id)
+        if existing is None:
+            raise ValueError(
+                f"no existing account state for {account_id!r}; rebase "
+                "cannot create the first baseline"
+            )
+        now = utcnow_iso()
+        decision_id = f"account-state-{hashlib.sha256(account_id.encode()).hexdigest()[:24]}"
+        intent_id = intent_id_for_decision(decision_id)
+        payload = json.dumps(
+            {
+                "account_id": account_id,
+                "reasons": json.loads(existing["reasons_json"]),
+                "snapshot_version": snapshot_version,
+                "baseline_positions": baseline_positions,
+                "baseline_at": baseline_at,
+            },
+            sort_keys=True,
+        )
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO execution_intents
+                (intent_id,decision_id,run_id,symbol,action,target_position,payload_json,state,created_at,updated_at)
+                VALUES (?,?,NULL,'__ACCOUNT__','RECONCILE','AUTHORITY',?,?,?,?)
+                ON CONFLICT(decision_id) DO UPDATE SET
+                  state=excluded.state,
+                  payload_json=excluded.payload_json,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    intent_id,
+                    decision_id,
+                    payload,
+                    existing["state"],
+                    now,
+                    now,
+                ),
+            )
+        finally:
+            conn.close()
