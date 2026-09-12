@@ -21,7 +21,12 @@ import tradingagents.agents  # noqa: F401  (production-safe import order)
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import Runnable
 from tradingagents.execution.authority import BrokerQuote
-from tradingagents.execution.service import ExecutionService, _build_market_request
+from tradingagents.execution.service import (
+    ExecutionService,
+    RequestBuildError,
+    _build_market_request,
+    _build_protective_request,
+)
 from tradingagents.execution.store import client_order_id_for
 from tradingagents.llm_clients.retry import ProviderFailure
 
@@ -663,6 +668,28 @@ def test_R10_sdk_present_construction_failure_propagates(isolated, monkeypatch):
     monkeypatch.setattr(requests_mod, "MarketOrderRequest", ExplodingRequest)
     with pytest.raises(ValueError):
         _build_market_request("AAPL", "buy", 1000.0, None, "cid-1")
+
+
+def test_A6_protective_construction_failure_keeps_diagnostic(isolated, monkeypatch):
+    import alpaca.trading.requests as requests_mod
+
+    class ExplodingStopRequest:
+        def __init__(self, **kwargs):
+            raise ValueError("invalid stop precision")
+
+    monkeypatch.setattr(requests_mod, "StopLossRequest", ExplodingStopRequest)
+    with pytest.raises(RequestBuildError, match="invalid stop precision"):
+        _build_protective_request("AAPL", "buy", 10, 90, 120, "ta-a6")
+    assert isolated.broker.submits == []
+
+    result = isolated.service.execute(
+        trade_intent=opening(), dollar_amount=1000, can_submit=lambda: True
+    )
+    assert result["success"] is False
+    assert result["broker_calls"] == 0
+    assert result["orders"][0]["status"] == "REJECTED"
+    assert "invalid stop precision" in result["results"][0]["error"]
+    assert isolated.broker.submits == []
 
 
 def test_R10_sdk_missing_returns_dict_fallback(isolated, monkeypatch):

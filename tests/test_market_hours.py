@@ -53,6 +53,17 @@ class MarketHoursTests(unittest.TestCase):
         next_dt = get_next_market_datetime(11, start, calendar_rows=rows)
         self.assertEqual(next_dt.strftime("%Y-%m-%d %H:%M %Z"), "2025-01-07 11:00 EST")
 
+    def test_trading_day_without_close_fails_closed(self):
+        day = datetime.date(2025, 1, 6)
+        malformed = [SimpleNamespace(date=day, open="09:30", close=None)]
+
+        is_open, reason = is_market_open(
+            datetime.datetime(2025, 1, 6, 10, 0), calendar_rows=malformed
+        )
+
+        self.assertFalse(is_open)
+        self.assertIn("close unavailable", reason.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

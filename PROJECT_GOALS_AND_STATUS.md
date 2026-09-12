@@ -437,14 +437,15 @@ A6 通過後即可實作；Paper observation 不屬於 P2／P3 實作與離線�
 - [x] 2026-09-11：無人值守安全修復 F01–F10（`3c8d5b9`）＋ F02/F04/F06（`9dbc338`）＋ F02 殘餘 race（`a8c5371`：dispatch-time generation 捕捉、stale screening 不能停新 run），新增 56 項回歸（`tests/test_unattended_safety_regressions.py`）。同日 paper-readiness 獨立審查（基準 `a8c5371`）確認 16 項問題 R01–R16（11 P1、5 P2），結論「尚不可進入無人值守 Paper Trading」（`docs/paper_readiness_review_2026-09-11.md`）。
 - [x] 2026-09-11~12：R01–R16 修復——Plan-A broker/execution 安全（R03 bracket 連動取消、R04 反向 close-only、R06 `done_for_day`、R07 5xx 模糊語意、R09 保護缺口 gap-check、R14 stale-position precondition）、Plan-B runtime/scheduler/state/reporting（R01/R02/R08/R10–R13/R15/R16）、最終 blockers（R05 最後 POST 前重驗時鐘/快照/報價、R01 runtime 先於 recovery 安裝、R02 no-POST 狀態語意）、R01 WebUI runtime 完整性（本 run 的 allow_shorts/trading_mode 先於 recovery 套用）。每輪附專屬 regression 檔（`test_execution_safety_plan_a.py`、`test_runtime_reliability_plan_b.py`、`test_final_paper_readiness_blockers.py`）。
 - [x] 2026-09-12：**30 日測試前最小修復 F-01/F-03/F-04 獨立驗收 Accepted**（`48f2419`）。驗收者自寫 18 條 reproduction（驅動真實 `run_observation_loop`/`ExecutionStore`/`Reconciler`）18/18 通過：F-03 retry 恰 3 attempts/5.0s injected sleep/`LongRunStop` 不重試/耗盡 `CALENDAR_UNAVAILABLE`、F-04 普通例外 finalize `STOPPED/UNEXPECTED_ROUND_ERROR` + journal STOPPED 證據/KeyboardInterrupt 仍傳播、F-01 freeze 保留 + gated rebase 九項動態情境（mismatch-only rebase→CLEAN；PARTIAL/未解決單/live broker 單/stale snapshot/空 reason/缺 account state 全拒；baseline 不動）。邊界稽核：修改僅限 `long_run.py`/`store.py`/`authority.py`，F-02/WebUI 零觸碰、無自動 rebase、無新依賴/schema/擴充。全 suite `1060 passed, 0 failed, 257 subtests`、`git diff --check` 綠。
+- [x] 2026-09-13：剩餘問題最小修復——A2/A3/A4b/A6b/A7/A9、H-05/H-06/H-10/H-11/H-12、M-02/M-15，以及 WebUI malformed calendar close；移除兩個已確認死設定。所有 broker POST 共用最後 authority check，測試全面隔離 operator long-run state；未新增服務層或第三方依賴。
 
 ### 12.1 尚未完成 / 已知未修項
 
 - [ ] **D4：真實 30 日 Paper observation 尚未開始**（需使用者明確授權；長期無人值守前的操作觀察，屬帳戶權益變化紀錄而非 profitability proof）。
-- [ ] **F-02：recovery whitelist / `ACCEPTED` / `PARTIAL` recovery 行為**——30 日測試前修復輪依規格明確不處理；現行語意維持 fail-closed（`SUBMITTING`/`PARTIAL` 無 broker 事實即停止、不重放），設計決策留待專門輪次。
-- [ ] 一般維修清單：M2（`ScreeningDeps.llm_factory` 死欄位）、`zero_volume_baseline` 死路徑標籤、P2 遺留 `llm_retry_backoff_max_seconds` 死鍵、30 日測試前審查的 F-05~F-10（WebUI market-hours/scheduler、sector mapping、LLM token budget 預設值、guardrail NaN/HWM 等非阻擋項）。
-- [ ] 真實 Alpaca universe/bars 資料品質、真實 Screening vendor 輸出品質仍未以真實資料驗證（離線驗收僅證明 mock 鏈路與 fail-closed 語意）。
+- [ ] **需要真實 broker 資料才能決策**：F-02 recovery whitelist / `ACCEPTED` / `PARTIAL`（現行維持 fail-closed、不重放）；H-01 sector cap 需要完整可靠的 sector mapping；真實 Alpaca universe/bars 與 Screening vendor 輸出品質仍未驗證。
+- [ ] **刻意不改的非缺陷／架構債**：A2b 獨立 long-run budget key、A4a 共用 analyst tool loop、A6a request-builder injection、A8 corrupt-journal quarantine/reconciliation、M-05 risk-reducing bypass、M-07/M-09 broker typed adapter、M-08/M-16 persistent path migration。現況均有安全語意或相容性成本，沒有重現中的錯誤行為，依 ponytail 原則不預先重構。
+- [ ] **資訊不足，未猜測修改**：M-11 portfolio multiplier、M-12 legacy parser、M-13 memory concurrency、M-14 n>1；原清單沒有精確 location/reproduction，需先取得失敗樣本或測試案例。
 
 ## 13. 下一個具體行動
 
-P1（A0–A6）、P2（Phase B）、P3（Phase C）全部 Accepted；P4（Phase D）實作與審查修復完成，30 日測試前最終修復（F-01/F-03/F-04）已於 2026-09-12 fresh read-only 獨立驗收 **Accepted**。下一步：① **啟動真實 30 日 Paper observation**（`python -m cli.main long-run`，小 notional；需使用者明確授權，系統不會自行啟動交易）；② 修復輪結束後建議對 R01–R16 全矩陣做一次 fresh read-only 複驗，作為 D4 的正式驗收紀錄；③ 一般維修清單（見 12.1）。
+P1（A0–A6）、P2（Phase B）、P3（Phase C）全部 Accepted；P4（Phase D）實作、審查修復與 2026-09-13 剩餘本地可證明修復完成。下一步是先取得 12.1 所列真實 broker 樣本，再由使用者另行明確授權是否啟動 30 日 Paper observation；系統不會自行啟動交易。

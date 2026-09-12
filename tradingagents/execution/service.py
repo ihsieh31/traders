@@ -355,6 +355,36 @@ def _resolve_protective_prices(
     return out or None
 
 
+class RequestBuildError(ValueError):
+    """A locally constructed broker request failed before any POST."""
+
+
+def _submit_authority_error(
+    *, risk_reducing: bool, can_submit: Optional[Callable[[], bool]] = None
+) -> Optional[str]:
+    """Return the one final-boundary reason that forbids a broker POST."""
+    if not risk_reducing and can_submit is not None:
+        try:
+            if not can_submit():
+                return "stop/window authority revoked before the final submit"
+        except Exception as exc:
+            return f"stop/window authority unavailable before the final submit: {exc}"
+    try:
+        from tradingagents.safety import get_safety_guard
+
+        guard = get_safety_guard()
+    except Exception:
+        guard = None
+    if (
+        guard is not None
+        and getattr(guard, "enabled", True)
+        and callable(getattr(guard, "kill_switch_active", None))
+        and guard.kill_switch_active() is True
+    ):
+        return "kill switch engaged before the final submit"
+    return None
+
+
 def _build_protective_request(
     symbol: str,
     side: str,
@@ -375,7 +405,10 @@ def _build_protective_request(
             TakeProfitRequest,
         )
         from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    except (ImportError, ModuleNotFoundError):
+        return None
 
+    try:
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         stop_loss = (
             StopLossRequest(stop_price=round(float(stop_loss_price), 2))
@@ -400,8 +433,10 @@ def _build_protective_request(
             take_profit=take_profit,
             client_order_id=client_order_id,
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        raise RequestBuildError(
+            f"protective request construction failed for {symbol}: {exc}"
+        ) from exc
 
 
 def _build_market_request(symbol: str, side: str, notional, quantity, client_order_id: str):
@@ -2532,34 +2567,12 @@ class ExecutionService:
         # UNKNOWN): a later authorized resume re-enters the normal
         # adopt-or-resubmit path, and this round's reconciliation reports it
         # unresolved.
-        # ponytail: keep the policy at this existing recovery boundary; add a
-        # shared authority object only if another independent submit path appears.
-        if not risk_reducing and can_submit is not None and not can_submit():
+        authority_error = _submit_authority_error(
+            risk_reducing=risk_reducing, can_submit=can_submit
+        )
+        if authority_error:
             raise BrokerAuthorityError(
-                f"recovery resubmit deferred by stop/window authority: "
-                f"{local['client_order_id']} (no broker POST was made; the "
-                "order stays in its current durable state for a later "
-                "authorized resume)"
-            )
-        # N04: kill-switch final check, after the clock GET, before the POST.
-        # A kill switch that engaged while recovery's GETs ran must not let
-        # the resubmit through. The row keeps its pre-transition status and
-        # the account stays unresolved (PAUSED via the failed recovery).
-        _guard_now = None
-        try:
-            from tradingagents.safety import get_safety_guard as _gsg
-
-            _guard_now = _gsg()
-        except Exception:
-            _guard_now = None
-        if (
-            _guard_now is not None
-            and getattr(_guard_now, "enabled", True)
-            and callable(getattr(_guard_now, "kill_switch_active", None))
-            and _guard_now.kill_switch_active() is True
-        ):
-            raise BrokerAuthorityError(
-                f"recovery resubmit blocked by kill switch: "
+                f"recovery resubmit blocked: {authority_error}: "
                 f"{local['client_order_id']} (no broker POST was made; the "
                 "order stays in its current durable state for a later "
                 "authorized resume)"
@@ -3106,14 +3119,10 @@ class ExecutionService:
                         "broker_calls": 0,
                         "error": blocked,
                     }
-            # N03: final stop/window authority check — every potentially
-            # blocking broker GET (including the market-clock GET inside
-            # dispatch revalidation) has completed by now, and the caller's
-            # authority may have flipped while they ran. The row is already
-            # SUBMITTING and provably POST-free, so a legal transition to
-            # CANCELED records the refusal; SUBMITTING is never left behind
-            # pretending the order might still be in flight.
-            if spec.get("role") == "open" and can_submit is not None and not can_submit():
+            authority_error = _submit_authority_error(
+                risk_reducing=spec.get("role") != "open", can_submit=can_submit
+            )
+            if authority_error:
                 self._store.transition_order(order_id, "CANCELED")
                 return {
                     "ok": False,
@@ -3122,40 +3131,8 @@ class ExecutionService:
                     "fail_closed": True,
                     "client_order_id": client_oid,
                     "broker_calls": 0,
-                    "error": (
-                        "execution deferred by stop/window authority at the "
-                        "final submit boundary (no broker POST was made)"
-                    ),
+                    "error": f"{authority_error} (no broker POST was made)",
                 }
-            # N04: kill-switch final check — the switch may have engaged while
-            # the dispatch GETs ran. Re-read AFTER those GETs and BEFORE the
-            # POST; POST=0 and the row becomes CANCELED (proven).
-            if spec.get("role") == "open":
-                try:
-                    from tradingagents.safety import get_safety_guard as _get_guard
-
-                    _guard = _get_guard()
-                except Exception:
-                    _guard = None
-                if (
-                    _guard is not None
-                    and getattr(_guard, "enabled", True)
-                    and callable(getattr(_guard, "kill_switch_active", None))
-                    and _guard.kill_switch_active() is True
-                ):
-                    self._store.transition_order(order_id, "CANCELED")
-                    return {
-                        "ok": False,
-                        "status": "CANCELED",
-                        "pre_submit_blocked": True,
-                        "fail_closed": True,
-                        "client_order_id": client_oid,
-                        "broker_calls": 0,
-                        "error": (
-                            "kill switch engaged before the final submit "
-                            "(no broker POST was made)"
-                        ),
-                    }
             resp = None
             broker_calls = 0
             order_class: Optional[str] = None
@@ -3262,6 +3239,15 @@ class ExecutionService:
                     submitted["stop_loss_price"] = spec.get("stop_loss_price")
                     submitted["take_profit_price"] = spec.get("take_profit_price")
             return submitted
+        except RequestBuildError as exc:
+            self._store.transition_order(order_id, "REJECTED")
+            return {
+                "ok": False,
+                "status": "REJECTED",
+                "client_order_id": client_oid,
+                "broker_calls": 0,
+                "error": str(exc),
+            }
         except Exception as exc:
             # N11: only a structured HTTP 4xx (never 408) proves the broker
             # read and refused the POST. Any other failure — including one
@@ -3612,33 +3598,15 @@ class ExecutionService:
                 "intent_id": intent_row["intent_id"],
                 "decision_id": did,
             }
-        # N04: the kill switch may have engaged while the earlier steps of the
-        # close flow (protection cancellation, fresh GETs) ran. The final
-        # close POST must re-prove that order flow is still permitted — the
-        # standing policy is that an engaged kill switch also blocks exits.
-        # The row is SUBMITTING and provably POST-free, so CANCELED is legal.
-        try:
-            from tradingagents.safety import get_safety_guard as _get_guard
-
-            _guard = _get_guard()
-        except Exception:
-            _guard = None
-        if (
-            _guard is not None
-            and getattr(_guard, "enabled", True)
-            and callable(getattr(_guard, "kill_switch_active", None))
-            and _guard.kill_switch_active() is True
-        ):
+        authority_error = _submit_authority_error(risk_reducing=True)
+        if authority_error:
             self._store.transition_order(orow["order_id"], "CANCELED")
             return {
                 "success": False,
                 "status": "CANCELED",
                 "broker_attempted": False,
                 "broker_calls": 0,
-                "error": (
-                    "kill switch engaged before the close submit "
-                    "(no broker POST was made)"
-                ),
+                "error": f"{authority_error} (no broker POST was made)",
                 "intent_id": intent_row["intent_id"],
                 "decision_id": did,
             }

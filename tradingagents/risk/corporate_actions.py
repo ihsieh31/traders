@@ -20,8 +20,12 @@ unparseable effective time quarantines immediately.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import tempfile
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -136,18 +140,37 @@ class QuarantineStore:
         the file is the source of truth, so gate reads must not run on a
         stale in-memory copy.
         """
-        with self._lock:
+        with self._lock, self._file_lock():
             self._load()
+
+    @contextmanager
+    def _file_lock(self):
+        lock_path = self.path.with_name(f"{self.path.name}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(self._records, indent=2, sort_keys=True), encoding="utf-8"
+        fd, tmp_name = tempfile.mkstemp(
+            dir=self.path.parent, prefix=f"{self.path.name}.", suffix=".tmp"
         )
-        import os
-
-        os.replace(tmp, self.path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(self._records, handle, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     # -- operations --------------------------------------------------------
 
@@ -173,9 +196,6 @@ class QuarantineStore:
             )
         effective = _parse_timestamp(effective_at)
         observed = _parse_timestamp(observed_at) or utc_now()
-        # Fold in concurrent writers before mutating so our save does not
-        # clobber records another instance added after our last load.
-        self.reload()
         record = {
             "symbol": normalized,
             "reason": reason_key,
@@ -186,7 +206,9 @@ class QuarantineStore:
             "status": "active",
             "details": dict(details or {}),
         }
-        with self._lock:
+        # Hold one cross-process lock across reload + mutation + replace.
+        with self._lock, self._file_lock():
+            self._load()
             if not any(
                 r["reason"] == reason_key and r["status"] == "active"
                 for r in self._records.get(normalized, [])
@@ -235,8 +257,8 @@ class QuarantineStore:
             )
         current = (now or utc_now())
         released = 0
-        self.reload()
-        with self._lock:
+        with self._lock, self._file_lock():
+            self._load()
             for record in self._records.get(normalized, []):
                 if record.get("status") == "active":
                     record["status"] = "released"

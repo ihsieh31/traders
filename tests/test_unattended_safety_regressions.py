@@ -424,9 +424,11 @@ class F08AccountLockTests(unittest.TestCase):
     def test_f8_t4_default_location_is_home_scoped(self):
         env = {k: v for k, v in os.environ.items()
                if k != "TRADINGAGENTS_EXECUTION_LOCK_DIR"}
-        with patch.dict(os.environ, env, clear=True):
+        with tempfile.TemporaryDirectory() as fake_home, \
+                patch.dict(os.environ, env, clear=True), \
+                patch.object(Path, "home", return_value=Path(fake_home)):
             lock = AccountExecutionLock("/any/db/path.db", PAPER)
-            expected = Path.home() / ".tradingagents" / "execution-locks"
+            expected = Path(fake_home) / ".tradingagents" / "execution-locks"
             self.assertEqual(lock.path.parent, expected)
 
 

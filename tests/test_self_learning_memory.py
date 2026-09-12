@@ -65,6 +65,20 @@ class MemoryPersistenceTests(unittest.TestCase):
         memory = FinancialSituationMemory("cfg_test_memory", {"agent_memory_dir": ""})
         self.assertEqual(type(memory.chroma_client).__name__, "Client")
 
+    def test_store_construction_failure_disables_optional_memory(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tradingagents.agents.utils.memory.chromadb.PersistentClient",
+            side_effect=RuntimeError("store unavailable"),
+        ):
+            memory = FinancialSituationMemory(
+                "unavailable_memory",
+                {"agent_memory_dir": tmp, "memory_retrieval_enabled": True},
+            )
+
+        self.assertFalse(memory.embeddings_enabled)
+        self.assertIsNone(memory.situation_collection)
+        self.assertEqual(memory.get_memories("anything", as_of="2026-09-13"), [])
+
 
 def _write_run(root, symbol, trade_date, status="completed", final_state=None, started_at=None):
     runs_dir = Path(root) / symbol / "TradingAgentsStrategy_logs" / "runs"

@@ -129,7 +129,7 @@ python -m pytest tests/
 
 - 真實 30 日 Paper observation 尚未開始；需使用者另行明確授權——已驗收的 build 不會自行啟用交易。
 - 離線驗收只證明 mock 鏈路與 fail-closed 語義；真實 Alpaca universe/bars 資料品質、真實 Screening vendor 輸出品質尚未驗證。
-- 已知未修項：F-02（recovery whitelist / `ACCEPTED` / `PARTIAL` recovery 行為，現行語意維持 fail-closed）、少量非阻擋維修項（死設定鍵 `llm_retry_backoff_max_seconds`、`ScreeningDeps.llm_factory` 死欄位等）留待一般維修。
+- 已知未修項：F-02（recovery whitelist / `ACCEPTED` / `PARTIAL` recovery 行為，現行語意維持 fail-closed）及少量非阻擋維修項留待專門輪次。
 - Top40 權重是 research baseline，不是 validated alpha；尚未有任何統計驗證的前瞻收益證據。
 - 30 天無人值守 observation 屬於 operational observation（帳戶權益變化），不是 profitability proof：未調整入出金、可能含觀察期前既有部位、非純策略歸因，且未計入全部研究與交易成本（最終報告明列這些限制）。
 - Broker `last_equity` 作為 daily-loss baseline 仍可能受入出金影響；本版本未實作 cash-flow adjusted TWR。

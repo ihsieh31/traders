@@ -32,17 +32,25 @@ class FinancialSituationMemory:
         self.embeddings_enabled = self.client is not None
         self._warned_embedding_failure = False
         persist_dir = (config or {}).get("agent_memory_dir") or ""
-        if persist_dir:
-            # Persistent store: lessons written after outcome resolution
-            # survive process restarts, which is what makes the reflection
-            # loop cumulative instead of session-scoped.
-            Path(persist_dir).mkdir(parents=True, exist_ok=True)
-            self.chroma_client = chromadb.PersistentClient(
-                path=str(persist_dir), settings=Settings(allow_reset=True)
-            )
-        else:
-            self.chroma_client = chromadb.Client(Settings(allow_reset=True))
-        self.situation_collection = self.chroma_client.get_or_create_collection(name=name)
+        try:
+            if persist_dir:
+                # Persistent store: lessons written after outcome resolution
+                # survive process restarts, which is what makes the reflection
+                # loop cumulative instead of session-scoped.
+                Path(persist_dir).mkdir(parents=True, exist_ok=True)
+                self.chroma_client = chromadb.PersistentClient(
+                    path=str(persist_dir), settings=Settings(allow_reset=True)
+                )
+            else:
+                self.chroma_client = chromadb.Client(Settings(allow_reset=True))
+            self.situation_collection = self.chroma_client.get_or_create_collection(name=name)
+        except Exception as exc:
+            # Memory is optional intelligence; match embedding failures by
+            # disabling it without turning an analysis outage into a trade.
+            self.chroma_client = None
+            self.situation_collection = None
+            self.embeddings_enabled = False
+            print(f"[MEMORY] Store unavailable; reflection memory disabled. ({exc})")
 
     def get_embedding(self, text):
         """Get OpenAI embedding for a text"""

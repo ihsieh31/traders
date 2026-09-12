@@ -1771,7 +1771,11 @@ def long_run():
             start_day = eastern.date()
             end_day = start_day + _timedelta(days=int(cfg["duration_calendar_days"]))
             try:
-                expected = [d.isoformat() for d in lr.fetch_session_dates(start_day, end_day)]
+                expected = [
+                    d.isoformat()
+                    for d in lr.fetch_session_dates(start_day, end_day)
+                    if d < end_day
+                ]
             except Exception as exc:
                 console.print(f"[bold red]Cannot prove observation sessions: {exc}[/bold red]")
                 raise typer.Exit(code=1)

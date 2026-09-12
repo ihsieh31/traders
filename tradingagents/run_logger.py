@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import json
 import os
@@ -12,6 +13,11 @@ import uuid
 from typing import Any, Dict, Optional
 
 from tradingagents.redaction import sanitize_for_log
+
+
+_CURRENT_RUN_ID: ContextVar[Optional[str]] = ContextVar(
+    "tradingagents_current_run_id", default=None
+)
 
 
 def _utc_now_iso() -> str:
@@ -175,6 +181,7 @@ class RunAuditLogger:
 
             self._active_runs[run_id] = run_data
             self._active_runs_by_symbol[symbol] = run_id
+            _CURRENT_RUN_ID.set(run_id)
             self._flush_unlocked(run_id)
             print(f"[RUN_LOG] Started run {run_id} -> {file_path}")
             return run_id
@@ -182,6 +189,9 @@ class RunAuditLogger:
     def _resolve_run_id(self, run_id: Optional[str], symbol: Optional[str]) -> Optional[str]:
         if run_id and run_id in self._active_runs:
             return run_id
+        contextual = _CURRENT_RUN_ID.get()
+        if contextual in self._active_runs:
+            return contextual
         if symbol and symbol in self._active_runs_by_symbol:
             return self._active_runs_by_symbol[symbol]
         if len(self._active_runs) == 1:
@@ -404,6 +414,8 @@ class RunAuditLogger:
                 if self._active_runs_by_symbol[symbol_key] == resolved_run_id:
                     del self._active_runs_by_symbol[symbol_key]
             del self._active_runs[resolved_run_id]
+            if _CURRENT_RUN_ID.get() == resolved_run_id:
+                _CURRENT_RUN_ID.set(None)
 
     def _flush_unlocked(self, run_id: str) -> None:
         run_data = self._active_runs.get(run_id)

@@ -525,7 +525,7 @@ def next_due_session(
     day = start_day
     candidates: List[date] = []
     use_rows = calendar_rows is not None or calendar_client is not None
-    while day <= min(eastern.date(), end_day):
+    while day <= eastern.date() and day < end_day:
         if use_rows or True:
             trading = is_us_trading_day_auth(
                 day, client=calendar_client, calendar_rows=calendar_rows
@@ -548,7 +548,7 @@ def next_due_session(
             return info
     # Nothing overdue: find the next future session inside the window.
     day = max(eastern.date(), start_day)
-    while day <= end_day:
+    while day < end_day:
         if is_us_trading_day_auth(day, client=calendar_client, calendar_rows=calendar_rows):
             if day.isoformat() not in done:
                 info = effective_target_for_session(
@@ -608,13 +608,11 @@ def mark_session_missed_after_close(
     Returns True when the session was settled here.
     """
     journal = load_round_journal(run_id, session_date)
-    if journal is not None:
-        return False  # started earlier (even if unfinished): recovery owns it
     # H-04: read_json() returns None for both a missing file and an
     # unreadable one. A journal that exists but cannot be parsed must stop
     # as STATE_CORRUPT — writing a fresh MISSED journal over it would
     # destroy the only evidence of a session that may have started.
-    if round_path(run_id, session_date).exists():
+    if journal is None and round_path(run_id, session_date).exists():
         raise LongRunStop(
             "STATE_CORRUPT",
             f"round journal for {session_date} exists but is unreadable",
@@ -633,7 +631,24 @@ def mark_session_missed_after_close(
     )
     if eastern < close_dt:
         return False  # still inside the regular session: keep it runnable
-    new_journal = new_round_journal(session_date, [])
+    if journal is not None:
+        status = journal.get("status")
+        if status in TERMINAL_ROUND_STATUSES:
+            return False
+        if status not in ("PENDING", "RUNNING"):
+            raise LongRunStop(
+                "STATE_CORRUPT",
+                f"round journal for {session_date} has unknown status {status!r}",
+            )
+        if any(
+            entry.get("status") == SYMBOL_EXECUTING
+            for entry in (journal.get("symbols") or {}).values()
+            if isinstance(entry, dict)
+        ):
+            return False  # a broker mutation may be unresolved; recovery owns it
+        new_journal = journal
+    else:
+        new_journal = new_round_journal(session_date, [])
     new_journal["status"] = "MISSED"
     new_journal["stop_reason"] = "MISSED_SESSION_CLOSE"
     new_journal["finished_at"] = utc_now_iso()
@@ -1044,10 +1059,7 @@ def run_preflight(
     try:
         broker_factory = deps.broker_client_factory or _default_broker_client
         client = broker_factory()
-        account = client.get_account()
-        _ = float(getattr(account, "equity", 0) or 0)
-        positions = client.get_all_positions()
-        _ = list(positions or [])
+        capture_account_snapshot(client)
         checks.append({"name": "alpaca_account", "ok": True, "detail": "read-only ok"})
     except Exception as exc:
         raise LongRunStop("PREFLIGHT_FAILED", f"alpaca_account: {exc}")

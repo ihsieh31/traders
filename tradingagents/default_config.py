@@ -84,7 +84,6 @@ DEFAULT_CONFIG = {
     "llm_request_timeout_seconds": float(
         os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "120.0")
     ),
-    "llm_retry_backoff_max_seconds": 4.0,  # exponential backoff cap
     "quick_llm_params": {
         "reasoning_effort": "low",
         "text_verbosity": "low",

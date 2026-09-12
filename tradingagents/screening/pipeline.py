@@ -102,7 +102,6 @@ class ScreeningDeps:
     asset_fn: Optional[Callable[[str], Any]] = None
     quarantine_fn: Optional[Callable[[Dict[str, Any]], Callable[[str], Optional[str]]]] = None
     screening_invoke_fn: Optional[Callable[..., List[Any]]] = None
-    llm_factory: Optional[Callable[[Dict[str, Any], Dict[str, Any]], Any]] = None
     # Authoritative calendar injection (tests/fakes). When None, the real
     # Alpaca Trading Calendar API is used via config keys below.
     calendar_client: Optional[Any] = None

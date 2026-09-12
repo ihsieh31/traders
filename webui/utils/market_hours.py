@@ -124,8 +124,8 @@ def is_market_open(
         close_t = session_close_et_auth(
             target_datetime.date(), client=calendar_client, calendar_rows=calendar_rows
         )
-    except CalendarError:
-        close_t = datetime.time(16, 0)
+    except CalendarError as exc:
+        return False, f"Market close unavailable; treating as closed ({exc})"
     market_open = target_datetime.replace(hour=9, minute=30, second=0, microsecond=0)
     market_close = target_datetime.replace(
         hour=close_t.hour, minute=close_t.minute, second=0, microsecond=0

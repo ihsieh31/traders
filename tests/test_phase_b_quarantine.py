@@ -3,6 +3,7 @@ execution gating, release semantics, and honest coverage limits."""
 
 import tempfile
 import unittest
+import multiprocessing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,13 @@ from tradingagents.risk.corporate_actions import (
 )
 
 _NOW = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _quarantine_in_process(path, symbol, ready, start):
+    store = QuarantineStore(path)
+    ready.put(True)
+    start.wait(5)
+    store.quarantine(symbol=symbol, reason="split", source="process-test")
 
 
 class QuarantineStoreTests(unittest.TestCase):
@@ -75,6 +83,29 @@ class QuarantineStoreTests(unittest.TestCase):
             store.quarantine(symbol="AAPL", reason="delisting")
             # A year later the record is still active: nothing ages out.
             self.assertTrue(store.is_quarantined("AAPL", now=_NOW + timedelta(days=365)))
+
+    def test_concurrent_process_writers_do_not_clobber_each_other(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "quarantine.json")
+            ctx = multiprocessing.get_context("spawn")
+            ready = ctx.Queue()
+            start = ctx.Event()
+            workers = [
+                ctx.Process(target=_quarantine_in_process, args=(path, symbol, ready, start))
+                for symbol in ("AAPL", "MSFT")
+            ]
+            for worker in workers:
+                worker.start()
+            for _ in workers:
+                self.assertTrue(ready.get(timeout=5))
+            start.set()
+            for worker in workers:
+                worker.join(10)
+                self.assertEqual(worker.exitcode, 0)
+
+            store = QuarantineStore(path)
+            self.assertTrue(store.is_quarantined("AAPL", now=_NOW))
+            self.assertTrue(store.is_quarantined("MSFT", now=_NOW))
 
 
 class QuarantineGateTests(unittest.TestCase):

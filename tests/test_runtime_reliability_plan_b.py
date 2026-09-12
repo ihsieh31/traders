@@ -973,6 +973,40 @@ class R13ClosedSessionSchedulerTests(IsolatedLongRunTest):
         ))
         self.assertIsNone(lr.load_round_journal("run-r13c", SESSION_A))
 
+    def test_r13_unfinished_nonexecuting_journal_settles_after_close(self):
+        journal = lr.new_round_journal(SESSION_A, ["AAA"])
+        journal["status"] = "RUNNING"
+        journal["symbols"]["AAA"]["status"] = "ANALYZED"
+        lr.save_round_journal("run-r13d", journal)
+
+        settled = lr.mark_session_missed_after_close(
+            run_id="run-r13d",
+            session_date=SESSION_A,
+            now=_ET.localize(datetime(2026, 9, 8, 16, 1)).astimezone(timezone.utc),
+            run_time_et="11:00",
+            calendar_rows=_rows((SESSION_A, "16:00")),
+        )
+
+        self.assertTrue(settled)
+        self.assertEqual(lr.load_round_journal("run-r13d", SESSION_A)["status"], "MISSED")
+
+    def test_r13_executing_journal_keeps_recovery_ownership_after_close(self):
+        journal = lr.new_round_journal(SESSION_A, ["AAA"])
+        journal["status"] = "RUNNING"
+        journal["symbols"]["AAA"]["status"] = "EXECUTING"
+        lr.save_round_journal("run-r13e", journal)
+
+        settled = lr.mark_session_missed_after_close(
+            run_id="run-r13e",
+            session_date=SESSION_A,
+            now=_ET.localize(datetime(2026, 9, 8, 16, 1)).astimezone(timezone.utc),
+            run_time_et="11:00",
+            calendar_rows=_rows((SESSION_A, "16:00")),
+        )
+
+        self.assertFalse(settled)
+        self.assertEqual(lr.load_round_journal("run-r13e", SESSION_A)["status"], "RUNNING")
+
 
 class R13OpeningMarketGateTests(unittest.TestCase):
     """The execution-layer market-clock gate on the real service."""

@@ -11,6 +11,7 @@ import os
 import io
 import tempfile
 import unittest
+from contextvars import Context
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -273,6 +274,26 @@ class RunLoggerSecretTests(unittest.TestCase):
         self.assertEqual(stored["alert_telegram_chat_id"], "[REDACTED]")
         self.assertEqual(stored["alert_webhook_url"], "[REDACTED]")
         self.assertEqual(stored["daily_llm_token_budget"], 12345)
+
+    def test_concurrent_contexts_keep_same_symbol_events_on_their_own_run(self):
+        from tradingagents.run_logger import RunAuditLogger
+
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                logger = RunAuditLogger()
+                first = Context()
+                second = Context()
+                run_a = first.run(logger.start_run, "AAPL", "2026-09-13")
+                run_b = second.run(logger.start_run, "AAPL", "2026-09-13")
+                first.run(logger.log_event, "node", "AAPL", None, {"owner": "a"})
+                second.run(logger.log_event, "node", "AAPL", None, {"owner": "b"})
+
+                self.assertEqual(logger._active_runs[run_a]["events"][-1]["payload"]["owner"], "a")
+                self.assertEqual(logger._active_runs[run_b]["events"][-1]["payload"]["owner"], "b")
+            finally:
+                os.chdir(cwd)
 
 
 if __name__ == "__main__":

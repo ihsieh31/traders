@@ -584,6 +584,23 @@ class SchedulingTest(IsolatedTest):
         self.assertEqual(target["session_date"], SESSION_B)
         self.assertTrue(target["due"])
 
+    def test_observation_end_date_is_excluded(self):
+        rows = _rows((SESSION_A, "16:00"), (SESSION_B, "16:00"))
+        started = _ET.localize(datetime(2026, 9, 8, 0, 0)).astimezone(timezone.utc)
+        ends = _ET.localize(datetime(2026, 9, 9, 0, 0)).astimezone(timezone.utc)
+        now = _ET.localize(datetime(2026, 9, 8, 18, 0)).astimezone(timezone.utc)
+
+        target = lr.next_due_session(
+            now=now,
+            run_time_et="11:00",
+            started_at=started,
+            ends_at=ends,
+            settled=[SESSION_A],
+            calendar_rows=rows,
+        )
+
+        self.assertIsNone(target)
+
     def test_missed_session_recorded_not_backfilled(self):
         missed = lr.sweep_missed_sessions(
             run_id="run-x", expected=[SESSION_A, SESSION_B],
