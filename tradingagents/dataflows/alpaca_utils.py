@@ -191,6 +191,61 @@ def _apply_read_timeout(client, timeout=(3.05, 10.0)):
     return True
 
 
+# Read-only Alpaca fetches (screening universe pages, daily-bar batches,
+# holdings) ran with ZERO retry while the broker GET layer allows three:
+# a single 10s read timeout at market open killed the 30-day observation on
+# 2026-09-15 (BARS_UNAVAILABLE: HTTPSConnectionPool ... Read timed out).
+# Same doctrine, shared helper: transient transport hiccups retry a bounded
+# number of times; definitive failures fail closed on the first attempt.
+_TRANSIENT_FETCH_STATUS = {408, 409, 429}
+_TRANSIENT_FETCH_TEXT_MARKERS = (
+    "timed out",
+    "timeout",
+    "connection",
+    "reset by peer",
+    "remote disconnected",
+    "eof occurred",
+    "temporarily unavailable",
+)
+
+
+def is_transient_fetch_error(exc: BaseException) -> bool:
+    """Whether a read-only Alpaca fetch failure may be retried (bounded).
+
+    Transport shapes (timeouts, connection resets, 5xx, 429/408/409) are
+    transient. Anything with a definitive status (401/403/404, malformed
+    request) or an unrecognized shape is permanent: retrying a stalled or
+    unauthorized endpoint must not burn time on a daily scan path.
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        return status >= 500 or status in _TRANSIENT_FETCH_STATUS
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _TRANSIENT_FETCH_TEXT_MARKERS)
+
+
+def fetch_with_bounded_retry(fn, *, attempts: int = 3, sleep=None):
+    """Run a read-only callable with up to ``attempts`` tries and short backoff.
+
+    The original exception always propagates UNCHANGED (non-retryable
+    failure, or exhaustion) so callers keep their own semantic context —
+    UniverseError, BARS_UNAVAILABLE, HOLDINGS_UNAVAILABLE — and no call
+    path ever turns a fetch failure into a fallback data source.
+    """
+    import time as _time
+
+    if sleep is None:
+        sleep = _time.sleep
+    total = max(1, int(attempts))
+    for attempt in range(1, total + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            if not is_transient_fetch_error(exc) or attempt >= total:
+                raise
+            sleep(min(4.0, 0.5 * (2 ** (attempt - 1))))
+
+
 def get_alpaca_stock_client() -> StockHistoricalDataClient:
     api_key = get_api_key("alpaca_api_key", "ALPACA_API_KEY")
     api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")

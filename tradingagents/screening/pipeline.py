@@ -26,7 +26,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Callable, Dict, List, Optional
 
-from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+from tradingagents.dataflows.alpaca_utils import (
+    fetch_with_bounded_retry,
+    get_alpaca_trading_client,
+)
 from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.screening.gate import check_entry_allowed  # noqa: F401  (re-export)
 from tradingagents.screening.llm import (
@@ -115,7 +118,7 @@ class ScreeningDeps:
 def _default_positions() -> List[dict]:
     client = get_alpaca_trading_client()
     positions = []
-    for position in client.get_all_positions():
+    for position in fetch_with_bounded_retry(client.get_all_positions):
         qty = float(getattr(position, "qty", 0) or 0)
         if qty == 0:
             continue
@@ -131,7 +134,7 @@ def _default_positions() -> List[dict]:
 
 def _default_asset(symbol: str):
     client = get_alpaca_trading_client()
-    return client.get_asset(symbol)
+    return fetch_with_bounded_retry(lambda: client.get_asset(symbol))
 
 
 def _default_quarantine(config: Dict[str, Any]) -> Callable[[str], Optional[str]]:

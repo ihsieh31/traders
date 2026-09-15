@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+from tradingagents.dataflows.alpaca_utils import (
+    fetch_with_bounded_retry,
+    get_alpaca_trading_client,
+)
 
 
 class UniverseError(RuntimeError):
@@ -44,7 +47,7 @@ def _consume_pages(client: Any, request: Any) -> List[Any]:
     may paginate (page tokens): any ``next_page_token`` attribute on the
     response objects or a paged iterator is followed to exhaustion.
     """
-    raw = client.get_all_assets(request)
+    raw = fetch_with_bounded_retry(lambda: client.get_all_assets(request))
     if raw is None:
         return []
 
@@ -60,7 +63,9 @@ def _consume_pages(client: Any, request: Any) -> List[Any]:
         token = getattr(last, "next_page_token", None)
         if not token:
             break
-        page = client.get_all_assets(request, page_token=token) if _accepts_page_token(client) else []
+        page = fetch_with_bounded_retry(
+            lambda: client.get_all_assets(request, page_token=token)
+        ) if _accepts_page_token(client) else []
         items.extend(list(page or []))
     return items
 

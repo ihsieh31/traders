@@ -403,6 +403,7 @@ def fetch_daily_bars_batch(
     adjustment: str = "split",
     batch_size: int = 100,
     lookback_calendar_days: int = 130,
+    sleep_fn=None,
 ) -> Dict[str, pd.DataFrame]:
     """Fetch daily bars for all symbols in bounded chunks (default 100).
 
@@ -419,9 +420,16 @@ def fetch_daily_bars_batch(
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
 
-    from tradingagents.dataflows.alpaca_utils import get_alpaca_stock_client
+    from tradingagents.dataflows.alpaca_utils import (
+        _apply_read_timeout,
+        fetch_with_bounded_retry,
+        get_alpaca_stock_client,
+    )
 
     client: StockHistoricalDataClient = get_alpaca_stock_client()
+    # Bulk 100-symbol/130-day reads are the largest market-data payloads in
+    # the system; give this path more headroom than the default 10s bound.
+    _apply_read_timeout(client, timeout=(3.05, 20.0))
     start = pd.Timestamp(as_of - timedelta(days=lookback_calendar_days), tz="UTC")
     end = pd.Timestamp(as_of, tz="UTC") + pd.Timedelta(days=1)
     adjustment_map = {
@@ -447,9 +455,12 @@ def fetch_daily_bars_batch(
             feed=DataFeed.SIP,
         )
         try:
-            response = client.get_stock_bars(request)
+            response = fetch_with_bounded_retry(
+                lambda: client.get_stock_bars(request), sleep=sleep_fn,
+            )
         except Exception as exc:
-            # No silent IEX retry: surface SIP/entitlement context and stop.
+            # Transient hiccups retried bounded above; still no silent IEX
+            # retry: surface SIP/entitlement context and stop fail-closed.
             raise RuntimeError(f"SIP consolidated bars unavailable (feed=sip): {exc}") from exc
         batch_df = response.df.reset_index()
         for symbol in chunk:
