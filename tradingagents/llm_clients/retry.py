@@ -35,7 +35,24 @@ import os
 import time
 from typing import Any, Optional
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable
+from pydantic import ValidationError
+
+# A *successful* provider response whose content fails local schema
+# validation is NOT a provider access failure: the transport worked. These
+# exceptions must pass through the retry owner unclassified so the node
+# boundaries apply the documented semantics (free-text fallback for
+# analysts/managers/trader, strict INVALID/NO_TRADE for Risk Manager,
+# SCREENING_INVALID_OUTPUT for screening) instead of a bogus round-wide
+# ProviderFailure stop. (SWKS 2026-09-14: agnes-3.0-flash returned
+# {'recommendation': 'NEUTRAL'} without the other required ResearchPlan
+# fields; the pydantic ValidationError fell into the catch-all below and
+# was misclassified permanent, halting a healthy 30-day observation.)
+_SCHEMA_VALIDATION_ERRORS: tuple[type[BaseException], ...] = (
+    ValidationError,
+    OutputParserException,
+)
 
 # 520-527 and 530 are Cloudflare's extended origin-failure family (the
 # router gateways in front of several LLM providers emit them); they are
@@ -192,6 +209,10 @@ class _RetryController:
             try:
                 return call()
             except ProviderFailure:
+                raise
+            except _SCHEMA_VALIDATION_ERRORS:
+                # Successful response, invalid content: hand it to the node
+                # boundary untouched (see _SCHEMA_VALIDATION_ERRORS above).
                 raise
             except Exception as exc:
                 last_exc = exc
@@ -379,6 +400,11 @@ class _FailoverRetryController:
             try:
                 return call()
             except ProviderFailure:
+                raise
+            except _SCHEMA_VALIDATION_ERRORS:
+                # Successful response, invalid content: never a route or
+                # transport failure, so failover must not switch and the
+                # node boundary must see the raw validation error.
                 raise
             except Exception as exc:
                 category = classify_provider_error(exc)

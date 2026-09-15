@@ -350,7 +350,10 @@ class ScreeningRoleConfigTests(unittest.TestCase):
         from tradingagents.screening.llm import build_screening_llm
 
         with patch("tradingagents.llm_clients.roles.get_llm_api_key", return_value=""):
-            with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            # Blank the role override too: patch.dict never removes ambient
+            # keys, and a developer .env may carry SCREENING_OPENAI_API_KEY.
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "",
+                                         "SCREENING_OPENAI_API_KEY": ""}):
                 resolved = resolve_screening_config(
                     {
                         "auto_screening_enabled": True,

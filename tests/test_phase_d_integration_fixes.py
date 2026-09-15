@@ -42,10 +42,16 @@ _ROLE_KEY_VARS = (
 
 
 def _hermetic_env(**extra):
-    """Ambient env scrubbed of local-switch and credential overrides."""
+    """Ambient env scrubbed of local-switch and credential overrides.
+
+    Blank to empty string rather than pop: patch.dict only updates keys in
+    the mapping and never removes ambient ones, and an empty value is the
+    project's own "unset" form (roles.py: ``override and override.strip()``).
+    Ambient role keys from a developer .env must not leak into the probe.
+    """
     env = dict(os.environ)
     for key in _ROLE_KEY_VARS:
-        env.pop(key, None)
+        env[key] = ""
     env.update(extra)
     return env
 
