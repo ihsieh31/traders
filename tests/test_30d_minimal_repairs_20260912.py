@@ -373,6 +373,50 @@ def test_R05_tool_loop_exhaustion_yields_failed_analyst(
     assert "Tool-loop halted" not in str(out["messages"][-1].content)
 
 
+@pytest.mark.parametrize("final,expected", [
+    (AIMessage(content="Observed price evidence; remaining indicators unavailable."), "completed"),
+    (AIMessage(content=""), "failed"),
+    (tool_calls_message("get_stockstats_indicators_report"), "failed"),
+])
+def test_market_budget_gets_one_tool_free_synthesis(isolated, monkeypatch, final, expected):
+    from langchain_core.messages import ToolMessage
+
+    toolkit = _market_toolkit()
+    toolkit.get_stockstats_indicators_report.invoke = Mock(return_value="recorded IQV evidence")
+    modes, histories = [], []
+    scripted = ScriptedLLM([
+        tool_calls_message("get_stockstats_indicators_report"),
+        tool_calls_message("get_stockstats_indicators_report"),
+        final,
+    ])
+
+    class RecordingLLM(Runnable):
+        def __init__(self, bound=False):
+            self.bound = bound
+
+        def bind_tools(self, tools, **kwargs):
+            return RecordingLLM(bound=True)
+
+        def invoke(self, messages, config=None, **kwargs):
+            modes.append(self.bound)
+            histories.append(messages.to_messages())
+            return scripted.invoke(messages, config, **kwargs)
+
+    monkeypatch.setattr("tradingagents.regime.regime_report_block", lambda *a, **k: "")
+    out = _run_analyst(
+        monkeypatch, "tradingagents.agents.analysts.market_analyst.create_market_analyst",
+        RecordingLLM(), toolkit,
+        state={"company_of_interest": "IQV", "trade_date": "2026-09-16", "messages": []},
+    )
+    assert modes == [True, True, False]
+    toolkit.get_stockstats_indicators_report.invoke.assert_called_once()
+    returned = [m for m in histories[-1] if isinstance(m, ToolMessage)]
+    assert len(returned) == 1 and returned[0].content == "recorded IQV evidence"
+    assert "budget is exhausted" in histories[-1][-1].content
+    assert out["analysis_status"]["market"] == expected
+    assert out["market_report"] == (final.content if expected == "completed" else "")
+
+
 # ---------------------------------------------------------------------------
 # R3 (B-02) — unattended long-run never runs with an unlimited token budget
 # ---------------------------------------------------------------------------

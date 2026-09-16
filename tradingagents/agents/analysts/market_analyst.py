@@ -1,5 +1,5 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import time
 import json
 import re
@@ -122,6 +122,7 @@ def create_market_analyst(llm, toolkit):
             "\n3. **Actively iterate tool calls before concluding**:\n"
             "   - Run at least 3 indicator-history calls across different indicators and at least 2 timeframes when the tool supports it.\n"
             "   - Example flow: momentum (`rsi_14`/`macd`) -> trend (`close_8_ema`, `close_21_ema`, `close_50_sma`) -> volatility/risk (`atr_14`, Bollinger).\n"
+            "   - Each indicator-history call accepts one indicator; do not join indicator names with commas.\n"
             + (
                 "   - Cross-check indicator history against price levels from Alpaca.\n"
                 if alpaca_available
@@ -274,8 +275,23 @@ def create_market_analyst(llm, toolkit):
             and getattr(result, "additional_kwargs", {}).get("tool_calls")
         )
         if tool_loop_exhausted:
-            # H-08: the model still demanded tool calls after the last
-            # iteration — there is no report. An empty content keeps the
+            # One bounded synthesis attempt, with no tools bound. The last
+            # unexecuted tool request is deliberately absent from history.
+            result = (prompt | llm).invoke(messages_history + [HumanMessage(
+                content=(
+                    "The tool-call budget is exhausted. Write the final market "
+                    "analysis now using only the evidence already returned. "
+                    "Do not request more tools or invent missing data. Explicitly "
+                    "state missing evidence and failed tool requests."
+                )
+            )])
+            tool_loop_exhausted = bool(
+                getattr(result, "tool_calls", None)
+                or getattr(result, "additional_kwargs", {}).get("tool_calls")
+            )
+        if tool_loop_exhausted:
+            # H-08: the model still demanded tools after synthesis, so
+            # there is no report. An empty content keeps the
             # analyst "failed" so the coverage gate rejects the round.
             result = AIMessage(content="")
         
