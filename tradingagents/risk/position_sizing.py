@@ -103,6 +103,19 @@ class RiskParameters:
         default_factory=lambda: dict(DEFAULT_CONFIDENCE_EDGE)
     )
 
+    def __post_init__(self):
+        # D07: sizing parameters must be finite and within meaningful ranges
+        # before any notional math runs on them.
+        for name in (
+            "risk_per_trade_pct", "kelly_fraction", "atr_stop_multiplier",
+            "max_position_pct", "max_total_exposure_pct", "min_notional",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"Invalid risk parameter {name}: {value!r}")
+        if self.atr_period < 1:
+            raise ValueError(f"Invalid risk parameter atr_period: {self.atr_period!r}")
+
     @classmethod
     def from_dict(cls, overrides: Optional[dict]) -> "RiskParameters":
         """Build parameters from a config dict, ignoring unknown keys."""
@@ -166,9 +179,20 @@ class PositionSizer:
             equity = float(equity)
             price = float(price)
             requested_notional = float(requested_notional)
-            current_gross_exposure = max(0.0, float(current_gross_exposure or 0.0))
+            current_gross_exposure = float(current_gross_exposure or 0.0)
         except (TypeError, ValueError):
             return _rejection("Invalid numeric inputs for position sizing.")
+
+        # D07: unknown book state must fail closed — a NaN gross exposure
+        # silently coerced to 0 would size against an imaginary empty book.
+        if not math.isfinite(current_gross_exposure) or current_gross_exposure < 0.0:
+            return _rejection(
+                f"Unknown or invalid gross exposure: {current_gross_exposure}."
+            )
+        # D07: a non-finite ATR is not "no ATR" — it is unreadable data;
+        # the default-stop fallback is only for a genuinely absent ATR.
+        if atr is not None and not math.isfinite(atr):
+            return _rejection(f"Invalid ATR: {atr}.")
 
         if not math.isfinite(equity) or equity <= 0.0:
             return _rejection(f"Invalid account equity: {equity}.")
