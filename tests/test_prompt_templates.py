@@ -336,3 +336,17 @@ class PromptTemplateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_l08_conervative_prompt_matches_executor_close_capability():
+    """L08: the conservative analyst prompt must not recommend partial
+    profit-taking or trailing-stop guidance — the executor only supports
+    full position closes with no trailing replacement."""
+    from tradingagents.prompts import load_prompt
+
+    template = load_prompt("risk/conservative_context")
+    lowered = template.lower()
+    assert "partial" not in lowered
+    assert "50%" not in lowered
+    assert "trailing" not in lowered
+    assert "full" in lowered, "the capability-true full-close guidance must be present"
