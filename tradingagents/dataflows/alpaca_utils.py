@@ -1,3 +1,4 @@
+import re
 # alpaca_utils.py
 
 import math
@@ -444,19 +445,22 @@ def _yfinance_fallback_data(
     if not config.get("data_fallback_enabled", False):
         return pd.DataFrame()
 
-    tf_text = str(timeframe).lower()
-    # D02: only pass through intervals Yahoo actually supports. Mapping a
-    # 4-hour request to 1h bars would silently change bar granularity under
-    # the caller's expectation — unsupported intervals return no data
-    # (fail closed) instead.
-    if "hour" in tf_text:
-        if "4" in tf_text:
-            return pd.DataFrame()
-        interval = "1h"
-    elif "min" in tf_text:
-        return pd.DataFrame()
+    # Normalize supported aliases and SDK objects before checking the exact
+    # granularity. Unknown intervals must never fall through to daily bars.
+    if isinstance(timeframe, TimeFrame):
+        tf = timeframe
     else:
-        interval = "1d"
+        tf_text = str(timeframe).strip().lower()
+        if not re.fullmatch(r"\d+(?:hour|h|day|d|min)", tf_text):
+            return pd.DataFrame()
+        try:
+            tf = _parse_timeframe(tf_text)
+        except (TypeError, ValueError):
+            return pd.DataFrame()
+    intervals = {(1, TimeFrameUnit.Hour): "1h", (1, TimeFrameUnit.Day): "1d"}
+    interval = intervals.get((tf.amount, tf.unit))
+    if interval is None:
+        return pd.DataFrame()
 
     try:
         import yfinance as yf
@@ -598,7 +602,10 @@ class AlpacaUtils:
         """
         # normalize dates
         start = pd.to_datetime(start_date)
-        end = pd.to_datetime(end_date) + timedelta(days=1) if end_date else None
+        end = pd.to_datetime(end_date) if end_date is not None else None
+        # Date-only strings include that day; a supplied instant is an exact cutoff.
+        if isinstance(end_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
+            end += timedelta(days=1)
 
         tf = _parse_timeframe(timeframe)
 
@@ -703,10 +710,10 @@ class AlpacaUtils:
             
         start_dt = curr_dt - pd.Timedelta(days=look_back_days)
         
-        # Don't pass end_date to avoid subscription limitations
         return AlpacaUtils.get_stock_data(
             symbol=symbol,
             start_date=start_dt.strftime("%Y-%m-%d"),
+            end_date=curr_date or curr_dt.strftime("%Y-%m-%d"),
             timeframe=timeframe
         ) 
 

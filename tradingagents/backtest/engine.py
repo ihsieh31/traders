@@ -219,6 +219,14 @@ def normalize_price_frame(prices: pd.DataFrame) -> pd.DataFrame:
         frame["volume"] = 0.0
 
     frame = frame[["open", "high", "low", "close", "volume"]].astype(float)
+    import numpy as np
+    if frame.index.isna().any() or not np.isfinite(frame.to_numpy()).all():
+        raise ValueError("Backtest data contains invalid timestamps or non-finite OHLCV.")
+    if (frame[["open", "high", "low", "close"]] <= 0).any().any() or (frame["volume"] < 0).any():
+        raise ValueError("Backtest prices must be positive and volume non-negative.")
+    if ((frame["high"] < frame[["open", "low", "close"]].max(axis=1)).any()
+            or (frame["low"] > frame[["open", "high", "close"]].min(axis=1)).any()):
+        raise ValueError("Backtest OHLC values are inconsistent.")
     frame = frame[~frame.index.duplicated(keep="last")].sort_index()
     return frame
 

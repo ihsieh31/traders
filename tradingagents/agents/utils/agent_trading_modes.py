@@ -9,6 +9,7 @@ Two trading modes supported:
 2. Trading Mode (allow_shorts=True): LONG/NEUTRAL/SHORT actions with position logic
 """
 
+import re
 from typing import Dict, Any, Optional, Tuple
 from tradingagents.prompts import render_prompt
 
@@ -128,57 +129,17 @@ def extract_recommendation(response_content: str, trading_mode: str) -> Optional
         Extracted recommendation or None if not found
     """
     content = response_content.upper()
-
-    if trading_mode == "investment":
-        # Look for BUY/HOLD/SELL patterns
-        patterns = [
-            "FINAL TRANSACTION PROPOSAL: **BUY**",
-            "FINAL TRANSACTION PROPOSAL: **HOLD**",
-            "FINAL TRANSACTION PROPOSAL: **SELL**",
-            "FINAL INVESTMENT DECISION: **BUY**",
-            "FINAL INVESTMENT DECISION: **HOLD**",
-            "FINAL INVESTMENT DECISION: **SELL**",
-            "FINAL DECISION: **BUY**",
-            "FINAL DECISION: **HOLD**",
-            "FINAL DECISION: **SELL**"
-        ]
-
-        for pattern in patterns:
-            if pattern in content:
-                return pattern.split("**")[1]
-
-        # Fallback - look for standalone actions at end
-        for action in TradingModeConfig.INVESTMENT_ACTIONS:
-            if f"**{action}**" in content[-100:]:  # Check last 100 chars
-                return action
-
-    else:  # trading mode
-        # Look for LONG/NEUTRAL/SHORT patterns
-        patterns = [
-            "FINAL TRANSACTION PROPOSAL: **LONG**",
-            "FINAL TRANSACTION PROPOSAL: **NEUTRAL**",
-            "FINAL TRANSACTION PROPOSAL: **SHORT**",
-            "FINAL TRADING DECISION: **LONG**",
-            "FINAL TRADING DECISION: **NEUTRAL**",
-            "FINAL TRADING DECISION: **SHORT**",
-            "FINAL RISK MANAGEMENT DECISION: **LONG**",
-            "FINAL RISK MANAGEMENT DECISION: **NEUTRAL**",
-            "FINAL RISK MANAGEMENT DECISION: **SHORT**",
-            "FINAL DECISION: **LONG**",
-            "FINAL DECISION: **NEUTRAL**",
-            "FINAL DECISION: **SHORT**"
-        ]
-
-        for pattern in patterns:
-            if pattern in content:
-                return pattern.split("**")[1]
-
-        # Fallback - look for standalone actions at end
-        for action in TradingModeConfig.TRADING_ACTIONS:
-            if f"**{action}**" in content[-100:]:  # Check last 100 chars
-                return action
-
-    return None
+    actions = (TradingModeConfig.INVESTMENT_ACTIONS if trading_mode == "investment"
+               else TradingModeConfig.TRADING_ACTIONS)
+    action_pattern = "|".join(actions)
+    markers = re.findall(
+        rf"FINAL (?:TRANSACTION PROPOSAL|INVESTMENT DECISION|TRADING DECISION|RISK MANAGEMENT DECISION|DECISION):\s*\*\*({action_pattern})\*\*",
+        content,
+    )
+    if markers:
+        return markers[-1]  # last explicit final marker is authoritative
+    tail_actions = re.findall(rf"\*\*({action_pattern})\*\*", content[-100:])
+    return tail_actions[-1] if tail_actions else None
 
 
 def validate_recommendation(recommendation: str, trading_mode: str) -> bool:
@@ -302,8 +263,11 @@ def ensure_final_transaction_proposal(
     """Append the exact executable final proposal line without discarding analysis."""
     final_line = format_final_decision(recommendation, trading_mode)
     content = str(response_content or "").rstrip()
-    if final_line in content:
-        return content
+    # Render one canonical proposal; retain all surrounding analysis.
+    content = re.sub(
+        r"(?im)^\s*FINAL (?:TRANSACTION PROPOSAL|INVESTMENT DECISION|TRADING DECISION|RISK MANAGEMENT DECISION|DECISION):[^\n]*$",
+        "", content,
+    ).rstrip()
     if not content:
         return final_line
     return f"{content}\n\n{final_line}"

@@ -133,6 +133,19 @@ def assess_new_position(
         config=config,
     )
 
+    try:
+        values = [float(v) for v in (open_positions or {}).values()]
+        valid = isfinite(requested) and requested >= 0 and all(isfinite(v) for v in values)
+        valid = valid and (equity is None or (isfinite(float(equity)) and float(equity) > 0))
+        valid = valid and isfinite(float(config.max_gross_exposure_pct)) and config.max_gross_exposure_pct >= 0
+    except (TypeError, ValueError):
+        valid = False
+    if not valid:
+        verdict.adjusted_notional = 0.0
+        verdict.allowed = False
+        verdict.reasons.append("Invalid or unknown portfolio numeric inputs.")
+        return verdict
+
     candidate = _candidate_returns(symbol, price_history, config.lookback_bars)
     factor = 1.0
 
@@ -194,7 +207,12 @@ def assess_new_position(
     if factor < min_size_factor:
         factor = min_size_factor
         verdict.factors["floor"] = min_size_factor
-    verdict.adjusted_notional = requested * factor
+    if not isfinite(factor):
+        verdict.adjusted_notional = 0.0
+        verdict.allowed = False
+        verdict.reasons.append("Invalid portfolio sizing factor.")
+        return verdict
+    verdict.adjusted_notional = min(requested, requested * max(0.0, factor))
 
     # --- gross exposure cap ----------------------------------------------------
     cap_pct = float(config.max_gross_exposure_pct or 0)

@@ -404,7 +404,7 @@ class ExecutionService:
         Offline time, market closure and ambiguous broker state can delay exits.
         Any ownership/quantity conflict pauses instead of closing an unrelated lot.
         """
-        from .lifecycle import due_positions
+        from .lifecycle import due_positions, next_deadline_decision_id
         results = []
         cancellation_calls = 0
         # N15: deadline maintenance facts for the round journal — counted at
@@ -462,6 +462,10 @@ class ExecutionService:
                     if verdict is not None and not verdict.allowed:
                         raise BrokerAuthorityError("Deadline exit blocked by safety policy: " +
                                                    "; ".join(getattr(verdict, "reasons", ())))
+                    decision_id = next_deadline_decision_id(
+                        self._store, due["decision_id"], symbol,
+                        lambda client_id: self._lookup_for_recovery(broker, client_id),
+                    )
                     # Only cancel child protections proven to belong to our filled parents.
                     from alpaca.trading.requests import GetOrderByIdRequest
                     owned_children = set()
@@ -483,7 +487,7 @@ class ExecutionService:
                     # leaves a recorded intent to complete the exit.
                     prepared_outbox = self._prepare_liquidation_outbox(
                         symbol,
-                        decision_id=due["decision_id"],
+                        decision_id=decision_id,
                         quantity=abs(position.qty),
                         side=closing_side,
                     )
@@ -537,7 +541,7 @@ class ExecutionService:
                     spec = [{"role": "close", "side": closing_side, "quantity": abs(current.qty)}]
                     if not self._verified_reducing_exit(snapshot, symbol, spec):
                         _fail_with_gap_check("Deadline close not yet safe; protection cancellation may be pending")
-                    result = self._liquidate_core(symbol, decision_id=due["decision_id"], _broker=broker,
+                    result = self._liquidate_core(symbol, decision_id=decision_id, _broker=broker,
                                                    _quantity=abs(current.qty), _side=closing_side,
                                                    _outbox=prepared_outbox)
                     results.append(result)

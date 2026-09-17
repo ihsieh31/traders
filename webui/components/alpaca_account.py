@@ -445,7 +445,7 @@ def render_alpaca_account_section():
                 html.Div(id="orders-table-container", children=render_orders_table())
             ], md=5)
         ]),
-        render_account_summary(),
+        html.Div(render_account_summary(), id="account-summary-container"),
         # Hidden div for liquidation confirmations
         dcc.ConfirmDialog(
             id='liquidate-confirm',

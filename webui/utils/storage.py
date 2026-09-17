@@ -73,8 +73,9 @@ def get_default_api_keys() -> Dict[str, Any]:
 
 def create_storage_store_component():
     """Create a dcc.Store component for localStorage persistence"""
-    from dash import dcc
-    return dcc.Store(id='settings-store', storage_type='local', data=DEFAULT_SETTINGS)
+    from dash import dcc, html
+    return html.Div([dcc.Store(id="settings-store", storage_type="local", data=DEFAULT_SETTINGS),
+                     dcc.Interval(id="settings-hydration-trigger", interval=100, max_intervals=1)])
 
 
 def create_api_keys_store_component():

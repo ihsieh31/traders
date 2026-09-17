@@ -112,7 +112,8 @@ class TradingAgentsGraph:
         elif provider == "local_openai":
             backend_url = backend_url or get_openai_base_url()
         if backend_url:
-            print(f"[LLM CONFIG] Using OpenAI-compatible endpoint: {backend_url}")
+            from tradingagents.redaction import sanitize_url
+            print(f"[LLM CONFIG] Using OpenAI-compatible endpoint: {sanitize_url(backend_url)}")
 
         base_llm_kwargs = self._get_provider_kwargs(provider)
         if self.callbacks:

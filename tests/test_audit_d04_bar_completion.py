@@ -46,9 +46,8 @@ class D04BarCompletionTests(unittest.TestCase):
         if cleaned is not None:
             kept = [str(t) for t in cleaned["timestamp"].tolist()]
             self.assertNotIn("2026-09-16 20:30:00+00:00", kept)
-        # Yesterday's 15:00 ET bar remains and is judged by the legitimate
-        # freshness contract (belongs to the immediately previous session).
-        self.assertEqual(quality.status, "fresh", quality.reason)
+        # Yesterday's close cannot stand in for today's completed session (D05).
+        self.assertEqual(quality.status, "stale", quality.reason)
 
     def test_d04_in_session_bar_uses_close_truncation_only_for_last_bar(self):
         # 15:00 bar on the reference session completes at 16:00 close — that

@@ -458,16 +458,18 @@ def _scheduler_thread(
             scheduler_generation=scheduler_generation,
         )
     except Exception as exc:
-        if scheduler_generation == app_state.run_generation:
-            print(f"[SCHEDULER] Worker failed: {exc}")
-            app_state.provider_stop_reason = f"worker failed: {exc}"
-        else:
-            print(f"[SCHEDULER] Stale worker failed after Stop→Start: {exc}")
+        with app_state._ownership_lock:
+            if scheduler_generation == app_state.run_generation:
+                print(f"[SCHEDULER] Worker failed: {exc}")
+                app_state.provider_stop_reason = f"worker failed: {exc}"
+            else:
+                print(f"[SCHEDULER] Stale worker failed after Stop→Start: {exc}")
     finally:
-        if scheduler_generation == app_state.run_generation:
-            app_state.analysis_running = False
-            app_state.loop_enabled = False
-            app_state.market_hour_enabled = False
+        with app_state._ownership_lock:
+            if scheduler_generation == app_state.run_generation:
+                app_state.analysis_running = False
+                app_state.loop_enabled = False
+                app_state.market_hour_enabled = False
 
 
 def _scheduler_thread_inner(
@@ -619,8 +621,10 @@ def _scheduler_thread_inner(
                     # search). Stop the schedule with a visible error
                     # instead of sleeping toward an unverifiable date.
                     print(f"[MARKET_HOUR] Scheduling failed, halting: {exc}")
-                    app_state.analysis_running = False
-                    app_state.provider_stop_reason = f"market-hour scheduling failed: {exc}"
+                    with app_state._ownership_lock:
+                        if scheduler_generation == app_state.run_generation:
+                            app_state.analysis_running = False
+                            app_state.provider_stop_reason = f"market-hour scheduling failed: {exc}"
                     return
                 next_execution_times.append((hour, next_dt))
 
@@ -866,8 +870,9 @@ def _scheduler_thread_inner(
 
     # F02: a stale scheduler returning after Stop→Start must never
     # clear the new run's running flag.
-    if scheduler_generation == app_state.run_generation:
-        app_state.analysis_running = False
+    with app_state._ownership_lock:
+        if scheduler_generation == app_state.run_generation:
+            app_state.analysis_running = False
 
 
 def register_control_callbacks(app):
@@ -905,12 +910,21 @@ def register_control_callbacks(app):
                 Input(f"{role}-llm-custom-model", "value"),
                 Input("llm-provider", "value"),
             ],
+            State("settings-store", "data"),
         )
-        def update_llm_param_controls(model, custom_model, provider):
+        def update_llm_param_controls(model, custom_model, provider, saved=None):
             effective_model = resolve_model_choice(model, custom_model) or model
             state = get_ui_control_state(effective_model, role, provider)
             spec = state["spec"]
-            defaults = state["defaults"]
+            defaults = dict(state["defaults"])
+            if (saved and saved.get(f"{role}_llm") == model
+                    and (saved.get(f"{role}_llm_custom_model") or "") == (custom_model or "")
+                    and saved.get("llm_provider") == provider):
+                for param in defaults:
+                    ui_param = {"text_verbosity": "verbosity", "reasoning_summary": "summary"}.get(param, param)
+                    key = f"{role}_llm_{ui_param}"
+                    if key in saved:
+                        defaults[param] = saved[key]
             info = html.Div(
                 [
                     html.Div(spec.get("label", model), className="llm-model-name"),
@@ -1831,10 +1845,17 @@ def register_control_callbacks(app):
                 scheduler_generation=scheduler_generation,
             )
 
-        if not app_state.analysis_running:
-            app_state.analysis_running = True
-            thread = threading.Thread(target=analysis_thread)
-            thread.start()
+        with app_state._ownership_lock:
+            if not app_state.analysis_running:
+                app_state.analysis_running = True
+                thread = threading.Thread(target=analysis_thread)
+                try:
+                    thread.start()
+                except Exception:
+                    app_state.analysis_running = False
+                    app_state.loop_enabled = False
+                    app_state.market_hour_enabled = False
+                    raise
 
         if market_hour_enabled:
             mode_text = "market hour mode"

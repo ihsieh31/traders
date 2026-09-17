@@ -168,6 +168,23 @@ class GraphSetup:
 
         return wrapped_node
 
+    def _publish_ui_update(self, state, agent, status, *, report_field=None, report_content=None):
+        """Only WebUI dispatches with an immutable owner may publish UI state."""
+        config = self.config or {}
+        generation = config.get("_webui_run_generation")
+        symbol = state.get("company_of_interest")
+        if (config.get("_analysis_source") != "webui_stream" or generation is None
+                or symbol != config.get("_webui_symbol")):
+            return False
+        try:
+            from webui.utils.state import app_state
+        except ImportError:
+            return False
+        return app_state.publish_agent_update(
+            agent, status, symbol=symbol, run_generation=generation,
+            report_field=report_field, report_content=report_content,
+        )
+
     def _create_parallel_analysts_coordinator(self, selected_analysts, analyst_nodes, tool_nodes, delete_nodes):
         """Create a coordinator that runs selected analysts in parallel"""
         
@@ -176,19 +193,10 @@ class GraphSetup:
             print(f"[PARALLEL] Starting parallel execution of analysts: {selected_analysts}")
             print(f"[PARALLEL] State keys available: {list(state.keys())}")
             
-            # Check if UI state management is available
-            ui_available = False
-            try:
-                from webui.utils.state import app_state
-                ui_available = True
-            except ImportError:
-                pass
-            
-            # Update UI status for all analysts as in_progress
-            if ui_available:
-                for analyst_type in selected_analysts:
-                    analyst_name = f"{analyst_type.capitalize()} Analyst"
-                    app_state.update_agent_status(analyst_name, "in_progress")
+            for analyst_type in selected_analysts:
+                self._publish_ui_update(
+                    state, f"{analyst_type.capitalize()} Analyst", "in_progress"
+                )
             
             def execute_single_analyst(analyst_info):
                 """Execute a single analyst in a separate thread"""
@@ -272,19 +280,10 @@ class GraphSetup:
                         if hasattr(last_msg, 'content') and last_msg.content:
                             report_content = last_msg.content
                     
-                    # Update UI state immediately (real-time update)
-                    if ui_available:
-                        analyst_name = f"{analyst_type.capitalize()} Analyst"
-                        app_state.update_agent_status(analyst_name, "completed")
-                        
-                        # Store report in UI state immediately for real-time display
-                        if report_content:
-                            ticker = state.get("company_of_interest", "")
-                            if ticker:
-                                ui_state = app_state.get_state(ticker)
-                                if ui_state:
-                                    ui_state["current_reports"][report_field] = report_content
-                                    print(f"[PARALLEL] Real-time update: {analyst_type} report ({len(report_content)} chars) stored for {ticker}")
+                    self._publish_ui_update(
+                        state, f"{analyst_type.capitalize()} Analyst", "completed",
+                        report_field=report_field, report_content=report_content,
+                    )
                     
                     return analyst_type, final_state
 
@@ -294,9 +293,9 @@ class GraphSetup:
                     # analysts and no downstream node is dispatched; the
                     # legacy empty-report fallback must not swallow it.
                     print(f"[PARALLEL] {analyst_type} analyst provider failure: {e}")
-                    if ui_available:
-                        analyst_name = f"{analyst_type.capitalize()} Analyst"
-                        app_state.update_agent_status(analyst_name, "pending")
+                    self._publish_ui_update(
+                        state, f"{analyst_type.capitalize()} Analyst", "pending"
+                    )
                     raise
 
                 except Exception as e:
@@ -305,12 +304,9 @@ class GraphSetup:
                     # downstream decision node may run. Mark the analyst as
                     # not-completed in the UI and re-raise.
                     print(f"[PARALLEL] Error in {analyst_type} analyst: {e}")
-                    if ui_available:
-                        analyst_name = f"{analyst_type.capitalize()} Analyst"
-                        # The UI status vocabulary has no distinct "failed"
-                        # value; reset to pending so a failed analyst is never
-                        # displayed as completed.
-                        app_state.update_agent_status(analyst_name, "pending")
+                    self._publish_ui_update(
+                        state, f"{analyst_type.capitalize()} Analyst", "pending"
+                    )
                     raise
             
             # Execute all analysts in parallel with staggered starts
@@ -388,13 +384,10 @@ class GraphSetup:
                     print(f"[PARALLEL] Stored {analyst_type} report ({len(content)} chars)")
                     print(f"[PARALLEL]   Preview: {content[:150]}..." if len(content) > 150 else f"[PARALLEL]   Content: {content}")
                     
-                    # Update report in UI state as well
-                    if ui_available:
-                        ticker = state.get("ticker", "")
-                        if ticker:
-                            ui_state = app_state.get_state(ticker)
-                            if ui_state:
-                                ui_state["current_reports"][report_field] = content
+                    self._publish_ui_update(
+                        state, f"{analyst_type.capitalize()} Analyst", "completed",
+                        report_field=report_field, report_content=content,
+                    )
                 else:
                     # Ensure the field exists even if empty
                     if report_field not in final_state:
@@ -428,23 +421,14 @@ class GraphSetup:
         def parallel_risk_round_one(state: AgentState):
             print("[RISK_PARALLEL] Starting first-round parallel execution")
 
-            ui_available = False
-            try:
-                from webui.utils.state import app_state
-                ui_available = True
-            except ImportError:
-                app_state = None
-
-            if ui_available:
-                for analyst_name in ("Risky Analyst", "Safe Analyst", "Neutral Analyst"):
-                    app_state.update_agent_status(analyst_name, "in_progress")
+            for analyst_name in ("Risky Analyst", "Safe Analyst", "Neutral Analyst"):
+                self._publish_ui_update(state, analyst_name, "in_progress")
 
             def execute_single(analyst_name: str, analyst_node):
                 local_state = copy.deepcopy(state)
                 try:
                     result_state = analyst_node(local_state)
-                    if ui_available:
-                        app_state.update_agent_status(analyst_name, "completed")
+                    self._publish_ui_update(state, analyst_name, "completed")
                     return analyst_name, result_state
                 except ProviderFailure as e:
                     print(f"[RISK_PARALLEL] {analyst_name} provider failure: {e}")
@@ -455,8 +439,7 @@ class GraphSetup:
                     # "completed" work. The UI vocabulary has no distinct
                     # failed value, so reset to pending and re-raise.
                     print(f"[RISK_PARALLEL] Error in {analyst_name}: {e}")
-                    if ui_available:
-                        app_state.update_agent_status(analyst_name, "pending")
+                    self._publish_ui_update(state, analyst_name, "pending")
                     raise
 
             completed_results = {}

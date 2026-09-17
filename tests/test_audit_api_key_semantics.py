@@ -13,7 +13,17 @@ Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.4:
 
 import os
 import unittest
+import pytest
 from unittest.mock import patch
+
+
+@pytest.fixture(autouse=True)
+def isolated_key_runtime(monkeypatch):
+    from tradingagents.dataflows import config
+    from webui.utils.state import app_state
+    monkeypatch.setattr(config, "_runtime_api_keys", {})
+    for flag in ("analysis_running", "loop_enabled", "market_hour_enabled"):
+        monkeypatch.setattr(app_state, flag, False)
 
 
 class _FakeStore:
@@ -77,7 +87,7 @@ class U06SecretNotReturnedTests(unittest.TestCase):
         from webui.callbacks import api_config_callbacks as real_mod
         applied = {}
         orig = real_mod.apply_api_keys_to_config
-        real_mod.apply_api_keys_to_config = lambda keys: applied.update(keys)
+        real_mod.apply_api_keys_to_config = lambda keys: (applied.update(keys) or True)
         try:
             os.environ["ANTHROPIC_API_KEY"] = "sk-ant-server"
             mod, app = _register()
@@ -135,7 +145,7 @@ class U16ClearSemanticsTests(unittest.TestCase):
             from webui.callbacks import api_config_callbacks as real_mod
             applied = {}
             orig = real_mod.apply_api_keys_to_config
-            real_mod.apply_api_keys_to_config = lambda keys: applied.update(keys)
+            real_mod.apply_api_keys_to_config = lambda keys: (applied.update(keys) or True)
             try:
                 load_fn(None)
             finally:

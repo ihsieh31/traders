@@ -1,3 +1,6 @@
+from tradingagents.agents.utils.tool_call_messages import (
+    result_tool_calls as _result_tool_calls, assistant_tool_message,
+)
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import time
@@ -51,19 +54,6 @@ def _normalize_market_report_markdown(content: str) -> str:
     normalized = re.sub(r"\s+\|\s+\|\s+", " |\n| ", normalized)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
     return normalized
-
-
-def _result_tool_calls(result) -> list:
-    """L02: unified tool-call reader for analyst loops.
-
-    LangChain's standard AIMessage.tool_calls field (produced by the
-    Anthropic/Google adapters) is preferred; the legacy raw
-    additional_kwargs["tool_calls"] shape stays supported.
-    """
-    standard = getattr(result, "tool_calls", None)
-    if standard:
-        return list(standard)
-    return list((getattr(result, "additional_kwargs", {}) or {}).get("tool_calls") or [])
 
 
 def create_market_analyst(llm, toolkit):
@@ -222,7 +212,9 @@ def create_market_analyst(llm, toolkit):
         # Handle iterative tool calls until the model stops requesting them
         while tools and _result_tool_calls(result) and iteration_count < max_tool_iterations:
             iteration_count += 1
-            for tool_call in _result_tool_calls(result):
+            tool_calls = _result_tool_calls(result)
+            messages_history.append(assistant_tool_message(result, tool_calls))
+            for tool_call in tool_calls:
                 # Handle different tool call structures
                 if isinstance(tool_call, dict):
                     tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
@@ -268,16 +260,11 @@ def create_market_analyst(llm, toolkit):
 
                 # Append the assistant tool call and tool result messages so the LLM can continue the conversation
                 tool_call_id = tool_call.get("id") or tool_call.get("tool_call_id")
-                ai_tool_call_msg = AIMessage(
-                    content="",
-                    additional_kwargs={"tool_calls": [tool_call]},
-                )
                 tool_msg = ToolMessage(
                     content=str(tool_result),
                     tool_call_id=tool_call_id,
                 )
 
-                messages_history.append(ai_tool_call_msg)
                 messages_history.append(tool_msg)
 
             # Ask the LLM to continue with the new context
@@ -285,7 +272,7 @@ def create_market_analyst(llm, toolkit):
 
         tool_loop_exhausted = bool(
             tools
-            and getattr(result, "additional_kwargs", {}).get("tool_calls")
+            and _result_tool_calls(result)
         )
         if tool_loop_exhausted:
             # One bounded synthesis attempt, with no tools bound. The last

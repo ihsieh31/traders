@@ -168,7 +168,9 @@ def classify_regime(
     current_vol = float(rolling_vol.iloc[-1])
     annualized_pct = current_vol * _ANNUALIZATION * 100.0
     history = rolling_vol.tail(config.vol_percentile_window)
-    percentile = float((history <= current_vol).mean() * 100.0)
+    percentile = 0.0 if current_vol == 0.0 else float(
+        ((history < current_vol).mean() + 0.5 * (history == current_vol).mean()) * 100.0
+    )
     metrics["annualized_vol_pct"] = annualized_pct
     metrics["vol_percentile"] = percentile
 

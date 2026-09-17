@@ -54,22 +54,39 @@ def _adopt_recovery_order(
     BrokerAuthorityError,
     broker_status_to_local,
 ) -> None:
-    broker_id = getattr(found, "id", None) or (
-        found.get("id") if isinstance(found, dict) else None
-    )
-    status = getattr(found, "status", None) or (
-        found.get("status") if isinstance(found, dict) else None
-    )
-    filled = getattr(found, "filled_qty", None)
-    if isinstance(found, dict):
-        filled = found.get("filled_qty", filled)
-    if not broker_id or not status:
-        raise BrokerAuthorityError("recovered broker order identity is incomplete")
+    from .authority import _value, _number, _utc, _symbol
+    import math
+
+    broker_id = str(_value(found, "id") or "")
+    status = _value(found, "status")
+    side = str(_value(found, "side") or "").lower()
+    if (not broker_id or not status
+            or _value(found, "client_order_id") != local["client_order_id"]
+            or _symbol(_value(found, "symbol")) != local["symbol"]
+            or side != local["side"]
+            or (local.get("broker_order_id") and local["broker_order_id"] != broker_id)):
+        raise BrokerAuthorityError("recovered broker order identity does not match the durable order")
+    filled = _number(_value(found, "filled_qty", default=0), field="recovered filled qty", minimum=0)
+    recorded = float((self._store.get_order(local["order_id"]) or local).get("filled_qty") or 0)
+    if local.get("quantity") is not None and filled > float(local["quantity"]) + 1e-9:
+        raise BrokerAuthorityError("recovered fill exceeds the durable order quantity")
+    if filled < recorded - 1e-9:
+        raise BrokerAuthorityError("recovered cumulative fill quantity regressed")
+    delta = filled - recorded
+    if delta > 1e-9:
+        average = _number(_value(found, "filled_avg_price"), field="recovered fill price", minimum=0)
+        delta_cost = filled * average - self._store.recorded_fill_cost(local["order_id"])
+        price = delta_cost / delta
+        if not math.isfinite(price) or price <= 0:
+            raise BrokerAuthorityError("recovered cumulative fill economics are invalid")
+        stamp = _utc(_value(found, "updated_at", "filled_at", "submitted_at"),
+                     field="recovered fill timestamp")
+        self._store.record_fill(execution_id=f"{broker_id}:{filled:.12g}",
+                               order_id=local["order_id"], qty=delta, price=price,
+                               filled_at=stamp.isoformat())
     self._store.sync_order_from_broker(
-        local["order_id"],
-        broker_status_to_local(status),
-        broker_order_id=str(broker_id),
-        filled_qty=float(local.get("filled_qty") or 0),
+        local["order_id"], broker_status_to_local(status), broker_order_id=broker_id,
+        filled_qty=filled,
     )
 
 
@@ -481,6 +498,24 @@ def _recover_locked(
         raise BrokerAuthorityError(
             f"execution DB account binding check failed: {exc}"
         ) from exc
+    # Read-only adoption can explain an apparent position mismatch caused
+    # by a fill outside the listing window. Prove those facts before the
+    # gate that prevents any recovery POST; missing facts still pause.
+    listed_clients = {order.client_order_id for order in snapshot.orders}
+    adopted = False
+    lookup_results = {}
+    for local in self._store.list_recoverable_orders():
+        if (str(local["status"]).upper() not in {"ACCEPTED", "SUBMITTING", "PARTIAL"}
+                or local["client_order_id"] in listed_clients
+                or self._store.protective_parent(local["order_id"])):
+            continue
+        found = self._lookup_for_recovery(broker, local["client_order_id"])
+        lookup_results[local["client_order_id"]] = found
+        if found is not None:
+            self._adopt_recovery_order(local, found)
+            adopted = True
+    if adopted:
+        snapshot = capture_broker_snapshot(broker, expected_account_id=snapshot.account_id)
     initial = self._apply_protection_coverage(
         snapshot, self._reconcile_snapshot(broker, snapshot)
     )
@@ -531,7 +566,9 @@ def _recover_locked(
         if self._store.protective_parent(local["order_id"]):
             raise BrokerAuthorityError("Missing protective child must be reconciled; never resubmit it as a market order")
         status = str(local["status"]).upper()
-        found = self._lookup_for_recovery(broker, local["client_order_id"])
+        found = (lookup_results[local["client_order_id"]]
+                 if local["client_order_id"] in lookup_results
+                 else self._lookup_for_recovery(broker, local["client_order_id"]))
         if found is not None:
             self._adopt_recovery_order(local, found)
             changed = True

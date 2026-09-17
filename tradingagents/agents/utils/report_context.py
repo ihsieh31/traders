@@ -632,7 +632,7 @@ def _build_claim_from_point(
     report_label: str,
     point: str,
     claim_index: int,
-    section_chunks: Dict[Tuple[str, str], List[str]],
+    section_chunks: Dict[Tuple[str, str], List[dict]],
     fallback_chunk_ids: List[str],
     trade_date: datetime | None,
     config: Dict[str, Any],
@@ -644,9 +644,13 @@ def _build_claim_from_point(
     source_quality = float(profile["source_quality"])
     freshness_score, timestamp, timestamp_source = _score_freshness(claim_text, trade_date)
     numeric_support = _extract_numeric_support(claim_text)
-    evidence_refs = section_chunks.get((report_key, section_title), [])[:2]
-    if not evidence_refs:
-        evidence_refs = fallback_chunk_ids[:2]
+    # Link the actual candidate text, rather than the first chunks of its section.
+    needle = re.sub(r"\s+", " ", claim_text.rstrip(".…")).strip()
+    evidence_refs = [
+        chunk["id"] for chunk in section_chunks.get((report_key, section_title), [])
+        if point in chunk.get("coverage_points", [])
+        or (needle and needle in re.sub(r"\s+", " ", chunk["text"]))
+    ]
 
     scores = _initial_claim_scores(
         claim_text,
@@ -877,11 +881,11 @@ def _build_evidence_layer(
 ) -> None:
     trade_date = _parse_trade_date(state.get("trade_date"))
     max_claims_per_report = int(config["report_context_max_claims_per_report"])
-    section_chunks: Dict[Tuple[str, str], List[str]] = {}
+    section_chunks: Dict[Tuple[str, str], List[dict]] = {}
 
     for chunk in context.get("chunks", []):
         key = (chunk["report_key"], chunk["section_title"])
-        section_chunks.setdefault(key, []).append(chunk["id"])
+        section_chunks.setdefault(key, []).append(chunk)
 
     claims: List[Dict[str, Any]] = []
     for report_key, report_label in REPORT_SPECS:
@@ -932,7 +936,8 @@ def _render_claim_line(claim: Dict[str, Any], max_chars: int) -> str:
     return (
         f"[{claim['claim_id']} {claim['direction']} priority={claim.get('confidence', 0):.2f} "
         f"date_hint={scores.get('freshness', 0):.2f} numeric_hint={scores.get('numeric_support', 0):.2f} "
-        f"overlap_hint={scores.get('contradiction', 0):.2f}] "
+        f"overlap_hint={scores.get('contradiction', 0):.2f} "
+        f"refs={','.join(claim.get('evidence_refs', [])) or 'unavailable'}] "
         f"{_truncate(claim.get('claim', ''), max_chars)}"
     )
 
@@ -1259,10 +1264,11 @@ def build_report_context_index(
 
         sections = _split_sections(raw_text)
         coverage_points: List[str] = []
+        section_points: List[List[str]] = []
         report_chunk_ids: List[str] = []
 
         for sec_idx, (section_title, section_text) in enumerate(sections, start=1):
-            coverage_points.extend(
+            section_points.append(
                 _extract_coverage_points(
                     section_title,
                     section_text,
@@ -1270,6 +1276,7 @@ def build_report_context_index(
                     point_chars=point_chars,
                 )
             )
+            source_cursor = 0
             for chunk_idx, chunk_text in enumerate(
                 _chunk_text(section_text, chunk_chars, overlap),
                 start=1,
@@ -1278,7 +1285,19 @@ def build_report_context_index(
                     f"{report_key.replace('_report', '')}"
                     f"_s{sec_idx}_c{chunk_idx}"
                 )
+                source_start = section_text.find(chunk_text, source_cursor)
+                source_end = source_start + len(chunk_text)
+                source_cursor = source_start + 1
+                coverage_refs = []
+                for point in section_points[-1]:
+                    candidate = _split_claim_prefix(point)[1].rstrip(".…")
+                    candidate_start = section_text.find(candidate)
+                    if (candidate_start >= 0 and source_start >= 0
+                            and candidate_start < source_end
+                            and candidate_start + len(candidate) > source_start):
+                        coverage_refs.append(point)
                 chunk_payload = {
+                    "coverage_points": coverage_refs,
                     "id": chunk_id,
                     "report_key": report_key,
                     "report_label": report_label,
@@ -1290,8 +1309,12 @@ def build_report_context_index(
                 context["chunks"].append(chunk_payload)
                 report_chunk_ids.append(chunk_id)
 
-        # Keep only the top coverage points per report.
-        coverage_points = coverage_points[:max_points]
+        # Represent later risk/missing-evidence sections before filling from
+        # the earlier sections' second-ranked candidates.
+        for rank in range(max((len(points) for points in section_points), default=0)):
+            for points in section_points:
+                if rank < len(points) and len(coverage_points) < max_points:
+                    coverage_points.append(points[rank])
         summary = "\n".join(f"- {point}" for point in coverage_points)
 
         context["reports"][report_key] = {
@@ -1346,6 +1369,8 @@ def _select_chunks_for_agent(
 
     # Coverage pass: force representation from each report first.
     for report_key, _ in REPORT_SPECS:
+        if len(selected) >= max_chunks:
+            break
         added_for_report = 0
         for score, chunk in scored:
             if chunk["report_key"] != report_key:
@@ -1359,7 +1384,7 @@ def _select_chunks_for_agent(
             selected_ids.add(chunk["id"])
             used_tokens += token_cost
             added_for_report += 1
-            if added_for_report >= min_chunks_per_report:
+            if added_for_report >= min_chunks_per_report or len(selected) >= max_chunks:
                 break
 
     # Relevance pass: fill remaining budget by score.

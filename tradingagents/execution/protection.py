@@ -343,120 +343,56 @@ def _recover_persisted_protection_gaps(
 
 
 def _protection_coverage_gaps(self, snapshot: BrokerSnapshot, *, json) -> list[str]:
-    """R09/N07: symbols whose program-built protection is unprovable while
-        the position is still live.
+    """Require coverage only for unspent, protected program opening lots.
 
-        Only positions the durable ledger can prove came from THIS program's
-        protected entry are judged — manual holdings are never forced under
-        this rule. Protection obligation is proven EITHER by a registered
-        protective child relation (a child was actually observed on the
-        broker) OR — N07 — by a durable, FILLED program-owned opening parent
-        whose intent payload required a broker stop (``risk_controls.
-        stop_loss_price`` plus the protective entry contract: the payload's
-        target side matches the parent's side). A parent that filled without
-        its protective child ever appearing anywhere must therefore still be
-        judged: missing proof is a gap, not a manual position.
+    Parent terminal status never erases a filled lot. Historical parents and
+    children whose opening lots were consumed cannot bind later manual lots.
+    An unreadable ledger is an inability to prove safety, not an empty book.
+    """
+    from .lifecycle import remaining_lots
 
-        For each such live position the provable coverage is:
-
-        - live program-owned protective children, grouped by their opening
-          parent: only stop-bearing children contribute their LARGEST single
-          remaining qty (never the sum — one lot is covered once);
-        - plus any other program-owned live exposure-reducing order
-          (a proven close in progress covers the exit).
-
-        Terminal children cover nothing, and a held child of a not-yet-filled
-        parent is not yet active protection. Insufficient coverage means the
-        account must be PAUSED with a stable ``PROTECTION_GAP:`` reason until
-        fresh broker facts prove the position closed or safely covered again.
-        """
-    gaps: list[str] = []
-    rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
     try:
-        for row in self._store.list_all_orders():
-            rows_by_symbol.setdefault(str(row.get("symbol") or "").upper(), []).append(row)
+        lots_by_symbol = remaining_lots(self._store)
+        protected_parents = {
+            parent for row in self._store.list_all_orders()
+            if (parent := self._store.protective_parent(row["order_id"]))
+        }
     except Exception as exc:
-        # Ledger unavailable: coverage cannot be proven either way.
-        return [
-            f"PROTECTION_GAP: protection coverage could not be evaluated "
-            f"because the durable ledger is unreadable: {exc}"
-        ]
+        return [f"PROTECTION_GAP: durable protection ledger is unreadable: {exc}"]
+    gaps: list[str] = []
     for position in snapshot.positions:
         if abs(position.qty) <= 1e-9:
             continue
         symbol = position.symbol
-        rows = rows_by_symbol.get(symbol, [])
-        # E01: shares this program provably received and never sold back
-        # out, rebuilt from the durable fills ledger (lifecycle.remaining_lots).
+        expected_target = "LONG" if position.qty > 0 else "SHORT"
+        required = 0.0
         try:
-            from .lifecycle import remaining_lots
-            unspent_by_symbol = {
-                sym: sum(abs(float(lot.get("qty") or 0)) for lot in lots)
-                for sym, lots in remaining_lots(self._store).items()
-            }
-        except Exception:
-            unspent_by_symbol = {}  # no provable unspent lots
-        has_protected_entry = False
-        for row in rows:
-            try:
-                if self._store.protective_parent(row["order_id"]):
-                    has_protected_entry = True
-                    break
-            except Exception:
-                continue
-        if not has_protected_entry:
-            # N07: no child relation was ever registered — prove the
-            # protection obligation from the durable opening intent
-            # itself. A program-owned opening parent whose payload
-            # required a broker stop owes protection even if no child
-            # was ever seen on any snapshot. E01: the parent row need
-            # not be FILLED — a cancel race or a canceled-partial
-            # bracket can leave the row CANCELED/EXPIRED while the
-            # fills ledger still proves the program holds the shares —
-            # so the obligation is proven by UNSPENT DURABLE LOTS on
-            # the opening side, not by the historic row status. A
-            # fully sold-out historic parent proves no unspent lots
-            # and can never gap a later manual position.
-            opening_side = "buy" if position.qty > 0 else "sell"
-            expected_target = "LONG" if position.qty > 0 else "SHORT"
-            unspent_lots = float(unspent_by_symbol.get(symbol, 0.0))
-            if unspent_lots < 1e-9:
-                continue  # no provable program-owned shares: manual position
-            for row in rows:
-                if str(row.get("side") or "").lower() != opening_side:
+            for lot in lots_by_symbol.get(symbol, []):
+                if float(lot["qty"]) * position.qty <= 0:
                     continue
-                try:
-                    intent = self._store.get_intent_for_order(row["order_id"]) or {}
-                    payload = json.loads(intent.get("payload_json") or "{}")
-                except Exception:
-                    continue
-                if payload.get("kind") == "liquidation":
-                    continue  # exits never create a protection obligation
-                if str(payload.get("target_position") or "").upper() != expected_target:
-                    continue  # not the opening leg that formed this position
-                controls = payload.get("risk_controls")
-                stop_price = (
-                    controls.get("stop_loss_price")
-                    if isinstance(controls, dict)
-                    else getattr(controls, "stop_loss_price", None)
+                payload = json.loads(lot["intent"].get("payload_json") or "{}")
+                controls = payload.get("risk_controls") or {}
+                protected = lot["order"]["order_id"] in protected_parents or (
+                    payload.get("kind") != "liquidation"
+                    and str(payload.get("target_position") or "").upper() == expected_target
+                    and bool(controls.get("stop_loss_price"))
                 )
-                if not stop_price:
-                    continue
-                has_protected_entry = True
-                break
-        if not has_protected_entry:
-            continue  # never a program-protected entry: manual position
-        reducing_side = "sell" if position.qty > 0 else "buy"
-        covered = self._program_owned_live_reducing_qty(
-            snapshot, symbol, reducing_side
-        )
-        if covered >= abs(position.qty) - 1e-8:
+                if protected:
+                    required += abs(float(lot["qty"]))
+        except Exception as exc:
+            gaps.append(f"PROTECTION_GAP: {symbol} protection intent is unreadable: {exc}")
             continue
-        gaps.append(
-            f"PROTECTION_GAP: {symbol} remains exposed with no proven live "
-            f"protection or program-owned close covering the "
-            f"{abs(position.qty):g}-share position; operator review required"
-        )
+        required = min(required, abs(position.qty))
+        if required <= 1e-9:
+            continue
+        reducing_side = "sell" if position.qty > 0 else "buy"
+        covered = self._program_owned_live_reducing_qty(snapshot, symbol, reducing_side)
+        if covered < required - 1e-8:
+            gaps.append(
+                f"PROTECTION_GAP: {symbol} remains exposed with no proven live "
+                f"protection or program-owned close covering the "
+                f"{required:g}-share position; operator review required"
+            )
     return gaps
 
 

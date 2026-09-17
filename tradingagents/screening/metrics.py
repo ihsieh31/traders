@@ -127,15 +127,16 @@ def resolve_as_of(
     session — callers must fail closed (no silent ``as_of`` rollback).
     """
     override = (config or {}).get("screening_as_of_override")
-    if override:
-        return date.fromisoformat(str(override))
     injected = calendar_rows
     if injected is None and (config or {}).get("calendar_rows") is not None:
         injected = (config or {}).get("calendar_rows")
     client = calendar_client
     if client is None and (config or {}).get("calendar_client") is not None:
         client = (config or {}).get("calendar_client")
-    return most_recent_completed_session_production(now, client=client, calendar_rows=injected)
+    resolved = most_recent_completed_session_production(now, client=client, calendar_rows=injected)
+    if override and str(override) != str(resolved):
+        raise ValueError("screening_as_of_override must match the authoritative completed session")
+    return resolved
 
 
 def bars_for_symbol(bars_df: pd.DataFrame, symbol: str) -> pd.DataFrame:

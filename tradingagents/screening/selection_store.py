@@ -152,6 +152,7 @@ class SelectionStore:
 
             backend = backend or get_openai_base_url()
         material = {
+            "screening_as_of_override": config.get("screening_as_of_override"),
             "formula_version": FORMULA_VERSION,
             "schema_version": SCHEMA_VERSION,
             "provider": provider,
@@ -244,6 +245,10 @@ class SelectionStore:
             if trading_date != expected_trading_date:
                 return None
             if as_of > trading_date:
+                return None
+            from .metrics import resolve_as_of
+            if as_of != str(resolve_as_of(config, now=now, calendar_client=client,
+                                         calendar_rows=injected)):
                 return None
 
             fingerprint = self.config_fingerprint(config, spec)

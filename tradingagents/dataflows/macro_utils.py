@@ -207,7 +207,13 @@ def get_economic_indicators_report(curr_date: str, lookback_days: int = 90) -> s
     result = f"## Economic Indicators Report ({start_date} to {curr_date})\n\n"
 
     for indicator_name, config in indicators.items():
-        data = get_fred_data(config["series"], start_date, curr_date)
+        # YoY needs last year's matching observation, including publication
+        # lag. Extend only these series; retain the requested window for others.
+        series_start = start_date
+        if config.get("yoy"):
+            yoy_start = (pd.Timestamp(curr_date) - pd.DateOffset(months=15)).strftime("%Y-%m-%d")
+            series_start = min(start_date, yoy_start)
+        data = get_fred_data(config["series"], series_start, curr_date)
 
         if "error" in data:
             result += f"### {indicator_name}\n**Error**: {data['error']}\n\n"

@@ -387,8 +387,8 @@ def update_display(layout, spinner_text=None):
 def get_user_selections():
     """Get user selections for analysis."""
     # Display ASCII art welcome message
-    with open("./cli/static/welcome.txt", "r", encoding="utf-8") as f:
-        welcome_ascii = f.read()
+    from importlib.resources import files
+    welcome_ascii = files("cli").joinpath("static/welcome.txt").read_text(encoding="utf-8")
 
     # Create welcome box content
     welcome_content = f"{welcome_ascii}\n"

@@ -642,9 +642,19 @@ class ParallelCoordinatorStopTests(unittest.TestCase):
     # completed round; only a full three-speaker round may merge. ---
 
     def test_parallel_risk_generic_failure_propagates_per_role(self):
+        from webui.utils.state import AppState
+
         for failing in ("Risky", "Safe", "Neutral"):
             with self.subTest(failing=failing):
                 setup = self._setup()
+                ui = AppState()
+                ui.init_symbol_state("NVDA")
+                ui.analyzing_symbol = "NVDA"
+                setup.config.update({
+                    "_analysis_source": "webui_stream",
+                    "_webui_symbol": "NVDA",
+                    "_webui_run_generation": ui.run_generation,
+                })
 
                 def broken(state):
                     raise RuntimeError("debator exploded")
@@ -665,7 +675,9 @@ class ParallelCoordinatorStopTests(unittest.TestCase):
                     "company_of_interest": "NVDA",
                     "risk_debate_state": {"count": 0},
                 }
-                with patch("webui.utils.state.app_state") as ui:
+                with patch("webui.utils.state.app_state", ui), patch.object(
+                    ui, "update_agent_status", wraps=ui.update_agent_status
+                ) as update_status:
                     with self.assertRaises(RuntimeError):
                         coordinator(state)
 
@@ -674,11 +686,12 @@ class ParallelCoordinatorStopTests(unittest.TestCase):
                 name = f"{failing} Analyst"
                 statuses = [
                     call.args[1]
-                    for call in ui.update_agent_status.call_args_list
+                    for call in update_status.call_args_list
                     if call.args and call.args[0] == name
                 ]
                 self.assertNotIn("completed", statuses)
                 self.assertIn("pending", statuses)
+                self.assertEqual(ui.get_state("NVDA")["agent_statuses"][name], "pending")
 
     def test_parallel_risk_all_success_merges_exactly_three_speakers(self):
         setup = self._setup()

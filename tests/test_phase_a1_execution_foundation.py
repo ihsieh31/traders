@@ -548,6 +548,9 @@ class UnknownRecoveryTests(unittest.TestCase):
             lookup_broker = _mock_broker()
             found = MagicMock()
             found.id = "broker-adopted-1"
+            found.client_order_id = client_oid
+            found.symbol = "AAPL"
+            found.side = "buy"
             found.status = "accepted"
             found.filled_qty = 0
             lookup_broker.get_order_by_client_order_id.return_value = found

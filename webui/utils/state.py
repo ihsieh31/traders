@@ -284,6 +284,23 @@ class AppState:
             "report_timestamps": {}  # Track when each report was last updated
         }
 
+    def publish_agent_update(self, agent, status, *, symbol, run_generation,
+                             report_field=None, report_content=None):
+        """Publish one graph work item's UI update atomically with ownership."""
+        with self._ownership_lock:
+            if (run_generation != self.run_generation
+                    or symbol != self.analyzing_symbol or self.is_stop_requested()):
+                return False
+            state = self.get_state(symbol)
+            if state is None:
+                return False
+            if report_field is not None and report_content:
+                state["current_reports"][report_field] = report_content
+                self.update_reports_count()
+            self.update_agent_status(agent, status, symbol=symbol)
+            self.needs_ui_update = True
+            return True
+
     def update_agent_status(self, agent, status, symbol=None):
         """Update the status of an agent for a specific symbol (or current symbol if none specified)."""
         if symbol is None:

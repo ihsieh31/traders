@@ -24,6 +24,17 @@ def register_api_config_callbacks(app):
     api_configs = get_api_configs()
     api_ids = [api["id"] for api in api_configs]
     
+    @app.callback(
+        [Output(button, "disabled") for button in (
+            "save-api-keys-btn", "clear-api-keys-btn", "load-env-btn")],
+        Input("slow-refresh-interval", "n_intervals"),
+    )
+    def lock_key_changes(_):
+        from webui.utils.state import app_state
+        with app_state._ownership_lock:
+            busy = bool(app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled)
+        return busy, busy, busy
+
     # Callback to open/close the API config modal
     @app.callback(
         Output("api-config-modal", "is_open"),
@@ -122,10 +133,16 @@ def register_api_config_callbacks(app):
         # U16: an explicitly cleared store is NOT an uninitialized one —
         # never re-apply env keys after the operator pressed Clear.
         if stored_keys and stored_keys.get("_cleared"):
-            apply_api_keys_to_config(
-                {**{api["id"]: "" for api in api_configs}, "alpaca-paper": True}
-            )
-            return tuple("" for _ in api_ids) + (True, env_status)
+            if not apply_api_keys_to_config(
+                {**{api["id"]: "" for api in api_configs}, "alpaca-paper": True, "_cleared": True}
+            ):
+                raise PreventUpdate
+            cleared_status = dbc.Alert(
+                "The listed API keys are disabled. Server environment keys remain private; "
+                "use Load from .env or Save to enable them again. Separate role-specific "
+                "server credentials are configured independently.",
+                color="warning", className="mb-0 py-2")
+            return tuple("" for _ in api_ids) + (True, cleared_status)
 
         has_stored_keys = stored_keys and any(stored_keys.get(key) for key in api_ids)
         if not has_stored_keys:
@@ -133,7 +150,8 @@ def register_api_config_callbacks(app):
             # config but NEVER returned as input values — the browser only
             # sees the configured count in the status alert.
             keys_to_apply = {**env_vars, "alpaca-paper": env_alpaca_paper}
-            apply_api_keys_to_config(keys_to_apply)
+            if not apply_api_keys_to_config(keys_to_apply):
+                raise PreventUpdate
             return tuple("" for _ in api_ids) + (
                 env_alpaca_paper,
                 env_status,
@@ -142,7 +160,8 @@ def register_api_config_callbacks(app):
         # Force paper-only even for legacy stored False values.
         coerced = dict(stored_keys or {})
         coerced["alpaca-paper"] = True
-        apply_api_keys_to_config(coerced)
+        if not apply_api_keys_to_config(coerced):
+            raise PreventUpdate
         return tuple(stored_keys.get(api_id, "") for api_id in api_ids) + (
             True,
             env_status,
@@ -172,7 +191,8 @@ def register_api_config_callbacks(app):
         # Paper-only: ignore any client-supplied toggle value.
         new_keys["alpaca-paper"] = True
 
-        apply_api_keys_to_config(new_keys)
+        if not apply_api_keys_to_config(new_keys):
+            raise PreventUpdate
         return new_keys
 
     # Callback to clear all API keys
@@ -194,9 +214,10 @@ def register_api_config_callbacks(app):
         # not mistake it for an uninitialized browser and re-apply env keys;
         # also drop the runtime keys (Clear must actually clear).
         defaults = get_default_api_keys()
-        apply_api_keys_to_config(
-            {**{api["id"]: "" for api in api_configs}, "alpaca-paper": True}
-        )
+        if not apply_api_keys_to_config(
+            {**{api["id"]: "" for api in api_configs}, "alpaca-paper": True, "_cleared": True}
+        ):
+            raise PreventUpdate
         defaults["_cleared"] = True
         return tuple("" for _ in api_ids) + (True, defaults)
 
@@ -205,18 +226,21 @@ def register_api_config_callbacks(app):
         [
             *[Output(f"api-input-{api_id}", "value", allow_duplicate=True) for api_id in api_ids],
             Output("api-alpaca-paper", "value", allow_duplicate=True),
+            Output("api-keys-store", "data", allow_duplicate=True),
         ],
         Input("load-env-btn", "n_clicks"),
         prevent_initial_call=True
     )
     def load_from_env(n_clicks):
-        """Load API keys from .env file into the inputs"""
+        """Apply server-managed env keys without returning their values."""
         if not n_clicks:
             raise PreventUpdate
 
         env_vars = _env_values()
-        # Paper-only: loading from .env never enables live trading.
-        return tuple(env_vars.get(api_id, "") for api_id in api_ids) + (True,)
+        if not apply_api_keys_to_config({**env_vars, "alpaca-paper": True}):
+            raise PreventUpdate
+        # Configured status only: no server secret is returned or stored in the browser.
+        return tuple("" for _ in api_ids) + (True, get_default_api_keys())
     
     # Callback to update API key status indicators
     for api_config in api_configs:
@@ -262,7 +286,14 @@ def apply_api_keys_to_config(api_keys):
             "alpaca_use_paper": True,
         }
         
-        set_runtime_api_keys(config_keys)
+        from webui.utils.state import app_state
+        with app_state._ownership_lock:
+            if app_state.analysis_running or app_state.loop_enabled or app_state.market_hour_enabled:
+                return False
+            if not api_keys.get("_cleared"):
+                config_keys = {key: (None if value == "" else value)
+                               for key, value in config_keys.items()}
+            set_runtime_api_keys(config_keys)
         return True
     except Exception as e:
         print(f"Warning: Could not apply API keys to config: {e}")

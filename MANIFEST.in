@@ -1,1 +1,3 @@
 include requirements.txt
+recursive-include cli/static *.txt
+recursive-include webui/assets *.css

@@ -261,7 +261,7 @@ def create_api_config_modal():
                     html.Div([
                         html.I(className="fas fa-info-circle me-2"),
                         "Configure your API keys below. Keys are stored in your browser's local storage and take precedence over .env file settings. ",
-                        html.Strong("Your keys never leave your browser."),
+                        html.Strong("Entered keys are sent to this server for API requests. Server-managed keys remain hidden. Stop analysis and scheduling before changing keys. Clear disables the keys listed here until Save or Load from .env."),
                     ], className="alert alert-info mb-4"),
                     
                     # .env file status

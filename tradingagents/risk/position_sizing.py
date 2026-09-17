@@ -39,6 +39,10 @@ def compute_atr(bars, period: int = 14) -> Optional[float]:
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
 
+    if period < 1 or (high <= 0).any() or (low <= 0).any() or (close <= 0).any():
+        return None
+    if (high < low).any() or (close > high).any() or (close < low).any():
+        return None
     prev_close = close.shift(1)
     # D03: pandas .max(axis=1) skips NaN, which would fabricate an ATR from
     # partial rows. Any non-finite high/low/close in the evaluated window
@@ -81,7 +85,8 @@ def kelly_position_fraction(
         kelly_fraction = float(kelly_fraction)
     except (TypeError, ValueError):
         return 0.0
-    if not 0.0 < win_rate < 1.0 or win_loss_ratio <= 0.0 or kelly_fraction <= 0.0:
+    if (not all(math.isfinite(v) for v in (win_rate, win_loss_ratio, kelly_fraction))
+            or not 0.0 < win_rate < 1.0 or win_loss_ratio <= 0.0 or not 0.0 < kelly_fraction <= 1.0):
         return 0.0
     edge = win_rate - (1.0 - win_rate) / win_loss_ratio
     return max(0.0, edge * kelly_fraction)
@@ -113,7 +118,12 @@ class RiskParameters:
             value = getattr(self, name)
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"Invalid risk parameter {name}: {value!r}")
-        if self.atr_period < 1:
+        for name in ("risk_per_trade_pct", "kelly_fraction", "max_position_pct", "max_total_exposure_pct"):
+            if getattr(self, name) > 1:
+                raise ValueError(f"Invalid risk parameter {name}: must be at most 1")
+        if self.atr_stop_multiplier <= 0 or self.min_notional <= 0:
+            raise ValueError("ATR multiplier and minimum notional must be positive")
+        if type(self.atr_period) is not int or self.atr_period < 1:
             raise ValueError(f"Invalid risk parameter atr_period: {self.atr_period!r}")
 
     @classmethod
@@ -179,7 +189,7 @@ class PositionSizer:
             equity = float(equity)
             price = float(price)
             requested_notional = float(requested_notional)
-            current_gross_exposure = float(current_gross_exposure or 0.0)
+            current_gross_exposure = float(current_gross_exposure)
         except (TypeError, ValueError):
             return _rejection("Invalid numeric inputs for position sizing.")
 
@@ -191,6 +201,10 @@ class PositionSizer:
             )
         # D07: a non-finite ATR is not "no ATR" — it is unreadable data;
         # the default-stop fallback is only for a genuinely absent ATR.
+        try:
+            atr = float(atr) if atr is not None else None
+        except (TypeError, ValueError):
+            return _rejection(f"Invalid ATR: {atr}.")
         if atr is not None and not math.isfinite(atr):
             return _rejection(f"Invalid ATR: {atr}.")
 
@@ -203,7 +217,10 @@ class PositionSizer:
 
         notes = []
         if stop_loss_price is not None:
-            stop = float(stop_loss_price)
+            try:
+                stop = float(stop_loss_price)
+            except (TypeError, ValueError):
+                return _rejection("Invalid executable stop-loss price.")
             stop_distance = stop - price if str(side).lower() in ("sell", "short") else price - stop
             if not math.isfinite(stop) or stop <= 0 or stop_distance <= 0:
                 return _rejection("Invalid executable stop-loss price.")
@@ -250,7 +267,7 @@ class PositionSizer:
             if math.isclose(value, notional, rel_tol=1e-9, abs_tol=1e-9)
         ]
 
-        if notional < params.min_notional:
+        if not math.isfinite(notional) or notional <= 0 or notional < params.min_notional:
             return _rejection(
                 f"Sized notional {notional:.2f} is below the minimum order "
                 f"size {params.min_notional:.2f} (binding cap: {binding[0]}).",

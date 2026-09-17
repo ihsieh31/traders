@@ -1,122 +1,57 @@
-"""
-Storage callbacks for persisting user settings in localStorage
-"""
-
-from dash import Input, Output, State, callback_context as ctx
+"""Restore and persist controls with a one-time trigger and no cross-callback cycle."""
+from dash import Input, Output, State, ctx, no_update
 from webui.utils.storage import get_default_settings
+
+# IDs use hyphens while persisted keys use underscores.
+CONTROL_IDS = [
+    "ticker-input", "analyst-market", "analyst-social", "analyst-news",
+    "analyst-fundamentals", "analyst-macro", "research-depth", "allow-shorts",
+    "loop-enabled", "loop-interval", "market-hour-enabled", "market-hours-input",
+    "trade-after-analyze", "trade-dollar-amount", "llm-provider", "backend-url",
+    "output-language", "checkpoint-enabled", "quick-llm", "deep-llm",
+    "quick-llm-custom-model", "deep-llm-custom-model", "google-thinking-level",
+    "anthropic-effort", "analysis-provider", "analysis-model", "analysis-backend-url",
+    "decision-provider", "decision-model", "decision-backend-url",
+    "auto-screening-enabled", "screening-provider", "screening-model", "screening-backend-url",
+]
+CONTROL_IDS += [f"{role}-llm-{param}" for role in ("quick", "deep") for param in (
+    "reasoning-effort", "verbosity", "summary", "temperature", "top-p",
+    "max-output-tokens", "store", "parallel-tool-calls")]
 
 
 def _parse_symbols(value):
-    if isinstance(value, list):
-        return [str(symbol).strip().upper() for symbol in value if str(symbol).strip()]
-    return [symbol.strip().upper() for symbol in (value or "").split(",") if symbol.strip()]
+    values = value if isinstance(value, list) else (value or "").split(",")
+    return [str(s).strip().upper() for s in values if str(s).strip()]
+
+
+def restore_settings(stored):
+    settings = {**get_default_settings(), **(stored or {})}
+    return tuple(settings.get(component.replace("-", "_"), no_update)
+                 for component in CONTROL_IDS)
 
 
 def register_storage_callbacks(app):
-    """Register storage-related callbacks"""
+    @app.callback(
+        [Output(component, "value", allow_duplicate=True) for component in CONTROL_IDS],
+        Input("settings-hydration-trigger", "n_intervals"), State("settings-store", "data"),
+        prevent_initial_call=True,
+    )
+    def hydrate_settings(interval, stored):
+        return restore_settings(stored)
 
-    # Callback to save settings to localStorage when they change
     @app.callback(
         Output("settings-store", "data"),
-        [
-            Input("ticker-input", "value"),
-            Input("analyst-market", "value"),
-            Input("analyst-social", "value"),
-            Input("analyst-news", "value"),
-            Input("analyst-fundamentals", "value"),
-            Input("analyst-macro", "value"),
-            Input("research-depth", "value"),
-            Input("allow-shorts", "value"),
-            Input("loop-interval", "value"),
-            Input("market-hours-input", "value"),
-            Input("trade-after-analyze", "value"),
-            Input("trade-dollar-amount", "value"),
-            Input("llm-provider", "value"),
-            Input("backend-url", "value"),
-            Input("output-language", "value"),
-            Input("checkpoint-enabled", "value"),
-            Input("quick-llm", "value"),
-            Input("deep-llm", "value"),
-            Input("quick-llm-custom-model", "value"),
-            Input("deep-llm-custom-model", "value"),
-            Input("google-thinking-level", "value"),
-            Input("anthropic-effort", "value"),
-            Input("analysis-provider", "value"),
-            Input("analysis-model", "value"),
-            Input("analysis-backend-url", "value"),
-            Input("decision-provider", "value"),
-            Input("decision-model", "value"),
-            Input("decision-backend-url", "value"),
-        ],
-        [
-            State("settings-store", "data"),
-            State("loop-enabled", "value"),
-            State("market-hour-enabled", "value")
-        ],
-        prevent_initial_call=True
+        [Input(component, "value") for component in CONTROL_IDS],
+        [State("settings-store", "data"), State("settings-hydration-trigger", "n_intervals")],
+        prevent_initial_call=True,
     )
-    def save_settings(ticker_symbols, analyst_market, analyst_social, analyst_news,
-                     analyst_fundamentals, analyst_macro, research_depth, allow_shorts,
-                     loop_interval, market_hours_input,
-                     trade_after_analyze, trade_dollar_amount,
-                     llm_provider, backend_url, output_language, checkpoint_enabled,
-                     quick_llm, deep_llm, quick_llm_custom_model, deep_llm_custom_model,
-                     google_thinking_level, anthropic_effort,
-                     analysis_provider, analysis_model, analysis_backend_url,
-                     decision_provider, decision_model, decision_backend_url,
-                     current_settings, loop_enabled, market_hour_enabled):
-        """Save settings to localStorage store"""
-        
-        # Don't save if triggered by initial load
-        if not ctx.triggered:
-            return current_settings or get_default_settings()
-        
-        new_settings = {
-            "ticker_input": ", ".join(_parse_symbols(ticker_symbols)),
-            "analyst_market": analyst_market,
-            "analyst_social": analyst_social,
-            "analyst_news": analyst_news,
-            "analyst_fundamentals": analyst_fundamentals,
-            "analyst_macro": analyst_macro,
-            "research_depth": research_depth,
-            "allow_shorts": allow_shorts,
-            "loop_enabled": loop_enabled,
-            "loop_interval": loop_interval,
-            "market_hour_enabled": market_hour_enabled,
-            "market_hours_input": market_hours_input,
-            "trade_after_analyze": trade_after_analyze,
-            "trade_dollar_amount": trade_dollar_amount,
-            "llm_provider": llm_provider,
-            "backend_url": backend_url,
-            "output_language": output_language,
-            "checkpoint_enabled": checkpoint_enabled,
-            "quick_llm": quick_llm,
-            "deep_llm": deep_llm,
-            "quick_llm_custom_model": quick_llm_custom_model or "",
-            "deep_llm_custom_model": deep_llm_custom_model or "",
-            "google_thinking_level": google_thinking_level or "",
-            "anthropic_effort": anthropic_effort or "",
-            # Phase B role overrides: persisted as plain settings only —
-            # provider/model/endpoint never hold secrets, and role API keys
-            # live in environment variables, never in the UI store.
-            "analysis_provider": analysis_provider or "",
-            "analysis_model": analysis_model or "",
-            "analysis_backend_url": analysis_backend_url or "",
-            "decision_provider": decision_provider or "",
-            "decision_model": decision_model or "",
-            "decision_backend_url": decision_backend_url or "",
-        }
-        
-        # Check if settings actually changed to prevent circular updates
-        if current_settings:
-            settings_changed = False
-            for key, value in new_settings.items():
-                if current_settings.get(key) != value:
-                    settings_changed = True
-                    break
-            
-            # If no changes, don't update the store to prevent circular callback
-            if not settings_changed:
-                return current_settings
-        
-        return new_settings
+    def save_settings(*args):
+        from dash.exceptions import PreventUpdate
+        values, stored, hydrated = args[:-2], args[-2], args[-1]
+        if not hydrated:
+            raise PreventUpdate
+        settings = dict(stored or get_default_settings())
+        settings.update({component.replace("-", "_"): value
+                         for component, value in zip(CONTROL_IDS, values)})
+        settings["ticker_input"] = ", ".join(_parse_symbols(settings["ticker_input"]))
+        return no_update if settings == stored else settings

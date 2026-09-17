@@ -3,7 +3,8 @@
 from typing import Any, Dict, List, Optional
 from pydantic import ConfigDict
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import convert_to_messages
 from langchain_core.outputs import ChatResult, ChatGeneration
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from openai import OpenAI
@@ -273,96 +274,56 @@ class GPT5ChatModel(BaseChatModel):
         }
     
     def _convert_messages_to_input(self, messages: List[BaseMessage]) -> List[Dict]:
-        """Convert LangChain messages, dicts, or strings to GPT-5 input format."""
-        input_messages = []
-        
-        for message in messages:
-            # Support dict-style messages used in some agents
-            if isinstance(message, dict):
-                role = message.get("role", "user")
-                content = message.get("content", "")
-                # If content is already structured, pass through
-                if isinstance(content, list):
-                    input_messages.append({
-                        "role": "developer" if role == "system" else role,
-                        "content": content
-                    })
+        """Preserve roles and the Responses function-call/output protocol."""
+        items = []
+        for message in convert_to_messages(messages):
+            if isinstance(message, ToolMessage):
+                if not message.tool_call_id:
+                    raise ValueError("Tool result requires tool_call_id")
+                output = message.content
+                if not isinstance(output, str):
+                    output = json.dumps(output, ensure_ascii=False)
+                items.append({"type": "function_call_output",
+                              "call_id": message.tool_call_id, "output": output})
+                continue
+            roles = {"system": "developer", "human": "user", "ai": "assistant"}
+            role = roles.get(message.type)
+            if role is None:
+                role = getattr(message, "role", None)
+            if role not in ("developer", "user", "assistant"):
+                raise ValueError(f"Unsupported Responses message role: {message.type}")
+            content = message.content
+            if content:
+                if isinstance(content, str):
+                    content = [{"type": "output_text" if role == "assistant" else "input_text",
+                                "text": content}]
+                elif isinstance(content, list):
+                    content = [
+                        {**block, "type": "output_text" if role == "assistant" else "input_text"}
+                        if isinstance(block, dict) and block.get("type") == "text"
+                        else ({"type": "output_text" if role == "assistant" else "input_text", "text": block}
+                              if isinstance(block, str) else block)
+                        for block in content
+                    ]
                 else:
-                    content_type = "output_text" if role == "assistant" else "input_text"
-                    input_messages.append({
-                        "role": "developer" if role == "system" else role,
-                        "content": [
-                            {
-                                "type": content_type,
-                                "text": content
-                            }
-                        ]
-                    })
-                continue
-            
-            # Support raw string messages
-            if isinstance(message, str):
-                input_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": message
-                        }
-                    ]
-                })
-                continue
+                    raise ValueError("Unsupported Responses message content")
+                items.append({"role": role, "content": content})
+            if isinstance(message, AIMessage):
+                calls = message.tool_calls
+                if not calls:
+                    calls = message.additional_kwargs.get("tool_calls", [])
+                for call in calls:
+                    fn = call.get("function", call)
+                    args = fn.get("arguments", fn.get("args", {}))
+                    call_id = call.get("id")
+                    name = fn.get("name")
+                    if not call_id or not name:
+                        raise ValueError("Tool request requires name and call ID")
+                    items.append({"type": "function_call", "call_id": call_id,
+                                  "name": name, "arguments": args if isinstance(args, str)
+                                  else json.dumps(args, ensure_ascii=False)})
+        return items
 
-            # Support generic message objects with role/content attributes
-            if hasattr(message, "role") and hasattr(message, "content"):
-                role = getattr(message, "role") or "user"
-                content = getattr(message, "content", "")
-                content_type = "output_text" if role == "assistant" else "input_text"
-                input_messages.append({
-                    "role": "developer" if role == "system" else role,
-                    "content": [
-                        {
-                            "type": content_type,
-                            "text": content
-                        }
-                    ]
-                })
-                continue
-
-            if isinstance(message, SystemMessage):
-                # GPT-5 uses "developer" role instead of "system"
-                input_messages.append({
-                    "role": "developer",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": message.content
-                        }
-                    ]
-                })
-            elif isinstance(message, HumanMessage):
-                input_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": message.content
-                        }
-                    ]
-                })
-            elif isinstance(message, AIMessage):
-                input_messages.append({
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": message.content
-                        }
-                    ]
-                })
-        
-        return input_messages
-    
     def _extract_content_from_response(self, response) -> tuple:
         """
         Extract text content and tool calls from GPT-5 response.
@@ -742,20 +703,15 @@ class GPT5ChatModel(BaseChatModel):
 
     def invoke(self, input: Any, config: Optional[Dict] = None, **kwargs) -> AIMessage:
         """Invoke the model with input."""
-        # L04: ChatPromptValue (and any object exposing to_messages) must
-        # keep its message roles — str() collapsed a system+human prompt
-        # into one HumanMessage and dropped ToolMessages, so bound-tool
-        # agents on the Responses path lost tool call/output protocol.
-        if isinstance(input, str):
+        to_messages = getattr(input, "to_messages", None)
+        if callable(to_messages):
+            messages = to_messages()
+        elif isinstance(input, str):
             messages = [HumanMessage(content=input)]
-        elif isinstance(input, list):
-            messages = input
+        elif isinstance(input, (list, tuple)):
+            messages = convert_to_messages(input)
         else:
-            to_messages = getattr(input, "to_messages", None)
-            if callable(to_messages):
-                messages = to_messages()
-            else:
-                messages = [HumanMessage(content=str(input))]
+            raise ValueError(f"Unsupported Responses input: {type(input).__name__}")
 
         result = self._generate(messages, **kwargs)
         return result.generations[0].message

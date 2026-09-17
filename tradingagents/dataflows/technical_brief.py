@@ -897,17 +897,18 @@ def _clean_frame(df: Optional[pd.DataFrame], reference: pd.Timestamp) -> Optiona
     numeric = cleaned[["open", "high", "low", "close"]].apply(pd.to_numeric, errors="coerce")
     volume = pd.to_numeric(cleaned["volume"], errors="coerce")
     valid = (
-        numeric.notna().all(axis=1)
-        & numeric.apply(lambda s: s != float("inf")).all(axis="columns")
+        np.isfinite(numeric).all(axis=1)
         & (numeric > 0).all(axis="columns")
         & (numeric["high"] >= numeric["low"])
         & (numeric["high"] >= numeric["open"])
         & (numeric["high"] >= numeric["close"])
         & (numeric["low"] <= numeric["open"])
         & (numeric["low"] <= numeric["close"])
-        & (volume.notna())
+        & np.isfinite(volume)
         & (volume >= 0)
     )
+    cleaned[["open", "high", "low", "close"]] = numeric
+    cleaned["volume"] = volume
     cleaned = cleaned[valid]
     if cleaned.empty:
         return None
@@ -939,8 +940,8 @@ def _evaluate_frame_quality(
       own session is min(start + duration, that session's actual close), so
       early closes are honored. Daily: the last bar's ET session must equal
       the most recent completed authoritative session. Intraday: the last
-      bar must belong to the current session or the immediately previous
-      one — it must never skip an expected session.
+      bar must belong to the session with the latest expected completion
+      and lag that completion by at most one timeframe duration.
 
     Calendar unavailability makes the timeframe ``unavailable`` (fail
     closed), never stale-by-guess.
@@ -995,6 +996,7 @@ def _evaluate_frame_quality(
 
         from .market_calendar import (
             CalendarError,
+            fetch_trading_calendar,
             current_trading_date_auth,
             most_recent_completed_session_auth,
             previous_trading_day_auth,
@@ -1003,38 +1005,43 @@ def _evaluate_frame_quality(
         )
 
         eastern = ZoneInfo(_ET)
+        completed_session = most_recent_completed_session_auth(
+            now=reference.to_pydatetime(), client=calendar_client, calendar_rows=calendar_rows)
+        last_raw = cleaned["timestamp"].iloc[-1]
+        if last_raw.tz_convert(eastern).date() < completed_session:
+            # Prove staleness from the authoritative expected date before
+            # requesting calendar rows for irrelevant old history.
+            return None, TimeframeDataQuality(
+                timeframe=timeframe_key, status="stale", as_of=last_raw.isoformat(),
+                reason=f"last bar predates completed session {completed_session}")
         completion = cleaned["timestamp"] + pd.Timedelta(duration)
-        try:
-            # D04: the close-based truncation is only legitimate for bars
-            # that START inside the reference's own session. A bar starting
-            # after that session's close (extended-hours feed) must not be
-            # clipped back into the session — it keeps the full duration and
-            # is filtered below as not-yet-complete; bars of other sessions
-            # also complete by plain start + duration.
-            ref_et = reference.tz_convert(eastern)
-            today = ref_et.date()
-            today_open = session_open_et_auth(
-                today, client=calendar_client, calendar_rows=calendar_rows
-            )
-            today_close = session_close_et_auth(
-                today, client=calendar_client, calendar_rows=calendar_rows
-            )
-            open_ts = pd.Timestamp(
-                datetime.combine(today, today_open), tz=eastern
-            ).tz_convert("UTC")
-            close_ts = pd.Timestamp(
-                datetime.combine(today, today_close), tz=eastern
-            ).tz_convert("UTC")
-            bar_start_et = cleaned["timestamp"].dt.tz_convert(eastern)
-            clip_mask = (
-                (bar_start_et.dt.date == today)
-                & (bar_start_et >= open_ts)
-                & (bar_start_et < close_ts)
-            )
-            completion = completion.mask(clip_mask, completion.clip(upper=close_ts))
-        except CalendarError:
-            pass
-        cleaned = cleaned[completion <= reference].reset_index(drop=True)
+        bar_days = cleaned["timestamp"].dt.tz_convert(eastern).dt.date
+        in_session = pd.Series(False, index=cleaned.index)
+        # One bounded range fetch, rather than one remote calendar request
+        # for every historical day and every timeframe.
+        bar_calendar_rows = calendar_rows
+        if bar_calendar_rows is None:
+            bar_calendar_rows = fetch_trading_calendar(
+                min(bar_days) - timedelta(days=7), max(bar_days) + timedelta(days=7),
+                client=calendar_client)
+        for day in bar_days.unique():
+            close_t = session_close_et_auth(day, client=calendar_client, calendar_rows=bar_calendar_rows)
+            close_ts = pd.Timestamp(datetime.combine(day, close_t), tz=eastern).tz_convert("UTC")
+            day_mask = bar_days == day
+            if timeframe_key == "1d":
+                # Daily timestamps label a session (typically midnight),
+                # rather than a 24-hour bar beginning at regular open.
+                completion = completion.mask(day_mask, close_ts)
+                in_session |= day_mask
+            else:
+                open_t = session_open_et_auth(day, client=calendar_client, calendar_rows=bar_calendar_rows)
+                open_ts = pd.Timestamp(datetime.combine(day, open_t), tz=eastern).tz_convert("UTC")
+                # Hour-aligned vendor buckets may begin before 09:30 but
+                # must overlap the regular session and start before close.
+                regular = day_mask & (cleaned["timestamp"] < close_ts) & (completion > open_ts)
+                in_session |= regular
+                completion = completion.mask(regular, completion.clip(upper=close_ts))
+        cleaned = cleaned[in_session & (completion <= reference)].reset_index(drop=True)
         if cleaned.empty:
             return None, TimeframeDataQuality(
                 timeframe=timeframe_key, status="unavailable", as_of=None,
@@ -1063,25 +1070,38 @@ def _evaluate_frame_quality(
             current = current_trading_date_auth(
                 now=now_arg, client=calendar_client, calendar_rows=calendar_rows
             )
-            if last_session == current:
-                quality = TimeframeDataQuality(
-                    timeframe=timeframe_key, status="fresh", as_of=as_of, reason=None,
-                )
-            else:
-                previous = previous_trading_day_auth(
+            def session_bounds(day):
+                return tuple(pd.Timestamp(datetime.combine(day, clock), tz=eastern)
+                             .tz_convert("UTC") for clock in (
+                                 session_open_et_auth(day, client=calendar_client,
+                                                      calendar_rows=calendar_rows),
+                                 session_close_et_auth(day, client=calendar_client,
+                                                       calendar_rows=calendar_rows)))
+
+            session_open, session_close = session_bounds(current)
+            step = pd.Timedelta(duration)
+            # Anchor expected completions to the authoritative session open.
+            # Before its first completion, the previous session's close is due.
+            if reference < min(session_open + step, session_close):
+                current = previous_trading_day_auth(
                     current, client=calendar_client, calendar_rows=calendar_rows
                 )
-                if last_session == previous:
-                    quality = TimeframeDataQuality(
-                        timeframe=timeframe_key, status="fresh", as_of=as_of, reason=None,
-                    )
-                else:
-                    quality = TimeframeDataQuality(
-                        timeframe=timeframe_key, status="stale", as_of=as_of,
-                        reason=f"last {timeframe_key} bar is from session "
-                               f"{last_session.isoformat()}, which skips past the "
-                               f"previous completed session {previous.isoformat()}",
-                    )
+                session_open, session_close = session_bounds(current)
+            if reference >= session_close:
+                expected = session_close
+            else:
+                expected = session_open + ((reference - session_open) // step) * step
+            # Allow one bar of lag for feed delay and hourly alignment differences.
+            # Never bridge a missing session with this tolerance.
+            last_completion = min(last_ts + step, session_close)
+            gap = expected - last_completion
+            fresh = last_session == current and last_completion <= reference and gap <= step
+            quality = TimeframeDataQuality(
+                timeframe=timeframe_key, status="fresh" if fresh else "stale",
+                as_of=as_of, reason=None if fresh else
+                f"last {timeframe_key} bar does not meet expected completion "
+                f"{expected.isoformat()} in session {current}; maximum lag is {step}",
+            )
         return cleaned, quality
     except Exception as exc:
         # Calendar outage / unreadable rows: freshness cannot be proven, so

@@ -10,6 +10,7 @@ import json
 from tradingagents.dataflows.alpaca_utils import AlpacaUtils
 from tradingagents.execution import ExecutionService
 from webui.components.alpaca_account import (
+    render_account_summary,
     ORDERS_PAGE_SIZE,
     render_orders_pagination,
     render_orders_table_body,
@@ -20,6 +21,16 @@ from webui.components.alpaca_account import (
 
 def register_trading_callbacks(app):
     """Register all trading and Alpaca-related callbacks"""
+
+    @app.callback(
+        Output("account-summary-container", "children"),
+        [Input("slow-refresh-interval", "n_intervals"), Input("refresh-btn", "n_clicks"),
+         Input("refresh-alpaca-btn", "n_clicks"), Input("api-keys-store", "data")],
+    )
+    def update_account_summary(*_):
+        from datetime import datetime, timezone
+        return [render_account_summary(), html.Small(
+            "Updated " + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))]
 
     @app.callback(
         Output("alpaca-account-title", "children"),

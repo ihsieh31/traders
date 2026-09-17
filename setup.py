@@ -50,6 +50,8 @@ setup(
     packages=find_namespace_packages(include=["tradingagents*", "cli*", "webui*"]),
     include_package_data=True,
     package_data={
+        "cli": ["static/*.txt"],
+        "webui": ["assets/*.css"],
         "tradingagents.prompts": [
             "templates/*.md",
             "templates/*/*.md",

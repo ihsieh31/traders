@@ -19,9 +19,11 @@ CRYPTO_DAYS_PER_YEAR = 365
 
 
 def _as_series(equity_curve) -> pd.Series:
-    if isinstance(equity_curve, pd.Series):
-        return equity_curve.astype(float)
-    return pd.Series(list(equity_curve), dtype=float)
+    curve = (equity_curve.astype(float) if isinstance(equity_curve, pd.Series)
+             else pd.Series(list(equity_curve), dtype=float))
+    if not curve.map(math.isfinite).all() or (curve < 0).any():
+        raise ValueError("Equity curve must contain finite, non-negative values.")
+    return curve
 
 
 def cumulative_return(equity_curve) -> Optional[float]:
@@ -83,6 +85,8 @@ def max_drawdown(equity_curve) -> Optional[float]:
 def win_rate(trade_pnls: Sequence[float]) -> Optional[float]:
     """Fraction of closed trades with positive net PnL; None when no trades."""
     pnls = [float(p) for p in trade_pnls]
+    if not all(math.isfinite(p) for p in pnls):
+        raise ValueError("Trade P&L must contain finite values.")
     if not pnls:
         return None
     return sum(1 for p in pnls if p > 0) / len(pnls)

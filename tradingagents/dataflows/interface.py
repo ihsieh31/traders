@@ -1719,8 +1719,15 @@ def get_alpaca_data(
             range_pct = (daily_range / latest_data['close']) * 100
             result += f"Daily Range: ${latest_data['low']:.2f} - ${latest_data['high']:.2f} ({range_pct:.2f}%)\n"
         
-        # Add latest quote if available
+        # Quotes are present-time evidence, never historical window evidence.
         try:
+            if end_date is not None:
+                # An exact instant is an as-of boundary even on today's date.
+                # Only a live date-only window may include a present quote.
+                import re
+                if (not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(end_date))
+                        or analysis_date_mode(str(end_date)) != "live"):
+                    return result
             latest_quote = AlpacaUtils.get_latest_quote(symbol)
             if latest_quote:
                 result += f"\n## Latest Real-Time Quote:\n"

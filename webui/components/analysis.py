@@ -32,13 +32,26 @@ def mark_provider_stop(ticker: str, exc: ProviderFailure) -> None:
     print(f"[SCHEDULER] {app_state.provider_stop_reason}")
 
 
-def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
+def execute_trade_after_analysis(ticker, allow_shorts, trade_amount, *, run_generation=None):
     """Execute trade based on analysis results"""
+    state = None
+    my_generation = app_state.run_generation if run_generation is None else run_generation
+
+    def can_submit():
+        with app_state._ownership_lock:
+            return (my_generation == app_state.run_generation
+                    and not app_state.is_stop_requested()
+                    and app_state.analyzing_symbol in (None, ticker)
+                    and state is not None and app_state.get_state(ticker) is state)
+
     try:
         print(f"[TRADE] Starting trade execution for {ticker}")
 
         # Get the current state for this symbol
-        state = app_state.get_state(ticker)
+        with app_state._ownership_lock:
+            state = app_state.get_state(ticker)
+            if my_generation != app_state.run_generation or app_state.is_stop_requested():
+                return
         if not state:
             print(f"[TRADE] No state found for {ticker}, skipping trade execution")
             return
@@ -95,14 +108,16 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
                 f"[TRADE] No schema-valid TradeIntent for {ticker}; "
                 "fail-closed with zero broker calls (legacy signal fallback removed)"
             )
-            state["trading_results"] = {
-                "error": (
-                    "Missing schema-valid TradeIntent; trade skipped fail-closed. "
-                    "Legacy signal execution is disabled in Phase A.1."
-                ),
-                "fail_closed": True,
-                "broker_attempted": False,
-            }
+            with app_state._ownership_lock:
+                if can_submit():
+                    state["trading_results"] = {
+                        "error": (
+                            "Missing schema-valid TradeIntent; trade skipped fail-closed. "
+                            "Legacy signal execution is disabled in Phase A.1."
+                        ),
+                        "fail_closed": True,
+                        "broker_attempted": False,
+                    }
             return
         try:
             from tradingagents.dataflows.config import get_config
@@ -116,6 +131,7 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
             base_trade_notional_usd=trade_amount,
             allow_shorts=allow_shorts,
             config=_auto_config,
+            can_submit=can_submit,
         )
         # Normalize to the legacy result shape expected below.
         if "actions" not in result:
@@ -148,10 +164,10 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
                 print(f"[TRADE] {success}")
 
             # Store trading results in state for UI display
-            state["trading_results"] = result
-
-            # Signal that a trade occurred to trigger Alpaca data refresh
-            app_state.signal_trade_occurred()
+            with app_state._ownership_lock:
+                if can_submit():
+                    state["trading_results"] = result
+                    app_state.signal_trade_occurred()
         else:
             print(f"[TRADE] Trading execution failed for {ticker}")
             for success in successful_actions:
@@ -162,19 +178,21 @@ def execute_trade_after_analysis(ticker, allow_shorts, trade_amount):
                 print(f"[TRADE] {result['error']}")
 
             # Store error information
-            state["trading_results"] = {
-                "error": result.get("error", "One or more trading actions failed"),
-                "details": failed_actions,
-                "raw_result": result,
-            }
+            with app_state._ownership_lock:
+                if can_submit():
+                    state["trading_results"] = {
+                        "error": result.get("error", "One or more trading actions failed"),
+                        "details": failed_actions,
+                        "raw_result": result,
+                    }
 
     except Exception as e:
         print(f"[TRADE] Error executing trade for {ticker}: {e}")
         import traceback
         traceback.print_exc()
-        state = app_state.get_state(ticker)
-        if state:
-            state["trading_results"] = {"error": f"Trading execution error: {str(e)}"}
+        with app_state._ownership_lock:
+            if can_submit():
+                state["trading_results"] = {"error": f"Trading execution error: {str(e)}"}
 
 
 def run_analysis(
@@ -235,15 +253,14 @@ def run_analysis(
         current_date = current_analysis_date()
 
         print(f"Starting real-time analysis for {ticker} with current date: {current_date}")
-        current_state = app_state.get_state(ticker)
-        if not current_state:
-            # U12: missing symbol state — fail with an explicit result
-            # instead of returning None (the finally block would otherwise
-            # raise UnboundLocalError on current_state and mask this path).
-            print(f"Error: No state found for {ticker}")
-            return {"status": "failed", "symbol": ticker, "error": f"no symbol state for {ticker}"}
-        current_state["analysis_running"] = True
-        current_state["analysis_complete"] = False
+        with app_state._ownership_lock:
+            if _run_is_stale():
+                return {"status": "discarded", "symbol": ticker, "error": "stale dispatch"}
+            current_state = app_state.get_state(ticker)
+            if not current_state:
+                return {"status": "failed", "symbol": ticker, "error": f"no symbol state for {ticker}"}
+            current_state["analysis_running"] = True
+            current_state["analysis_complete"] = False
 
         # Handle both new dict format and legacy integer format
         if isinstance(research_depth_config, dict):
@@ -276,6 +293,10 @@ def run_analysis(
         for key, value in (provider_settings or {}).items():
             if value not in (None, ""):
                 config[key] = value
+        # Dispatch identity belongs to this graph, including resumed checkpoints;
+        # it must never be inferred from mutable process state inside a node.
+        config["_webui_symbol"] = ticker
+        config["_webui_run_generation"] = my_generation
 
         # Initialize TradingAgentsGraph
         print(f"Initializing TradingAgentsGraph with analysts: {selected_analysts}")
@@ -303,7 +324,9 @@ def run_analysis(
         # Status updates are now handled in the parallel execution coordinator
 
         # Force an initial UI update
-        app_state.needs_ui_update = True
+        with app_state._ownership_lock:
+            if not _run_is_stale():
+                app_state.needs_ui_update = True
 
         # Run analysis with tracing using current date
         print(f"Starting graph stream for {ticker} with current market data")
@@ -323,7 +346,9 @@ def run_analysis(
                     chunk, symbol=ticker, run_generation=my_generation
                 )
 
-                app_state.needs_ui_update = True
+                with app_state._ownership_lock:
+                    if not _run_is_stale():
+                        app_state.needs_ui_update = True
 
                 # Update progress bar if provided
                 if progress is not None:
@@ -338,6 +363,10 @@ def run_analysis(
         finally:
             if checkpointer_ctx is not None:
                 checkpointer_ctx.__exit__(None, None, None)
+
+        if _run_is_stale():
+            return {"status": "discarded", "symbol": ticker,
+                    "error": "a stop invalidated this run; result discarded"}
 
         # Extract final results
         if trace:
@@ -389,35 +418,26 @@ def run_analysis(
         # NEW: Persist the extracted decision so the trading engine can act on it directly
         # F02 boundary: a stale generation must not overwrite the shared
         # executable result — a newer run may already own this symbol.
-        if _run_is_stale():
-            print(
-                f"[ANALYSIS] {ticker}: stale run generation "
-                f"({my_generation} != {app_state.run_generation}); result "
-                "discarded without trading"
-            )
-            return {"status": "discarded", "symbol": ticker,
-                    "error": "a stop invalidated this run; result discarded"}
-
-        current_state["recommended_action"] = decision
-        current_state["final_trade_intent"] = trade_intent
-
-        # Mark all agents as completed
-        for agent in current_state["agent_statuses"]:
-            app_state.update_agent_status(agent, "completed")
-
-        # Set final results
-        current_state["analysis_results"] = {
-            "ticker": ticker,
-            "date": current_date,
-            "decision": decision,
-            "trade_intent": trade_intent,
-            "full_state": final_state,
-        }
-
-        # Use real chart data with current date (no end_date means most recent data)
-        current_state["chart_data"] = create_chart(ticker, period="1y", end_date=None)
-
-        current_state["analysis_complete"] = True
+        # Fetch outside the ownership lock, then re-check atomically with all
+        # result writes. Stop/Start can invalidate the work during this fetch.
+        chart_data = create_chart(ticker, period="1y", end_date=None)
+        with app_state._ownership_lock:
+            if (_run_is_stale() or app_state.get_state(ticker) is not current_state
+                    or app_state.analyzing_symbol not in (None, ticker)
+                    or app_state.is_stop_requested()):
+                return {"status": "discarded", "symbol": ticker,
+                        "error": "a stop invalidated this run; result discarded"}
+            current_state["recommended_action"] = decision
+            current_state["final_trade_intent"] = trade_intent
+            for agent in current_state["agent_statuses"]:
+                app_state.update_agent_status(agent, "completed", symbol=ticker)
+            current_state["analysis_results"] = {
+                "ticker": ticker, "date": current_date, "decision": decision,
+                "trade_intent": trade_intent, "full_state": final_state,
+            }
+            current_state["chart_data"] = chart_data
+            current_state["analysis_complete"] = True
+            app_state.needs_ui_update = True
 
         # Execute trade if enabled
         trade_enabled = getattr(app_state, 'trade_enabled', False)
@@ -444,12 +464,15 @@ def run_analysis(
 
         if trade_enabled:
             print(f"[TRADE] Trading enabled for {ticker}, executing trade with ${trade_amount}")
-            execute_trade_after_analysis(ticker, allow_shorts, trade_amount)
+            execute_trade_after_analysis(ticker, allow_shorts, trade_amount,
+                                         run_generation=my_generation)
         else:
             print(f"[TRADE] Trading disabled for {ticker}, skipping trade execution")
 
         # Final UI update to show completion
-        app_state.needs_ui_update = True
+        with app_state._ownership_lock:
+            if not _run_is_stale():
+                app_state.needs_ui_update = True
 
     except ProviderFailure as exc:
         # Phase B: the whole run stops on provider exhaustion — no partial
@@ -478,9 +501,12 @@ def run_analysis(
             result = {"status": "discarded", "symbol": ticker,
                       "error": f"provider failure in stale run: {exc}"}
         else:
-            mark_provider_stop(ticker, exc)
-            result = {"status": "stopped", "symbol": ticker,
-                      "error": str(exc)}
+            with app_state._ownership_lock:
+                if _run_is_stale():
+                    result = {"status": "discarded", "symbol": ticker, "error": str(exc)}
+                else:
+                    mark_provider_stop(ticker, exc)
+                    result = {"status": "stopped", "symbol": ticker, "error": str(exc)}
         if progress is not None:
             progress(1.0)
     except Exception as e:
@@ -507,8 +533,9 @@ def run_analysis(
         # Mark analysis as no longer running — but only for the run that
         # still owns the current generation (F02): a stale run returning
         # from a blocked LLM call must never clear a newer run's flag.
-        if current_state is not None and not _run_is_stale():
-            current_state["analysis_running"] = False
+        with app_state._ownership_lock:
+            if current_state is not None and not _run_is_stale():
+                current_state["analysis_running"] = False
 
     return result
 
@@ -598,7 +625,10 @@ def start_analysis(
         print(f"Creating initial chart for {ticker} with current market data")
         current_state = app_state.get_state(ticker)
         if current_state:
-            current_state["chart_data"] = create_chart(ticker, period="1y", end_date=None)
+            chart_data = create_chart(ticker, period="1y", end_date=None)
+            with app_state._ownership_lock:
+                if not _work_is_stale() and app_state.get_state(ticker) is current_state:
+                    current_state["chart_data"] = chart_data
     except Exception as e:
         print(f"Error creating initial chart: {e}")
         import traceback

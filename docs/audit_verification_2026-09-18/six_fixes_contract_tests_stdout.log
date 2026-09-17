@@ -1,0 +1,13 @@
+............................................. [ 56%]
+..................................                                       [100%]
+=============================== warnings summary ===============================
+.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6
+  /Users/zongen/Downloads/codex/tradingAlpaca/.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+.venv-p2/lib/python3.12/site-packages/langgraph/cache/base/__init__.py:8
+  /Users/zongen/Downloads/codex/tradingAlpaca/.venv-p2/lib/python3.12/site-packages/langgraph/cache/base/__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+79 passed, 2 warnings, 27 subtests passed in 9.28s

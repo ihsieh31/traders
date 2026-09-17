@@ -1,3 +1,6 @@
+from tradingagents.agents.utils.tool_call_messages import (
+    result_tool_calls as _result_tool_calls, assistant_tool_message,
+)
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
@@ -13,15 +16,6 @@ except ImportError:
     # Fallback for when webui is not available
     def capture_agent_prompt(report_type, prompt_content, symbol=None):
         pass
-
-
-def _result_tool_calls(result) -> list:
-    """L02: standard LangChain .tool_calls first (Anthropic/Google
-    adapters), legacy raw additional_kwargs["tool_calls"] second."""
-    standard = getattr(result, "tool_calls", None)
-    if standard:
-        return list(standard)
-    return list((getattr(result, "additional_kwargs", {}) or {}).get("tool_calls") or [])
 
 
 def create_fundamentals_analyst(llm, toolkit):
@@ -192,7 +186,9 @@ def create_fundamentals_analyst(llm, toolkit):
             # Handle iterative tool calls until the model stops requesting them
             while tools and _result_tool_calls(result) and iteration_count < max_tool_iterations:
                 iteration_count += 1
-                for tool_call in _result_tool_calls(result):
+                tool_calls = _result_tool_calls(result)
+                messages_history.append(assistant_tool_message(result, tool_calls))
+                for tool_call in tool_calls:
                     # Handle different tool call structures
                     if isinstance(tool_call, dict):
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
@@ -238,16 +234,11 @@ def create_fundamentals_analyst(llm, toolkit):
 
                     # Append the assistant tool call and tool result messages so the LLM can continue the conversation
                     tool_call_id = tool_call.get("id") or tool_call.get("tool_call_id")
-                    ai_tool_call_msg = AIMessage(
-                        content="",
-                        additional_kwargs={"tool_calls": [tool_call]},
-                    )
                     tool_msg = ToolMessage(
                         content=str(tool_result),
                         tool_call_id=tool_call_id,
                     )
 
-                    messages_history.append(ai_tool_call_msg)
                     messages_history.append(tool_msg)
 
                 # Ask the LLM to continue with the new context
@@ -255,7 +246,7 @@ def create_fundamentals_analyst(llm, toolkit):
 
             tool_loop_exhausted = bool(
                 tools
-                and getattr(result, "additional_kwargs", {}).get("tool_calls")
+                and _result_tool_calls(result)
             )
             if tool_loop_exhausted:
                 # H-08: the model still demanded tool calls after the last
