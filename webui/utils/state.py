@@ -2,6 +2,8 @@
 Trading Agents Framework - State Management
 """
 
+import threading
+
 # Global variables for tracking state
 class AppState:
     def __init__(self):
@@ -57,6 +59,11 @@ class AppState:
         # a Stop→immediate Start cannot resurrect old work through the
         # cleared stop flags.
         self.run_generation = 0
+
+        # Serializes ownership transitions (stop/new-symbol dispatch) against
+        # per-chunk state writes so a Stop cannot land between the ownership
+        # check and the write (audit batch 3: check-then-act window).
+        self._ownership_lock = threading.RLock()
 
         # Phase B: set when an LLM provider failure stops a run. Auto
         # dispatch (loop/market-hour) checks this and halts until the
@@ -164,29 +171,30 @@ class AppState:
 
     def get_next_symbol(self):
         """Get the next symbol from the queue for analysis (without changing UI display)."""
-        if self.analysis_queue:
-            next_symbol = self.analysis_queue.pop(0)
-            
-            # Set the symbol being analyzed (backend tracking)
-            self.analyzing_symbol = next_symbol
-            
-            # Initialize state if needed
-            if next_symbol not in self.symbol_states:
-                self.init_symbol_state(next_symbol)
-            else:
-                # Reset session for existing symbol to start fresh analysis
-                self.start_new_session_for_symbol(next_symbol)
-            
-            # Don't auto-switch UI display - let user control which symbol to view
-            # Only set current_symbol if it's not already set (for initial setup)
-            if self.current_symbol is None:
-                self.current_symbol = next_symbol
-            
-            return next_symbol
-            
-        # No more symbols to analyze
-        self.analyzing_symbol = None
-        return None
+        with self._ownership_lock:
+            if self.analysis_queue:
+                next_symbol = self.analysis_queue.pop(0)
+
+                # Set the symbol being analyzed (backend tracking)
+                self.analyzing_symbol = next_symbol
+
+                # Initialize state if needed
+                if next_symbol not in self.symbol_states:
+                    self.init_symbol_state(next_symbol)
+                else:
+                    # Reset session for existing symbol to start fresh analysis
+                    self.start_new_session_for_symbol(next_symbol)
+
+                # Don't auto-switch UI display - let user control which symbol to view
+                # Only set current_symbol if it's not already set (for initial setup)
+                if self.current_symbol is None:
+                    self.current_symbol = next_symbol
+
+                return next_symbol
+
+            # No more symbols to analyze
+            self.analyzing_symbol = None
+            return None
 
     def get_state(self, symbol):
         """Get the state for a specific symbol."""
@@ -525,13 +533,14 @@ class AppState:
 
     def stop_loop_mode(self):
         """Stop the looping mode."""
-        self.stop_loop = True
-        self.stop_requested = True  # F10: universal stop, not just scheduling
-        # F02: a stop invalidates every already-dispatched work item, even
-        # one still blocked inside a long LLM call.
-        self.run_generation += 1
-        self.loop_enabled = False
-        self.analysis_running = False
+        with self._ownership_lock:
+            self.stop_loop = True
+            self.stop_requested = True  # F10: universal stop, not just scheduling
+            # F02: a stop invalidates every already-dispatched work item, even
+            # one still blocked inside a long LLM call.
+            self.run_generation += 1
+            self.loop_enabled = False
+            self.analysis_running = False
         print("[STATE] Stopping loop mode")
 
     def start_market_hour_mode(self, symbols, config, hours):
@@ -546,21 +555,23 @@ class AppState:
 
     def stop_market_hour_mode(self):
         """Stop the market hour trading mode."""
-        self.stop_market_hour = True
-        self.stop_requested = True  # F10: universal stop, not just scheduling
-        # F02: a stop invalidates every already-dispatched work item.
-        self.run_generation += 1
-        self.market_hour_enabled = False
-        self.analysis_running = False
+        with self._ownership_lock:
+            self.stop_market_hour = True
+            self.stop_requested = True  # F10: universal stop, not just scheduling
+            # F02: a stop invalidates every already-dispatched work item.
+            self.run_generation += 1
+            self.market_hour_enabled = False
+            self.analysis_running = False
         print("[STATE] Stopping market hour mode")
 
     def request_stop(self):
         """F10: universal stop for every mode (single/loop/market-hour)."""
-        self.stop_requested = True
-        self.stop_loop = True
-        self.stop_market_hour = True
-        # F02: a stop invalidates every already-dispatched work item.
-        self.run_generation += 1
+        with self._ownership_lock:
+            self.stop_requested = True
+            self.stop_loop = True
+            self.stop_market_hour = True
+            # F02: a stop invalidates every already-dispatched work item.
+            self.run_generation += 1
 
     def is_stop_requested(self) -> bool:
         return bool(getattr(self, "stop_requested", False))
@@ -604,16 +615,31 @@ class AppState:
                 return False
         return True
 
-    def process_chunk_updates(self, chunk):
-        """Process chunk updates from the graph stream for the symbol currently being analyzed."""
-        state = self.get_analyzing_state()
-        if not state:
-            # Fallback to current symbol if no analyzing symbol is set
-            state = self.get_current_state()
-            if not state:
-                return
+    def process_chunk_updates(self, chunk, *, symbol=None, run_generation=None):
+        """Apply stream updates only to the work item's current owner.
 
-        analyzing_symbol = self.analyzing_symbol or self.current_symbol
+        The ownership check and the state writes below run under
+        ``_ownership_lock`` so a Stop or next-symbol dispatch cannot land
+        between validation and the writes.
+        """
+        with self._ownership_lock:
+            return self._process_chunk_updates_locked(
+                chunk, symbol=symbol, run_generation=run_generation
+            )
+
+    def _process_chunk_updates_locked(self, chunk, *, symbol=None, run_generation=None):
+        if run_generation is not None and run_generation != self.run_generation:
+            return
+        if symbol is not None:
+            if symbol != self.analyzing_symbol or self.is_stop_requested():
+                return
+            analyzing_symbol = symbol
+        else:
+            analyzing_symbol = self.analyzing_symbol or self.current_symbol
+        state = self.get_state(analyzing_symbol)
+        if not state:
+            return
+
         ui_update_needed = False
 
         # Map report types to agent names

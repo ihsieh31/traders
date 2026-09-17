@@ -311,7 +311,11 @@ def run_analysis(
                 trace.append(chunk)
 
                 # Process intermediate results
-                app_state.process_chunk_updates(chunk)
+                if _run_is_stale():
+                    break
+                app_state.process_chunk_updates(
+                    chunk, symbol=ticker, run_generation=my_generation
+                )
 
                 app_state.needs_ui_update = True
 
