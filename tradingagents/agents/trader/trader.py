@@ -248,7 +248,10 @@ USER MESSAGE:
 
         result = AIMessage(content=analysis_content)
 
-        return {
+        # L01: broker_account_id must travel through the graph channel, not
+        # only the state-mutation side effect — a plain dict merge in
+        # LangGraph does not propagate it to the Risk Manager otherwise.
+        out = {
             "messages": [result],
             "trader_investment_plan": analysis_content,
             "sender": name,
@@ -256,5 +259,8 @@ USER MESSAGE:
             "current_position": current_position,
             "recommended_action": extracted_recommendation,
         }
+        if broker_account_id is not None:
+            out["broker_account_id"] = broker_account_id
+        return out
 
     return functools.partial(trader_node, name="Trader")

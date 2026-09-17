@@ -312,6 +312,9 @@ def create_risk_manager(llm, memory, config=None):
             "trading_mode": trading_mode,
             "current_position": current_position,
             "recommended_action": extracted_recommendation,
+            # L01: re-publish the account identity the Decision context was
+            # captured against so the journal/graph shows the verified owner.
+            "broker_account_id": state.get("broker_account_id"),
         }
 
     return risk_manager_node

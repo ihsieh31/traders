@@ -110,3 +110,8 @@ class AgentState(MessagesState):
     trading_mode: Annotated[str, "investment or trading execution mode"]
     current_position: Annotated[str, "Live position state at final risk decision time"]
     recommended_action: Annotated[str, "Final executable signal extracted from the intent"]
+    broker_account_id: Annotated[
+        str,
+        "Broker account identity observed by the Trader; the Risk Manager "
+        "recaptures against the SAME account (an account switch fails closed)",
+    ]
