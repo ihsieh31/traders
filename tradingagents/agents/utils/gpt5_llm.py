@@ -810,6 +810,12 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
         kwargs["max_retries"] = 0
         if callbacks:
             kwargs["callbacks"] = callbacks
+        # F08/L03: the configured finite request timeout must reach the
+        # Chat Completions branch too — ChatOpenAI's canonical field is
+        # request_timeout, so a caller-supplied timeout otherwise dies here
+        # and the chat model falls back to its default (no timeout).
+        if timeout is not None and "timeout" not in kwargs and "request_timeout" not in kwargs:
+            kwargs["request_timeout"] = timeout
         chat_kwargs = {"model": model_name, **kwargs}
         if api_key is not None:
             chat_kwargs["openai_api_key"] = api_key
