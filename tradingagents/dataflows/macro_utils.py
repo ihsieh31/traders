@@ -213,85 +213,117 @@ def get_economic_indicators_report(curr_date: str, lookback_days: int = 90) -> s
             result += f"### {indicator_name}\n**Error**: {data['error']}\n\n"
             continue
 
-        observations = data.get("observations", [])
-        if not observations:
-            result += f"### {indicator_name}\n**No data available**\n\n"
-            continue
-
-        # Filter out missing values
-        valid_obs = [obs for obs in observations if obs.get("value") != "."]
-        if not valid_obs:
-            result += f"### {indicator_name}\n**No valid data available**\n\n"
-            continue
-
-        latest = valid_obs[0]
-        latest_value = float(latest["value"])
-        latest_date = latest["date"]
-
-        result += f"### {indicator_name}\n"
-        result += f"- **Latest Value**: {latest_value:.2f} {config['unit']} (as of {latest_date})\n"
-        result += f"- **Description**: {config['description']}\n"
-
-        # Calculate changes if we have enough data
-        if len(valid_obs) >= 2:
-            previous = valid_obs[1]
-            previous_value = float(previous["value"])
-            change = latest_value - previous_value
-            change_pct = (change / previous_value) * 100 if previous_value != 0 else 0
-
-            result += f"- **Change**: {change:+.2f} {config['unit']} ({change_pct:+.2f}%)\n"
-            result += f"- **Previous**: {previous_value:.2f} {config['unit']} (as of {previous['date']})\n"
-
-        # Calculate year-over-year change for inflation indicators
-        if config.get("yoy") and len(valid_obs) >= 12:
-            year_ago = valid_obs[11] if len(valid_obs) > 11 else valid_obs[-1]
-            year_ago_value = float(year_ago["value"])
-            yoy_change = ((latest_value - year_ago_value) / year_ago_value) * 100
-            result += f"- **Year-over-Year**: {yoy_change:+.2f}%\n"
-
-        # Add interpretation
-        if indicator_name == "Federal Funds Rate":
-            if latest_value > 4.0:
-                result += "- **💡 Analysis**: Restrictive monetary policy stance\n"
-            elif latest_value < 2.0:
-                result += "- **💡 Analysis**: Accommodative monetary policy stance\n"
-            else:
-                result += "- **💡 Analysis**: Neutral monetary policy stance\n"
-
-        elif "CPI" in indicator_name or "PPI" in indicator_name:
-            if len(valid_obs) >= 12:
-                if yoy_change > 3.0:
-                    result += "- **💡 Analysis**: Above Fed's 2% inflation target\n"
-                elif yoy_change < 1.0:
-                    result += "- **💡 Analysis**: Below Fed's 2% inflation target\n"
-                else:
-                    result += "- **💡 Analysis**: Near Fed's 2% inflation target\n"
-
-        elif indicator_name == "Unemployment Rate":
-            if latest_value < 4.0:
-                result += "- **💡 Analysis**: Very low unemployment, tight labor market\n"
-            elif latest_value > 6.0:
-                result += "- **💡 Analysis**: Elevated unemployment, loose labor market\n"
-            else:
-                result += "- **💡 Analysis**: Moderate unemployment levels\n"
-
-        elif "PMI" in indicator_name:
-            if latest_value > 50:
-                result += "- **💡 Analysis**: Expanding manufacturing sector\n"
-            else:
-                result += "- **💡 Analysis**: Contracting manufacturing sector\n"
-
-        elif indicator_name == "VIX":
-            if latest_value > 30:
-                result += "- **💡 Analysis**: High market volatility/fear\n"
-            elif latest_value < 15:
-                result += "- **💡 Analysis**: Low market volatility/complacency\n"
-            else:
-                result += "- **💡 Analysis**: Moderate market volatility\n"
-
-        result += "\n"
+        result += _format_indicator_section(indicator_name, config, data.get("observations", []))
 
     return result
+
+
+def _format_indicator_section(indicator_name: str, config: dict, observations: list) -> str:
+    """Render one indicator's markdown section from raw FRED observations.
+
+    D14: the YoY comparison matches the latest observation's calendar month
+    one year earlier — index 11 was merely the 11th previous observation,
+    which is the wrong month whenever any month is missing. When the
+    year-ago month is unavailable, no YoY line is produced.
+    """
+    if not observations:
+        return f"### {indicator_name}\n**No data available**\n\n"
+
+    # Filter out missing values
+    valid_obs = [obs for obs in observations if obs.get("value") != "."]
+    if not valid_obs:
+        return f"### {indicator_name}\n**No valid data available**\n\n"
+
+    latest = valid_obs[0]
+    latest_value = float(latest["value"])
+    latest_date = latest["date"]
+
+    result = f"### {indicator_name}\n"
+    result += f"- **Latest Value**: {latest_value:.2f} {config['unit']} (as of {latest_date})\n"
+    result += f"- **Description**: {config['description']}\n"
+
+    # Calculate changes if we have enough data
+    if len(valid_obs) >= 2:
+        previous = valid_obs[1]
+        previous_value = float(previous["value"])
+        change = latest_value - previous_value
+        change_pct = (change / previous_value) * 100 if previous_value != 0 else 0
+
+        result += f"- **Change**: {change:+.2f} {config['unit']} ({change_pct:+.2f}%)\n"
+        result += f"- **Previous**: {previous_value:.2f} {config['unit']} (as of {previous['date']})\n"
+
+    # Year-over-year change for inflation indicators: same calendar month
+    # one year before the latest observation, else no YoY line (no hard
+    # guessing from a possibly misaligned 11th observation).
+    yoy_change = None
+    if config.get("yoy"):
+        try:
+            latest_month = datetime.strptime(latest_date, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            latest_month = None
+        if latest_month is not None:
+            target_year_month = (latest_month.year - 1, latest_month.month)
+            year_ago = next(
+                (obs for obs in valid_obs
+                 if _obs_year_month(obs) == target_year_month),
+                None,
+            )
+            if year_ago is not None and float(year_ago["value"]) != 0:
+                year_ago_value = float(year_ago["value"])
+                yoy_change = ((latest_value - year_ago_value) / year_ago_value) * 100
+                result += f"- **Year-over-Year**: {yoy_change:+.2f}%\n"
+
+    # Add interpretation
+    if indicator_name == "Federal Funds Rate":
+        if latest_value > 4.0:
+            result += "- **💡 Analysis**: Restrictive monetary policy stance\n"
+        elif latest_value < 2.0:
+            result += "- **💡 Analysis**: Accommodative monetary policy stance\n"
+        else:
+            result += "- **💡 Analysis**: Neutral monetary policy stance\n"
+
+    elif "CPI" in indicator_name or "PPI" in indicator_name:
+        if yoy_change is not None:
+            if yoy_change > 3.0:
+                result += "- **💡 Analysis**: Above Fed's 2% inflation target\n"
+            elif yoy_change < 1.0:
+                result += "- **💡 Analysis**: Below Fed's 2% inflation target\n"
+            else:
+                result += "- **💡 Analysis**: Near Fed's 2% inflation target\n"
+
+    elif indicator_name == "Unemployment Rate":
+        if latest_value < 4.0:
+            result += "- **💡 Analysis**: Very low unemployment, tight labor market\n"
+        elif latest_value > 6.0:
+            result += "- **💡 Analysis**: Elevated unemployment, loose labor market\n"
+        else:
+            result += "- **💡 Analysis**: Moderate unemployment levels\n"
+
+    elif "PMI" in indicator_name:
+        if latest_value > 50:
+            result += "- **💡 Analysis**: Expanding manufacturing sector\n"
+        else:
+            result += "- **💡 Analysis**: Contracting manufacturing sector\n"
+
+    elif indicator_name == "VIX":
+        if latest_value > 30:
+            result += "- **💡 Analysis**: High market volatility/fear\n"
+        elif latest_value < 15:
+            result += "- **💡 Analysis**: Low market volatility/complacency\n"
+        else:
+            result += "- **💡 Analysis**: Moderate market volatility\n"
+
+    result += "\n"
+    return result
+
+
+def _obs_year_month(obs: dict):
+    """(year, month) of an observation's date, or None when unparseable."""
+    try:
+        day = datetime.strptime(str(obs.get("date")), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (day.year, day.month)
 
 
 def get_fed_calendar_and_minutes(curr_date: str) -> str:
