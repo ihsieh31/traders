@@ -742,13 +742,20 @@ class GPT5ChatModel(BaseChatModel):
 
     def invoke(self, input: Any, config: Optional[Dict] = None, **kwargs) -> AIMessage:
         """Invoke the model with input."""
-        # Handle string input
+        # L04: ChatPromptValue (and any object exposing to_messages) must
+        # keep its message roles — str() collapsed a system+human prompt
+        # into one HumanMessage and dropped ToolMessages, so bound-tool
+        # agents on the Responses path lost tool call/output protocol.
         if isinstance(input, str):
             messages = [HumanMessage(content=input)]
         elif isinstance(input, list):
             messages = input
         else:
-            messages = [HumanMessage(content=str(input))]
+            to_messages = getattr(input, "to_messages", None)
+            if callable(to_messages):
+                messages = to_messages()
+            else:
+                messages = [HumanMessage(content=str(input))]
 
         result = self._generate(messages, **kwargs)
         return result.generations[0].message
