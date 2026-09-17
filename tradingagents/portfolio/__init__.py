@@ -23,6 +23,7 @@ and combined penalties are floored so trades cannot silently vanish.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -183,9 +184,16 @@ def assess_new_position(
 
     # Penalties are floored so a trade the agents wanted cannot silently
     # shrink to dust; only the exposure cap below may zero it.
-    if factor < config.min_size_factor:
-        factor = config.min_size_factor
-        verdict.factors["floor"] = config.min_size_factor
+    # D08: the floor must stay within (0, 1] — a configured floor above 1
+    # (or non-finite) can only ever ENLARGE a trade, so it is clamped to 1.0
+    # (no scaling, no silent size-up).
+    min_size_factor = config.min_size_factor
+    if not (isinstance(min_size_factor, (int, float))
+            and isfinite(min_size_factor) and 0 < min_size_factor <= 1):
+        min_size_factor = 1.0
+    if factor < min_size_factor:
+        factor = min_size_factor
+        verdict.factors["floor"] = min_size_factor
     verdict.adjusted_notional = requested * factor
 
     # --- gross exposure cap ----------------------------------------------------
