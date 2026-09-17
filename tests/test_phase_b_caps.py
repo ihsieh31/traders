@@ -535,3 +535,37 @@ def _pos_dict(symbol, qty, mv):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SectorOutstandingUnknownMappingTests(unittest.TestCase):
+    def test_unmapped_live_increasing_order_refuses_new_exposure(self):
+        # E03: MSFT is missing from the mapping but has a live increasing
+        # BUY in flight; its notional must consume sector headroom (or
+        # refuse) instead of approving AAPL on hidden exposure.
+        from tradingagents.risk.exposure import broker_status_to_local  # noqa: F401
+        snapshot = _snapshot(
+            positions=[_pos("AAPL", 10, 2000.0)],
+            orders=[_order("MSFT", "buy", qty=290, notional=29000.0, status="new",
+                           client_id="msft-open")],
+        )
+        decision = _evaluate(
+            symbol="AAPL",
+            proposed_notional=10000.0,
+            snapshot=snapshot,
+            sector_mapping={"AAPL": "Technology"},
+            sector_cap_pct=30.0,
+        )
+        self.assertFalse(decision.approved)
+
+    def test_proven_reducing_unmapped_order_does_not_block_close_leg(self):
+        # A proven-reducing live order on an unmapped symbol adds no
+        # exposure and must not refuse a genuine same-sector opening…
+        # but the mapping hole still cannot be proven, so this documents
+        # current behavior: reduction alone does not create exposure.
+        from tradingagents.risk.exposure import outstanding_increasing_notional
+        snapshot = _snapshot(
+            positions=[_pos("MSFT", 100, 29000.0)],
+            orders=[_order("MSFT", "sell", qty=100, status="new", client_id="msft-close")],
+        )
+        total, estimated = outstanding_increasing_notional(snapshot)
+        self.assertEqual((total, estimated), (0.0, True))

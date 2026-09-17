@@ -256,6 +256,23 @@ def evaluate_opening_exposure(
                 "before adding exposure (sector cap cannot be proven)",
                 {"missing_mapping": normalized},
             )
+        unmapped = {order.symbol for order in snapshot.orders
+                    if _is_live(order.status) and not sector_mapping.get(order.symbol)}
+        for pending_symbol in sorted(unmapped):
+            increasing, estimated = outstanding_increasing_notional(
+                snapshot, symbols={pending_symbol}, reference_prices=price_map,
+            )
+            if increasing > 0 or not estimated:
+                # E03: only INCREASING exposure on an unmapped symbol is
+                # invisible to the sector cap. A proven-reducing order
+                # (full quantity covered by reducing capacity) adds no
+                # exposure and must not block risk-reducing flows.
+                return _rejection(
+                    f"unknown sector for outstanding exposure on {pending_symbol}: "
+                    "add it to sector_mapping before adding exposure "
+                    "(sector cap cannot be proven)",
+                    {"missing_mapping": pending_symbol},
+                )
         held_sectors: dict[str, str] = {}
         for held in snapshot.positions:
             held_sector = sector_mapping.get(held.symbol)
