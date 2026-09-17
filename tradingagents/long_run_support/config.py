@@ -1,0 +1,434 @@
+"""Phase-D non-secret configuration, validation, and runtime construction.
+
+The public wrappers supply named collaborators at call time. Configuration
+paths are not cached, and optional runtime dependencies remain lazy imports.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import subprocess
+import urllib.parse
+from datetime import time as dtime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+def default_long_run_config(
+    *,
+    LONG_RUN_SCHEMA_VERSION: int,
+    DEFAULT_DURATION_CALENDAR_DAYS: int,
+    DEFAULT_RUN_TIME_ET: str,
+    VALID_ANALYSTS: Tuple[str, ...],
+) -> Dict[str, Any]:
+    return {
+        "schema_version": LONG_RUN_SCHEMA_VERSION,
+        "duration_calendar_days": DEFAULT_DURATION_CALENDAR_DAYS,
+        "run_time_et": DEFAULT_RUN_TIME_ET,
+        "base_trade_notional_usd": None,
+        "analysts": list(VALID_ANALYSTS),
+        "research_depth": 3,
+        "output_language": "English",
+        "analysis_provider": None,
+        "analysis_model": None,
+        "analysis_backend_url": None,
+        "decision_provider": None,
+        "decision_model": None,
+        "decision_backend_url": None,
+        # Optional Analysis-only failover route (Phase B): all three keys
+        # unset means failover stays disabled. Secrets never live here.
+        "analysis_fallback_provider": None,
+        "analysis_fallback_model": None,
+        "analysis_fallback_backend_url": None,
+        # Short exposure opt-in for the observation (paper-only build;
+        # broker-side deterministic guards always apply).
+        "allow_shorts": False,
+        "screening_provider": None,
+        "screening_model": None,
+        "screening_backend_url": None,
+    }
+
+
+def load_long_run_config(
+    *,
+    default_long_run_config: Callable[[], Dict[str, Any]],
+    read_json: Callable[[Path], Optional[Any]],
+    config_path: Callable[[], Path],
+) -> Dict[str, Any]:
+    cfg = default_long_run_config()
+    saved = read_json(config_path())
+    if isinstance(saved, dict):
+        for key in cfg:
+            if saved.get(key) is not None:
+                cfg[key] = saved[key]
+    return cfg
+
+
+def save_long_run_config(
+    cfg: Dict[str, Any],
+    *,
+    default_long_run_config: Callable[[], Dict[str, Any]],
+    LONG_RUN_SCHEMA_VERSION: int,
+    atomic_write_json: Callable[[Path, Any], None],
+    config_path: Callable[[], Path],
+) -> None:
+    payload = {k: cfg.get(k) for k in default_long_run_config()}
+    payload["schema_version"] = LONG_RUN_SCHEMA_VERSION
+    text = json.dumps(payload, default=str)
+    lowered = text.lower()
+    if any(m.lower() in lowered for m in ("api_key", "secret_key", "sk-")):
+        raise ValueError("refusing to persist possible secret material in config.json")
+    atomic_write_json(config_path(), payload)
+
+
+def _valid_backend_url(value: Any) -> bool:
+    if value is None or str(value).strip() == "":
+        return True
+    try:
+        parts = urllib.parse.urlsplit(str(value).strip())
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except Exception:
+        return False
+
+
+def missing_config_fields(
+    cfg: Dict[str, Any],
+    *,
+    _looks_placeholder: Callable[[Any], bool],
+    PROVIDERS_REQUIRING_URL: Tuple[str, ...],
+) -> List[str]:
+    """Fields the setup wizard must ask for (absent/invalid/placeholder)."""
+    missing: List[str] = []
+    if cfg.get("base_trade_notional_usd") is None:
+        missing.append("base_trade_notional_usd")
+    if not cfg.get("run_time_et"):
+        missing.append("run_time_et")
+    for key in (
+        "analysis_provider", "analysis_model",
+        "decision_provider", "decision_model",
+        "screening_provider", "screening_model",
+    ):
+        value = cfg.get(key)
+        if not value or _looks_placeholder(value):
+            missing.append(key)
+    for key in (
+        "analysis_backend_url", "decision_backend_url", "screening_backend_url",
+    ):
+        provider = cfg.get(key.replace("_backend_url", "_provider")) or ""
+        if str(provider).lower() in PROVIDERS_REQUIRING_URL and not cfg.get(key):
+            if key not in missing:
+                missing.append(key)
+    if not cfg.get("analysts"):
+        missing.append("analysts")
+    return missing
+
+
+def _unattended_safety_error(runtime: Dict[str, Any]) -> str:
+    """P2-01: an unattended paper run cannot run with the safety layer off.
+
+    Only ``runtime.get("safety_enabled", True) is True`` may proceed: the
+    key may be absent (default on), but False/0/"false"/None (explicit)
+    must refuse. The general SafetyGuard feature itself is untouched —
+    this gates only the unattended long-run production path.
+    """
+    if runtime.get("safety_enabled", True) is True:
+        return ""
+    return (
+        "unattended paper execution requires safety_enabled=True "
+        f"(got {runtime.get('safety_enabled')!r})"
+    )
+
+
+def _validate_unattended_safety(
+    runtime: Dict[str, Any],
+    *,
+    _unattended_safety_error: Callable[[Dict[str, Any]], str],
+    LongRunStop: type[RuntimeError],
+) -> None:
+    error = _unattended_safety_error(runtime)
+    if error:
+        raise LongRunStop("SAFETY_DISABLED", error)
+
+
+def validate_long_run_config(
+    cfg: Dict[str, Any],
+    runtime: Optional[Dict[str, Any]] = None,
+    *,
+    LONG_RUN_SCHEMA_VERSION: int,
+    parse_run_time_et: Callable[[str], dtime],
+    SESSION_OPEN_ET: dtime,
+    SESSION_CLOSE_ET: dtime,
+    VALID_ANALYSTS: Tuple[str, ...],
+    VALID_RESEARCH_DEPTHS: Tuple[int, ...],
+    _valid_backend_url: Callable[[Any], bool],
+    PROVIDERS_REQUIRING_URL: Tuple[str, ...],
+    _unattended_safety_error: Callable[[Dict[str, Any]], str],
+) -> List[str]:
+    """Secret-free validation; returns error strings (empty = valid)."""
+    errors: List[str] = []
+    if cfg.get("schema_version") != LONG_RUN_SCHEMA_VERSION:
+        errors.append(f"unsupported schema_version {cfg.get('schema_version')!r}")
+    duration = cfg.get("duration_calendar_days")
+    if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
+        errors.append("duration_calendar_days must be a positive integer")
+    try:
+        target = parse_run_time_et(str(cfg.get("run_time_et") or ""))
+    except ValueError as exc:
+        errors.append(str(exc))
+        target = None
+    if target is not None and not (SESSION_OPEN_ET <= target < SESSION_CLOSE_ET):
+        errors.append(
+            f"run_time_et {cfg.get('run_time_et')!r} can never be a regular-session "
+            "time (09:30 <= run_time_et < 16:00 ET)"
+        )
+    notional = cfg.get("base_trade_notional_usd")
+    if (
+        not isinstance(notional, (int, float))
+        or isinstance(notional, bool)
+        or not math.isfinite(float(notional))
+        or float(notional) <= 0
+    ):
+        errors.append("base_trade_notional_usd must be a positive finite number")
+    analysts = cfg.get("analysts") or []
+    if not analysts or any(a not in VALID_ANALYSTS for a in analysts):
+        errors.append(f"analysts must be a non-empty subset of {list(VALID_ANALYSTS)}")
+    if cfg.get("research_depth") not in VALID_RESEARCH_DEPTHS:
+        errors.append(f"research_depth must be one of {list(VALID_RESEARCH_DEPTHS)}")
+    if not (cfg.get("output_language") or "").strip():
+        errors.append("output_language must be non-empty")
+    for role in ("analysis", "decision", "screening"):
+        provider = (cfg.get(f"{role}_provider") or "").strip()
+        model = (cfg.get(f"{role}_model") or "").strip()
+        if not provider or not model:
+            errors.append(f"{role}_provider and {role}_model are required (no inheritance)")
+        if not _valid_backend_url(cfg.get(f"{role}_backend_url")):
+            errors.append(f"{role}_backend_url is not a valid http(s) URL")
+        if provider.lower() in PROVIDERS_REQUIRING_URL and not (cfg.get(f"{role}_backend_url") or "").strip():
+            errors.append(f"{role}_backend_url is required for provider {provider!r}")
+    if runtime is not None:
+        safety_error = _unattended_safety_error(runtime)
+        if safety_error:
+            errors.append(safety_error)
+        try:
+            from tradingagents.llm_clients.retry import validate_llm_max_retries
+
+            validate_llm_max_retries(runtime.get("llm_max_retries", 3))
+        except Exception as exc:
+            errors.append(f"llm_max_retries invalid: {exc}")
+        try:
+            from tradingagents.llm_clients.roles import resolve_role_config
+
+            resolved = resolve_role_config(runtime)
+            if resolved.get("mode") != "roles":
+                errors.append("role resolution did not enter roles mode")
+        except Exception as exc:
+            errors.append(f"role config invalid: {exc}")
+        try:
+            from tradingagents.screening.llm import resolve_screening_config
+
+            resolved = resolve_screening_config(runtime)
+            if not resolved.get("enabled"):
+                errors.append("screening role did not resolve to enabled")
+        except Exception as exc:
+            errors.append(f"screening config invalid: {exc}")
+        try:
+            from tradingagents.dataflows.config import get_alpaca_use_paper
+
+            flag = get_alpaca_use_paper()
+            text = str(flag if flag is not None else "True").strip().lower()
+            if text in ("false", "0", "no", "off", "live"):
+                errors.append("ALPACA_USE_PAPER=False is not supported (paper-only)")
+        except Exception as exc:
+            errors.append(f"paper flag unreadable: {exc}")
+    return errors
+
+
+def parse_run_time_et(
+    value: str,
+    *,
+    datetime: Any,
+) -> dtime:
+    text = (value or "").strip()
+    try:
+        parsed = datetime.strptime(text, "%H:%M").time()
+    except ValueError:
+        raise ValueError(f"run_time_et {value!r} must be HH:MM (24h)")
+    return parsed
+
+
+def build_runtime_config(
+    long_cfg: Dict[str, Any], base: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Full graph/execution config for a round: Phase D forces full-system mode."""
+    if base is None:
+        from tradingagents.default_config import DEFAULT_CONFIG
+
+        base = DEFAULT_CONFIG
+    runtime = dict(base)
+    depth = int(long_cfg.get("research_depth") or 3)
+    runtime["max_debate_rounds"] = depth
+    runtime["max_risk_discuss_rounds"] = depth
+    runtime["output_language"] = long_cfg.get("output_language") or "English"
+    # Base provider keys mirror the Analysis role so legacy construction paths
+    # keep working; the explicit role keys switch resolution into roles mode.
+    runtime["llm_provider"] = long_cfg.get("analysis_provider")
+    runtime["backend_url"] = long_cfg.get("analysis_backend_url")
+    runtime["deep_think_llm"] = long_cfg.get("analysis_model")
+    runtime["quick_think_llm"] = long_cfg.get("analysis_model")
+    for key in (
+        "analysis_provider", "analysis_model", "analysis_backend_url",
+        "analysis_fallback_provider", "analysis_fallback_model",
+        "analysis_fallback_backend_url",
+        "decision_provider", "decision_model", "decision_backend_url",
+        "screening_provider", "screening_model", "screening_backend_url",
+        "allow_shorts",
+    ):
+        runtime[key] = long_cfg.get(key)
+    runtime["auto_screening_enabled"] = True
+    # Short exposure is now an explicit per-observation opt-in (paper only;
+    # the broker-side deterministic guards in execution.service still apply).
+    runtime["allow_shorts"] = bool(long_cfg.get("allow_shorts", False))
+    runtime["trading_mode"] = "trading" if runtime["allow_shorts"] else "investment"
+    return runtime
+
+
+def git_baseline_commit() -> str:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        commit = (out.stdout or "").strip()
+        return commit if commit else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _apply_runtime_config(
+    runtime: Dict[str, Any],
+    *,
+    LongRunStop: type[RuntimeError],
+) -> None:
+    """R01: install this run's runtime as the global execution config BEFORE
+    any path that could mutate the broker runs.
+
+    The execution gate (screening Top20 entry check) reads the global config
+    via get_config(), while long-run callers hold their own runtime dict.
+    Until set_config() is applied, recovery may see runtime
+    auto_screening_enabled=True against a global auto_screening_enabled=False
+    and misclassify a gated PENDING opening as a manual-mode recovery. The
+    merge keeps every key the run did not explicitly override.
+    """
+    try:
+        from tradingagents.dataflows.config import get_config, set_config
+
+        merged = dict(get_config() or {})
+        merged.update(runtime or {})
+        set_config(merged)
+    except Exception as exc:
+        raise LongRunStop(
+            "CONFIG_APPLY_FAILED",
+            f"could not apply runtime config before recovery: {exc}",
+        )
+
+
+
+def _validate_long_run_execution_config(
+    runtime: Dict[str, Any],
+    *,
+    LongRunStop: type[RuntimeError],
+    append_jsonl: Callable[[Path, Dict[str, Any]], None],
+    base_dir: Callable[[], Path],
+    utc_now_iso: Callable[[], str],
+    _unattended_safety_error: Callable[[Dict[str, Any]], str],
+) -> None:
+    """Confirm the applied global config still proves unattended invariants.
+
+    Runs after _apply_runtime_config (and after any later merge) and refuses
+    to continue when the effective config turned off auto screening, paper
+    mode or the safety layer for an unattended long run.
+    """
+    try:
+        from tradingagents.dataflows.config import get_config
+    except Exception as exc:
+        raise LongRunStop(
+            "CONFIG_APPLY_FAILED", f"global execution config unreadable: {exc}"
+        )
+    effective = get_config() or {}
+    raw_budget = effective.get("daily_llm_token_budget", 0)
+    if (
+        isinstance(raw_budget, bool)
+        or not isinstance(raw_budget, (int, float))
+        or not math.isfinite(float(raw_budget))
+    ):
+        raise LongRunStop(
+            "LLM_BUDGET_INVALID",
+            "daily_llm_token_budget must be a finite numeric value",
+        )
+    if raw_budget < 0:
+        raise LongRunStop(
+            "LLM_BUDGET_INVALID",
+            "daily_llm_token_budget must be >= 0",
+        )
+    if raw_budget > 20_000_000:
+        raise LongRunStop(
+            "LLM_BUDGET_TOO_HIGH",
+            "unattended long-run daily_llm_token_budget must be <= 20000000",
+        )
+    if raw_budget == 0:
+        # B-02: 0 stays "unlimited" in general mode, but an unattended
+        # long run must never run uncapped. Normalize the effective budget
+        # to the fixed 20M/day hard cap and persist it, so check_llm_budget()
+        # and any lazily built SafetyGuard see the cap instead of 0.
+        try:
+            from tradingagents.dataflows.config import set_config
+            from tradingagents.safety import reset_safety_guard
+
+            merged = dict(get_config() or {})
+            merged["daily_llm_token_budget"] = 20_000_000
+            set_config(merged)
+            reset_safety_guard()
+            append_jsonl(
+                base_dir() / "events.jsonl",
+                {
+                    "at": utc_now_iso(),
+                    "type": "llm_budget_normalized",
+                    "detail": {
+                        "original": raw_budget,
+                        "normalized": 20_000_000,
+                        "scope": "unattended_long_run",
+                    },
+                },
+            )
+        except Exception as exc:
+            raise LongRunStop(
+                "CONFIG_APPLY_FAILED",
+                f"could not persist normalized LLM token budget: {exc}",
+            )
+    if not effective.get("auto_screening_enabled"):
+        raise LongRunStop(
+            "SAFETY_DISABLED",
+            "unattended long-run requires auto_screening_enabled=True after "
+            "runtime config application",
+        )
+    error = _unattended_safety_error(effective)
+    if error:
+        raise LongRunStop("SAFETY_DISABLED", error)
+    try:
+        from tradingagents.dataflows.config import get_alpaca_use_paper
+
+        flag = get_alpaca_use_paper()
+        text = str(flag if flag is not None else "True").strip().lower()
+        if text in ("false", "0", "no", "off", "live"):
+            raise LongRunStop(
+                "SAFETY_DISABLED",
+                "unattended long-run requires paper mode "
+                "(ALPACA_USE_PAPER=False is not supported)",
+            )
+    except LongRunStop:
+        raise
+    except Exception as exc:
+        raise LongRunStop(
+            "CONFIG_APPLY_FAILED", f"paper flag unreadable after apply: {exc}"
+        )

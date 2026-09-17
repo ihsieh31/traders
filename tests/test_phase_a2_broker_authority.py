@@ -498,10 +498,27 @@ class CallerAndExitPolicyTests(unittest.TestCase):
     def test_scheduler_has_startup_gate_and_execution_has_periodic_gate(self):
         repo = Path(__file__).resolve().parent.parent
         control = (repo / "webui/callbacks/control_callbacks.py").read_text()
-        service = (repo / "tradingagents/execution/service.py").read_text()
+        import ast
+
+        tree = ast.parse((repo / "tradingagents/execution/service.py").read_text())
+        service = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                       and n.name == "ExecutionService")
+        methods = {n.name: n for n in service.body if isinstance(n, ast.FunctionDef)}
         self.assertIn("ExecutionService().startup_recover(", control)
-        self.assertIn("self._recover_locked(broker, snapshot)", service)
-        self.assertIn("post-order reconciliation failed", service)
+        for name in ("execute", "startup_recover", "enforce_exit_deadlines", "liquidate"):
+            calls = [ast.unparse(n.func) for n in ast.walk(methods[name])
+                     if isinstance(n, ast.Call)]
+            self.assertIn("self._recover_locked", calls, name)
+        # A failed post-order authority proof must persist PAUSED, independent
+        # of prose comments or a particular call's whitespace formatting.
+        handlers = [n for n in ast.walk(methods["execute"])
+                    if isinstance(n, ast.ExceptHandler) and n.type is not None
+                    and ast.unparse(n.type) == "BrokerAuthorityError"]
+        self.assertTrue(any(
+            isinstance(n, ast.Call) and ast.unparse(n.func) == "self._store.save_account_state"
+            and any(k.arg == "state" and isinstance(k.value, ast.Constant)
+                    and k.value.value == "PAUSED" for k in n.keywords)
+            for handler in handlers for n in ast.walk(handler)))
 
 
 class RemediationRegressionTests(unittest.TestCase):

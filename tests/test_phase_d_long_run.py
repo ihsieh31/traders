@@ -708,8 +708,9 @@ class DailyRoundTest(IsolatedTest):
         self.assertEqual(len(service.execute_calls), 1)
 
     def test_analyzing_with_completed_run_log_recovers_intent(self):
-        runs_dir = (Path("eval_results") / "AAA" / "TradingAgentsStrategy_logs"
-                    / "runs")
+        # Match runtime lookup when the offline runner isolates result artifacts.
+        runs_dir = (Path(lr.build_runtime_config(_valid_cfg())["results_dir"])
+                    / "AAA" / "TradingAgentsStrategy_logs" / "runs")
         runs_dir.mkdir(parents=True, exist_ok=True)
         (runs_dir / "r1.json").write_text(json.dumps({
             "run_id": "r1", "symbol": "AAA", "trade_date": SESSION_A,
@@ -1000,6 +1001,26 @@ class TerminalJournalGateTest(IsolatedTest):
                 run_id="run-g3", session_date=SESSION_B, long_cfg=_valid_cfg(),
                 runtime=lr.build_runtime_config(_valid_cfg()), deps=deps)
         self.assertEqual(ctx.exception.code, "STATE_CORRUPT")
+
+    def test_corrupt_symbol_resume_refuses_before_recovery_and_preserves_bytes(self):
+        for symbols in (None, [], {"AAA": None}, {"AAA": {}},
+                        {"AAA": {"status": "TYPO"}}, {"AAA": {"status": []}},
+                        {"": {"status": "PENDING"}}):
+            with self.subTest(symbols=symbols):
+                journal = lr.new_round_journal(SESSION_A, ["AAA"])
+                journal.update(status="RUNNING", symbols=symbols)
+                lr.save_round_journal("run-corrupt-symbol", journal)
+                path = lr.round_path("run-corrupt-symbol", SESSION_A)
+                before = path.read_bytes()
+                deps, service, graph = _deps(symbols=("AAA",))
+                with self.assertRaises(lr.LongRunStop) as ctx:
+                    lr.run_daily_round(
+                        run_id="run-corrupt-symbol", session_date=SESSION_A,
+                        long_cfg=_valid_cfg(), runtime=lr.build_runtime_config(_valid_cfg()), deps=deps)
+                self.assertEqual(ctx.exception.code, "STATE_CORRUPT")
+                self.assertEqual(service.recover_calls, 0)
+                self.assertEqual(service.execute_calls, [])
+                self.assertEqual(path.read_bytes(), before)
 
     def test_analyzed_resume_executes_saved_intent_without_reanalysis(self):
         # Case C: the exact persisted intent is executed; the LLM is never

@@ -1354,7 +1354,7 @@ class F18EntryPointTests(_Isolated, unittest.TestCase):
         wheel_dir = self.workdir / "wheel"
         wheel_dir.mkdir()
         subprocess.run(
-            [sys.executable, "-m", "pip", "wheel", "--no-deps", ".",
+            [sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation", ".",
              "-w", str(wheel_dir)],
             cwd=repo, check=True, capture_output=True, timeout=300,
         )

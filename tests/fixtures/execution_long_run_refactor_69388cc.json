@@ -1,0 +1,15 @@
+{
+  "baseline_commit": "69388cc36a793f4eb86a79d46eb7b622e6115c61",
+  "capture": "Original git archive; Python 3.12.13; offline run_tests.py; independent v8/v9 captures byte-identical",
+  "normalization": "Only per-test temporary root replaced with <TMP>; all timestamps, IDs, reasons, quantities and ordered events retained",
+  "sha256": {
+    "adopt_unknown": "3ddd7de79d9d828d99355127552bb8c0aa3093cc4ecfc9d87b505f701f4193dd",
+    "block_submitting": "c7e4639fc65b7740bc697cbbc3bb06d60f2c684e9f489a34be3feeea0913e6a3",
+    "contracts": "1f7eadc10e2d480ce4be5cb823d65a7d80d35cf964c04fdba6ef6771e46638a0",
+    "final_report_failure": "6613f86bfaa22e67a133ae246bd5707f37ed1d3016b699bfc2d92715a268e850",
+    "gap_between_items": "2911b44c7a6db5f6a3864783b69216d9566d32c46f87addcad739f865139d254",
+    "long_run_fresh": "0c49ab97dc74d162968428341d6852dc0bbf1eada5d0d7eb78db3dc106c64f5b",
+    "long_run_resume": "78013141500dc4b26c645d7fc3e3cdc2106dbef573d5e5d052f0041b19b48d14",
+    "protected_close": "096bd5bdb315fc2fbd478e178daf0aab6e22edddb87a35f37c1461ec304e1ca6"
+  }
+}
