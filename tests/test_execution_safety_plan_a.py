@@ -185,6 +185,30 @@ def test_r03_bracket_cancel_cascade_still_reaches_safe_close(env):
     assert result["broker_calls"] == 2  # 1 DELETE + 1 close POST, honestly counted
 
 
+def test_rejected_liquidation_repeat_reports_failure_without_resubmit(env):
+    service, broker = env
+    assert service.execute(trade_intent=opening(), dollar_amount=1000)["success"]
+
+    def reject_close(request):
+        broker.submits.append(request)
+        return {"success": False, "error": "fixture rejection"}
+
+    broker.submit_order = reject_close
+    first = service.liquidate("AAPL", decision_id="rejected-close")
+    assert first["success"] is False
+    assert first["status"] == "REJECTED"
+    assert len(broker.submits) == 2
+    before_cancels = len(broker.cancels)
+    second = service.liquidate("AAPL", decision_id="rejected-close")
+    assert second["success"] is False
+    assert second["status"] == "REJECTED"
+    assert second["deduped"] is True
+    assert second["broker_calls"] == 0
+    assert len(broker.submits) == 2
+    assert len(broker.cancels) == before_cancels
+    assert broker.qty == 9
+
+
 def test_r03_cancel_race_unproven_failure_pauses(env):
     service, broker = env
     assert service.execute(trade_intent=opening(), dollar_amount=1000)["success"]

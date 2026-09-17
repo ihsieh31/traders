@@ -158,23 +158,16 @@ def _liquidate_core(
     created = prepared["created"]
     if not created:
         existing = self._store.list_orders_for_intent(intent_row["intent_id"])
-        if existing and all(
-            (o.get("status") or "").upper() != "PENDING" for o in existing
-        ):
-            return {
-                "success": True,
-                "deduped": True,
-                "broker_attempted": False,
-                "broker_calls": 0,
-                "intent_id": intent_row["intent_id"],
-                "decision_id": did,
-                "orders": existing,
-            }
         order_rows = existing
     orow = order_rows[0]
-    if (orow.get("status") or "").upper() != "PENDING":
+    status = (orow.get("status") or "").upper()
+    if status != "PENDING":
+        completed = status == "FILLED"
         return {
-            "success": True,
+            "success": completed,
+            "status": status,
+            "paused": not completed,
+            "error": "" if completed else f"Existing close is {status}; operator review required",
             "deduped": True,
             "broker_attempted": False,
             "broker_calls": 0,
