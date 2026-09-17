@@ -509,6 +509,15 @@ class AppState:
                 "session_start_time": new_session_start,
                 "report_timestamps": {}
             })
+            # U02: per-report update counters must restart each round, or the
+            # >15 hard block in process_chunk_updates silences every later
+            # loop iteration once one round has streamed 16 updates.
+            for count_key in [k for k in state if k.endswith("_update_count")]:
+                state[count_key] = 0
+            # U11: a new round must not inherit the previous round's debate
+            # transcript (UI would display OLD bull/bear history).
+            state["investment_debate_state"] = None
+            state.pop("risk_debate_state", None)
         
         self.current_symbol = None
         self.analysis_trace = []
