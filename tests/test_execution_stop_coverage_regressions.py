@@ -101,6 +101,88 @@ def test_relation_lookup_failure_never_promotes_target_to_close(protected, monke
     assert service._protection_coverage_gaps(snapshot)
 
 
+def test_e01_canceled_parent_with_unspent_lots_still_owes_protection(env):
+    """E01: a canceled/expired opening parent whose durable fills still show
+    unspent shares owes protection. The old N07 fallback only trusted a
+    FILLED parent row, so a canceled-partial ledger row made
+    _protection_coverage_gaps return [] and left the broker position bare.
+    Seeded WITHOUT any protective child relation so the intent fallback is
+    the only possible proof path."""
+    service, broker = env
+    from tradingagents.execution.lifecycle import remaining_lots
+    did = "e01-canceled-partial"
+    coid = client_order_id_for(did, "AAPL", "buy", role="open", seq=0)
+    payload = json.dumps({
+        "symbol": "AAPL", "action": "BUY", "target_position": "LONG",
+        "risk_controls": {"stop_loss_price": 90},
+        "entry_policy": {"exit_by": None},
+    })
+    _, rows, _ = service.store.create_outbox(
+        decision_id=did, run_id=None, symbol="AAPL", action="BUY",
+        target_position="LONG", payload_json=payload,
+        orders=[dict(client_order_id=coid, symbol="AAPL", side="buy",
+                     quantity=9, notional=None)],
+    )
+    row = rows[0]
+    service.store.sync_order_from_broker(row["order_id"], "FILLED",
+                                         broker_order_id="e01-parent", filled_qty=9)
+    service.store.record_fill(execution_id="e01-fill", order_id=row["order_id"],
+                              qty=9, price=100.0)
+    service.store.sync_order_from_broker(row["order_id"], "CANCELED",
+                                         broker_order_id="e01-parent", filled_qty=9)
+    assert service.store.get_order(row["order_id"])["status"] == "CANCELED"
+    assert remaining_lots(service.store).get("AAPL"), "9 unspent shares are provable"
+    # Broker: live 9-share long; the protective child never appeared and no
+    # reducing order exists.
+    broker.qty = 9
+    broker.orders = []
+    snapshot = capture_broker_snapshot(broker)
+    gaps = service._protection_coverage_gaps(snapshot)
+    assert gaps and any("AAPL" in g for g in gaps)
+
+
+def test_e01_fully_sold_out_lots_never_gap_manual_position(env):
+    """E01 guard: a long-ago, fully sold-out program entry must not force
+    protection onto a later manual position — unspent durable lots, not the
+    historic FILLED row, prove the obligation."""
+    service, broker = env
+    from tradingagents.execution.lifecycle import remaining_lots
+    _, rows, _ = service.store.create_outbox(
+        decision_id="e01-history-entry", run_id=None, symbol="AAPL",
+        action="BUY", target_position="LONG",
+        payload_json=json.dumps({
+            "symbol": "AAPL", "action": "BUY", "target_position": "LONG",
+            "risk_controls": {"stop_loss_price": 90},
+            "entry_policy": {"exit_by": None},
+        }),
+        orders=[dict(client_order_id=client_order_id_for("e01-history-entry", "AAPL", "buy", role="open", seq=0),
+                     symbol="AAPL", side="buy", quantity=9, notional=None)],
+    )
+    buy_row = rows[0]
+    service.store.sync_order_from_broker(buy_row["order_id"], "FILLED",
+                                         broker_order_id="e01-old-parent", filled_qty=9)
+    service.store.record_fill(execution_id="e01-buy", order_id=buy_row["order_id"],
+                              qty=9, price=100.0)
+    _, rows2, _ = service.store.create_outbox(
+        decision_id="e01-history-close", run_id=None, symbol="AAPL",
+        action="SELL", target_position="NEUTRAL",
+        payload_json=json.dumps({"symbol": "AAPL", "action": "SELL", "kind": "liquidation"}),
+        orders=[dict(client_order_id=client_order_id_for("e01-history-close", "AAPL", "sell", role="close", seq=0),
+                     symbol="AAPL", side="sell", quantity=9, notional=None)],
+    )
+    sell_row = rows2[0]
+    service.store.sync_order_from_broker(sell_row["order_id"], "FILLED",
+                                         broker_order_id="e01-old-close", filled_qty=9)
+    service.store.record_fill(execution_id="e01-sell", order_id=sell_row["order_id"],
+                              qty=9, price=101.0)
+    assert not remaining_lots(service.store).get("AAPL"), "the lot was fully sold back out"
+    # A later MANUAL 4-share long appears; no program orders are live.
+    broker.qty = 4
+    broker.orders = []
+    snapshot = capture_broker_snapshot(broker)
+    assert service._protection_coverage_gaps(snapshot) == []
+
+
 def seed_pending(service, symbol):
     did = "pending-" + symbol
     coid = client_order_id_for(did, symbol, "buy", role="open", seq=0)

@@ -386,6 +386,16 @@ def _protection_coverage_gaps(self, snapshot: BrokerSnapshot, *, json) -> list[s
             continue
         symbol = position.symbol
         rows = rows_by_symbol.get(symbol, [])
+        # E01: shares this program provably received and never sold back
+        # out, rebuilt from the durable fills ledger (lifecycle.remaining_lots).
+        try:
+            from .lifecycle import remaining_lots
+            unspent_by_symbol = {
+                sym: sum(abs(float(lot.get("qty") or 0)) for lot in lots)
+                for sym, lots in remaining_lots(self._store).items()
+            }
+        except Exception:
+            unspent_by_symbol = {}  # no provable unspent lots
         has_protected_entry = False
         for row in rows:
             try:
@@ -397,14 +407,22 @@ def _protection_coverage_gaps(self, snapshot: BrokerSnapshot, *, json) -> list[s
         if not has_protected_entry:
             # N07: no child relation was ever registered — prove the
             # protection obligation from the durable opening intent
-            # itself. A FILLED program-owned opening parent whose payload
+            # itself. A program-owned opening parent whose payload
             # required a broker stop owes protection even if no child
-            # was ever seen on any snapshot.
+            # was ever seen on any snapshot. E01: the parent row need
+            # not be FILLED — a cancel race or a canceled-partial
+            # bracket can leave the row CANCELED/EXPIRED while the
+            # fills ledger still proves the program holds the shares —
+            # so the obligation is proven by UNSPENT DURABLE LOTS on
+            # the opening side, not by the historic row status. A
+            # fully sold-out historic parent proves no unspent lots
+            # and can never gap a later manual position.
             opening_side = "buy" if position.qty > 0 else "sell"
             expected_target = "LONG" if position.qty > 0 else "SHORT"
+            unspent_lots = float(unspent_by_symbol.get(symbol, 0.0))
+            if unspent_lots < 1e-9:
+                continue  # no provable program-owned shares: manual position
             for row in rows:
-                if str(row.get("status") or "").upper() != "FILLED":
-                    continue
                 if str(row.get("side") or "").lower() != opening_side:
                     continue
                 try:
