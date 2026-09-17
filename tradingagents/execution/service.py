@@ -1464,7 +1464,8 @@ class ExecutionService:
         """Query the broker by client_order_id and adopt the observed state.
 
         No second POST happens here. Returns adopted status or NOT_FOUND.
-        Uses the same bounded lookup policy as startup recovery.
+        Uses startup recovery's bounded lookup and verified-account lock.
+        Re-read the ledger under the lock before deciding whether to adopt.
         """
         existing = self._store.get_order_by_client(client_order_id)
         if existing is None:
@@ -1476,19 +1477,39 @@ class ExecutionService:
         except Exception as exc:
             return {"found": False, "error": f"broker unavailable: {exc}"}
         try:
-            broker_order = self._lookup_for_recovery(broker, client_order_id)
-        except BrokerAuthorityError as exc:
-            return {"found": False, "uncertain": True, "order": existing, "error": str(exc)}
-        if broker_order is None:
+            identity = capture_broker_snapshot(broker)
+            with AccountExecutionLock(self.db_path, identity.account_id):
+                existing = self._store.get_order_by_client(client_order_id)
+                if existing is None:
+                    return {"found": False, "error": "unknown client_order_id"}
+                if (existing.get("status") or "").upper() != "UNKNOWN":
+                    return {"found": True, "adopted": False, "order": existing}
+                snapshot = capture_broker_snapshot(
+                    broker, expected_account_id=identity.account_id
+                )
+                try:
+                    self._store.ensure_account_binding(snapshot.account_id)
+                except Exception as exc:
+                    raise BrokerAuthorityError(
+                        f"execution DB account binding check failed: {exc}"
+                    ) from exc
+                broker_order = self._lookup_for_recovery(broker, client_order_id)
+                if broker_order is None:
+                    return {
+                        "found": False,
+                        "not_found": True,
+                        "order": existing,
+                        "detail": "broker explicitly reported no such order in bounded lookup",
+                    }
+                self._adopt_recovery_order(existing, broker_order)
+                row = self._store.get_order(existing["order_id"])
+                return {"found": True, "adopted": True, "order": row, "status": row["status"]}
+        except (BrokerAuthorityError, AccountLockBusy, OSError) as exc:
             return {
-                "found": False,
-                "not_found": True,
-                "order": existing,
-                "detail": "broker explicitly reported no such order in bounded lookup",
+                "found": False, "uncertain": True, "paused": True,
+                "busy": isinstance(exc, AccountLockBusy),
+                "order": existing, "error": str(exc),
             }
-        self._adopt_recovery_order(existing, broker_order)
-        row = self._store.get_order(existing["order_id"])
-        return {"found": True, "adopted": True, "order": row, "status": row["status"]}
 
 
 def _service(db_path=None, broker_factory=None, quote_factory=None) -> ExecutionService:

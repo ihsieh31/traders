@@ -2,6 +2,12 @@
 
 Named collaborators are supplied by the public long_run wrappers; this module
 never imports the orchestration module or caches environment-derived paths.
+
+Authoritative JSON (active state, round journals and final reports) is
+synchronously durable: file contents and directory metadata are fsynced before
+success is returned. Active-state deletion is durable too; I/O failures propagate.
+JSONL telemetry is best effort: close flushes it, but events are not fsynced and
+must never be used as resume or execution authority.
 """
 
 from __future__ import annotations
@@ -64,9 +70,29 @@ def scan_files_for_secrets(paths: List[Path], markers: List[str]) -> List[str]:
     return hits
 
 
+def _fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _mkdir_durable(path: Path) -> None:
+    # Persist newly created ancestor entries as well as the final file rename.
+    missing = []
+    cursor = path
+    while not cursor.exists():
+        missing.append(cursor)
+        cursor = cursor.parent
+    path.mkdir(parents=True, exist_ok=True)
+    for directory in reversed(missing):
+        _fsync_directory(directory.parent)
+
+
 def atomic_write_json(path: Path, payload: Any) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_durable(path.parent)
     tmp_fd, tmp_name = tempfile.mkstemp(
         dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
     )
@@ -76,6 +102,7 @@ def atomic_write_json(path: Path, payload: Any) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
+        _fsync_directory(path.parent)
     except BaseException:
         try:
             os.unlink(tmp_name)
@@ -93,6 +120,7 @@ def read_json(path: Path) -> Optional[Any]:
 
 
 def append_jsonl(path: Path, record: Dict[str, Any], *, sanitize_for_log: Callable[[Any], Any]) -> None:
+    """Append diagnostic evidence without a per-record durability barrier."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(sanitize_for_log(record), ensure_ascii=False, default=str)
@@ -206,10 +234,12 @@ def save_active_state(state: Dict[str, Any], *, active_path: Callable[[], Path],
 
 
 def clear_active_state(*, active_path: Callable[[], Path]) -> None:
+    path = Path(active_path())
     try:
-        os.unlink(active_path())
-    except OSError:
-        pass
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    _fsync_directory(path.parent)
 
 
 def log_event(run_id: str, event_type: str, detail: Any=None, *, append_jsonl: Callable[[Path, Dict[str, Any]], None], run_dir: Callable[[str], Path], utc_now_iso: Callable[[], str]) -> None:

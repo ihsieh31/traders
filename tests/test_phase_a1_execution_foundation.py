@@ -545,7 +545,7 @@ class UnknownRecoveryTests(unittest.TestCase):
                 ),
             )
             # Broker actually holds the order; lookup must adopt it.
-            lookup_broker = MagicMock()
+            lookup_broker = _mock_broker()
             found = MagicMock()
             found.id = "broker-adopted-1"
             found.status = "accepted"

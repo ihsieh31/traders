@@ -5,7 +5,7 @@
     "tradingagents/execution/service.py",
     "tradingagents/long_run.py"
   ],
-  "note": "Baseline signatures, effects, callers and temporal contracts remain from 69388cc. new_owner and final_implementation now identify actual unique implementation owners verified by execution-long-run-audit.json. planned_owner preserves the initial plan. Static evidence complements full offline and fixed-input differential tests documented in execution-long-run-validation.md. Independent re-audit: corrupt resumable symbol states are now explicitly rejected before recovery; this is a reviewed baseline bug fix, not AST-identical extraction. See execution-long-run-independent-review.md.",
+  "note": "Baseline signatures, effects, callers and temporal contracts remain from 69388cc. new_owner and final_implementation now identify actual unique implementation owners verified by execution-long-run-audit.json. planned_owner preserves the initial plan. Static evidence complements full offline and fixed-input differential tests documented in execution-long-run-validation.md. Independent re-audit: corrupt resumable symbol states are now explicitly rejected before recovery; this is a reviewed baseline bug fix, not AST-identical extraction. See execution-long-run-independent-review.md. Review hardening amendment (2026-09-17): UNKNOWN adoption now locks and verifies account binding; authoritative JSON uses directory fsync and durable unlink; scheduler drops an always-true branch. Their final_implementation records explicitly override baseline equivalence. Symbol-owner truth remains new_owner; the boundary table is generated from this inventory.",
   "counts": {
     "execution_service": 69,
     "long_run": 115
@@ -16933,7 +16933,8 @@
       },
       "lock_timing": {
         "contract": "No account lock: broker GET plus ledger adoption is the baseline exception.",
-        "direct_with_scopes": []
+        "direct_with_scopes": [],
+        "current_contract": "Verify broker identity, acquire AccountExecutionLock(account_id), re-read row, fresh account snapshot/binding proof, bounded lookup/adoption; busy lock pauses; no POST."
       },
       "production_callers": {
         "reference_candidates": [],
@@ -16965,12 +16966,12 @@
         "file": "tradingagents/execution/service.py",
         "name": "ExecutionService.lookup_unknown",
         "line": 1463,
-        "equivalence": "identical AST body",
+        "equivalence": "review hardening: verified-account lock, fresh snapshot/binding proof and locked ledger re-read before bounded adoption",
         "original_signature_preserved": true,
-        "equivalence_kind": "identical AST body",
-        "reviewed_behavior_change": false,
-        "body_equivalent": true,
-        "baseline_flow_equivalent": true
+        "equivalence_kind": "reviewed hardening change",
+        "reviewed_behavior_change": true,
+        "body_equivalent": false,
+        "baseline_flow_equivalent": false
       }
     },
     {
@@ -17482,7 +17483,7 @@
       "final_implementation": {
         "file": "tradingagents/execution/service.py",
         "name": "_service",
-        "line": 1494,
+        "line": 1515,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -17594,7 +17595,7 @@
       "final_implementation": {
         "file": "tradingagents/execution/service.py",
         "name": "execute_trade_intent",
-        "line": 1500,
+        "line": 1521,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -17693,7 +17694,7 @@
       "final_implementation": {
         "file": "tradingagents/execution/service.py",
         "name": "liquidate_position",
-        "line": 1531,
+        "line": 1552,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -19382,7 +19383,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "base_dir",
-        "line": 22,
+        "line": 28,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -19469,7 +19470,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "config_path",
-        "line": 29,
+        "line": 35,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -19749,7 +19750,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "active_path",
-        "line": 33,
+        "line": 39,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -19872,7 +19873,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "lock_path",
-        "line": 37,
+        "line": 43,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -20158,7 +20159,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "run_dir",
-        "line": 41,
+        "line": 47,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -20270,7 +20271,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "round_path",
-        "line": 45,
+        "line": 51,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -20363,7 +20364,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "_looks_placeholder",
-        "line": 49,
+        "line": 55,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -20464,7 +20465,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "scan_files_for_secrets",
-        "line": 54,
+        "line": 60,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -20661,13 +20662,13 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "atomic_write_json",
-        "line": 67,
-        "equivalence": "identical AST body",
+        "line": 93,
+        "equivalence": "review hardening: file fsync, atomic replace, parent directory fsync and newly created ancestor entry sync",
         "original_signature_preserved": true,
-        "equivalence_kind": "identical AST body",
-        "reviewed_behavior_change": false,
-        "body_equivalent": true,
-        "baseline_flow_equivalent": true
+        "equivalence_kind": "reviewed hardening change",
+        "reviewed_behavior_change": true,
+        "body_equivalent": false,
+        "baseline_flow_equivalent": false
       }
     },
     {
@@ -20786,7 +20787,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "read_json",
-        "line": 87,
+        "line": 114,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -20923,7 +20924,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "append_jsonl",
-        "line": 95,
+        "line": 122,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -21085,7 +21086,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "utc_now_iso",
-        "line": 103,
+        "line": 131,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -21191,7 +21192,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "RunnerLockBusy",
-        "line": 107,
+        "line": 135,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -21489,7 +21490,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "runner_lock",
-        "line": 111,
+        "line": 139,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -24412,11 +24413,11 @@
         "file": "tradingagents/long_run_support/sessions.py",
         "name": "next_due_session",
         "line": 79,
-        "equivalence": "identical AST body",
+        "equivalence": "review hardening: remove always-true branch; preserve authoritative calendar calls and scheduling outputs",
         "original_signature_preserved": true,
-        "equivalence_kind": "identical AST body",
+        "equivalence_kind": "reviewed hardening change",
         "reviewed_behavior_change": false,
-        "body_equivalent": true,
+        "body_equivalent": false,
         "baseline_flow_equivalent": true
       }
     },
@@ -24503,7 +24504,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/sessions.py",
         "name": "session_close_et",
-        "line": 157,
+        "line": 155,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -24784,7 +24785,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/sessions.py",
         "name": "mark_session_missed_after_close",
-        "line": 173,
+        "line": 171,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -25012,7 +25013,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "new_observation_state",
-        "line": 137,
+        "line": 165,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -25280,7 +25281,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "load_active_state",
-        "line": 158,
+        "line": 186,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -25470,7 +25471,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "save_active_state",
-        "line": 204,
+        "line": 232,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -25560,13 +25561,13 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "clear_active_state",
-        "line": 208,
-        "equivalence": "identical AST body",
+        "line": 236,
+        "equivalence": "review hardening: unlink followed by parent directory fsync; suppress only FileNotFoundError",
         "original_signature_preserved": true,
-        "equivalence_kind": "identical AST body",
-        "reviewed_behavior_change": false,
-        "body_equivalent": true,
-        "baseline_flow_equivalent": true
+        "equivalence_kind": "reviewed hardening change",
+        "reviewed_behavior_change": true,
+        "body_equivalent": false,
+        "baseline_flow_equivalent": false
       }
     },
     {
@@ -25887,7 +25888,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "log_event",
-        "line": 215,
+        "line": 245,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -26026,7 +26027,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "completed_sessions",
-        "line": 222,
+        "line": 252,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -26251,7 +26252,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "settled_sessions",
-        "line": 234,
+        "line": 264,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -29854,7 +29855,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "_empty_maintenance_summary",
-        "line": 247,
+        "line": 277,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -30102,7 +30103,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "new_round_journal",
-        "line": 256,
+        "line": 286,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -30472,7 +30473,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "save_round_journal",
-        "line": 280,
+        "line": 310,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -30709,7 +30710,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/state.py",
         "name": "load_round_journal",
-        "line": 284,
+        "line": 314,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -34908,7 +34909,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/sessions.py",
         "name": "sweep_missed_sessions",
-        "line": 256,
+        "line": 254,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",
@@ -35219,7 +35220,7 @@
       "final_implementation": {
         "file": "tradingagents/long_run_support/sessions.py",
         "name": "_run_scheduler_operation_with_retry",
-        "line": 310,
+        "line": 308,
         "equivalence": "identical AST body",
         "original_signature_preserved": true,
         "equivalence_kind": "identical AST body",

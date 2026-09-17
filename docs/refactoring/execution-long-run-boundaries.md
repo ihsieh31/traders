@@ -138,21 +138,23 @@ Module layout:
 
 ---
 
-## 2. Final package boundaries (no behavior changes)
+## 2. Final package boundaries
 
 ### 2.1 `tradingagents/execution/` new modules
 
-| New module | Owns (from service.py today) |
+| Module | Responsibility |
 |---|---|
-| `service.py` (retained, slimmed) | `ExecutionService` public entry orchestration only: `__init__`, `store` property, `quarantine_gate`/`_quarantine_rejection` (lazy gate), `_default_broker_factory`, and the public orchestration methods `execute`, `enforce_exit_deadlines`, `startup_recover`, `account_status`, `liquidate`, `lookup_unknown`, including the complete deadline loop and its closure-local mutation accounting, plus `_attach_quarantine_status`, `_default_db_path`, `__all__`, `_DEFAULT_DB`, and the module-level wrappers `_service`, `execute_trade_intent`, `liquidate_position` and `resolve_execution_db_path` (public API re-homed here; see 2.2 rules). The orchestrators keep their exact signatures and control flow and delegate to the new modules. |
-| `requests.py` | Request construction and classification: `_exception_http_status`, `_is_ambiguous_error`, `_definitive_rejection`, `RequestBuildError`, `_build_market_request`, `_build_protective_request`, `_resolve_qty`, `_TIMEOUT_MARKERS`, and the SDK-unavailable dict-fallback behavior of `_build_market_request` (tests `test_phase_a2_broker_authority.py::RemediationRegressionTests` and `test_30d_minimal_repairs_20260912.py::test_R10_*` bind `tradingagents.execution.service._build_market_request` — see section 5 for the seam policy). |
-| `order_planning.py` | `validate_trade_intent`, `_planned_order_specs`, `_resolve_protective_prices`, `_position_unchanged`. |
-| `dispatch.py` | Final-POST boundary proof: `_submit_authority_error`, `_market_clock_closed`, `_validate_opening_dispatch`, `_get_execution_config`, plus `ExecutionService._submit_one` moved as a module-level function taking the original `self` and explicit named collaborators (its call graph moves intact — it is the only place initial bracket/OTO submits happen). |
-| `protection.py` | Protection invariant machinery: `_verify_owned_close_protections`, `_cancel_protection_with_race_check`, `_cancel_owned_close_protections`, `_broker_order_live`, `_program_owned_live_reducing_qty`, `_evaluate_protection_gap`, `_recover_persisted_protection_gaps`, `_protection_coverage_gaps`, `_apply_protection_coverage`, `_verified_reducing_exit`, `StaleRecoveryPositionError`. These are store/snapshot functions and become module-level helpers taking `(store, broker, snapshot, ...)` — the original `self` remains an explicit collaborator where methods call other service methods or access instance state; do not replace those calls with captured helper aliases. |
-| `recovery.py` | `_lookup_for_recovery`, `_adopt_recovery_order`, `_recovery_crossing_block`, `_resubmit_recovered`, `_reconcile_snapshot`, `_recover_locked`, `_abandon_prepared_rows`, plus `_evaluate_opening_caps` (used by both initial caps and recovery resubmits). |
-| `exits.py` | Deadline/liquidation cores: `_DeadlineGapOutcome`, `_deadline_maintenance` logic via `_new_maintenance_collector`/`_maintenance_summary`, `_prepare_liquidation_outbox`, `_liquidate_core`, The deadline loop remains in `service.py`: its lock, nested gap exception and cancellation/submit counters form one cohesive orchestration scope. Extracting a separate per-symbol outcome carrier would add bookkeeping without clarifying the public flow. `_paused_result` lives here (shared by exits and orchestration). |
-| `intent_execution.py` | `ExecutionService._execute_core` implementation, including sizing, replay, durable outbox commit, per-spec dispatch and result shaping. Keep an explicit-signature `_execute_core` method wrapper on `ExecutionService`; pass `self` and named call-time service collaborators, without moving the account-lock acquisition from `execute`. This is a function extraction, not a new service class. |
-| `contracts.py` (only if necessary) | Shared typing aliases/protocols for `can_submit` callables and result-dict shapes, only if cross-module circular imports would otherwise force runtime imports. Nothing else moves here; no new abstractions. |
+| `service.py` | Public execution, recovery and liquidation coordination; account locks and compatibility wrappers. |
+| `requests.py` | Request construction, sizing and error classification; SDK fallback. |
+| `order_planning.py` | Intent validation, order specs and protective prices. |
+| `dispatch.py` | Final submit authority and initial order dispatch. |
+| `protection.py` | Protection ownership, coverage and cancellation races. |
+| `recovery.py` | Bounded lookup, adoption, resubmission, reconciliation and caps. |
+| `exits.py` | Prepared-row abandonment, liquidation cores and maintenance summaries. The deadline loop stays in the service. |
+| `intent_execution.py` | Sizing, replay, outbox preparation and per-spec execution. |
+
+Symbol ownership is generated from inventory `new_owner` in section 2.4.
+These responsibility summaries do not maintain a separate symbol-owner list.
 
 Cross-module call rules inside `execution/`:
 
@@ -249,16 +251,18 @@ deliberately returns a dict payload when the SDK import fails).
 
 ### 2.3 `tradingagents/long_run_support/` new package
 
-| Module | Actual unique ownership |
+| Module | Responsibility |
 |---|---|
-| `long_run.py` | Round/scheduler/finalization/resume coordination, `_control_stop_reason`, `_stop_requested`, signal handler, `LongRunDeps`, `LongRunStop`, policy/status constants and explicit compatibility wrappers. The round's maintenance/recovery-authority closures remain here. |
-| `state.py` | Paths, placeholder/secret scan, atomic JSON and JSONL, UTC timestamp, `RunnerLockBusy` and runner lock generator, active state, completed/settled sessions, empty maintenance shape and round journal primitives. `TERMINAL_ROUND_STATUSES` has one definition explicitly aliased at the old entry. |
-| `config.py` | Non-secret configuration/defaults/load/save/validation, runtime construction, git baseline, runtime installation and unattended execution-config validation (including persistent 20M budget normalization/reset/event). |
-| `sessions.py` | ET/calendar/target/due-session/close proofs, closed-session and past-session MISSED settlement, fixed bounded scheduler retry. |
-| `preflight.py` | All five lazy default factories/probe implementations, sanitized account snapshot (`SnapshotUnavailable`, `_num`, `_get`), read-only preflight and authorized recovery. Old factories remain call-time wrappers. |
-| `round_support.py` | Intent normalization and observation-bound log recovery, graph config installation, screening audit, shared auto-trade bridge, result summary/record and hard-stop interpretation. |
-| `symbols.py` | Original contiguous daily per-symbol block, including graph construction once, `_execute_symbol` closure, resume cases A–E, exact budget/stop/checkpoint/persistence/error order. Mutable journal is shared; only the stop reason is returned. |
-| `reporting.py` | Evidence readers, drawdown/account/decision/screening/maintenance/cost/DB/safety aggregation, formatting, final JSON/Markdown write and failure-isolated injected/default alert adapter. |
+| `long_run.py` | Round, scheduler, finalization and resume coordination; stop state and compatibility wrappers. |
+| `state.py` | Paths, durable JSON state, best-effort telemetry, journals and runner lock. |
+| `config.py` | Configuration, runtime installation and unattended validation. |
+| `sessions.py` | Authoritative calendar scheduling, missed sessions and bounded retries. |
+| `preflight.py` | Default factories, read-only probes and authorized recovery. |
+| `round_support.py` | Intent recovery, graph setup, screening and execution bridge. |
+| `symbols.py` | Daily per-symbol state machine with shared journal and graph lifecycle. |
+| `reporting.py` | Evidence aggregation, report persistence and alerts. |
+
+Symbol ownership is generated from inventory `new_owner` in section 2.4.
 
 No contracts module is needed: shared exception identity is preserved through
 explicit aliases (`RunnerLockBusy`, `SnapshotUnavailable`); `LongRunStop` is
@@ -340,6 +344,35 @@ copies of a helper or mutable state.
 
 ---
 
+### 2.4 Generated symbol ownership
+
+`execution-long-run-inventory.json` is the machine-readable source of truth.
+Regenerate this table with `python scripts/refactoring/sync_boundary_ownership.py`.
+The regular CI pytest suite checks the entire table against every inventory
+record; edit inventory ownership when moving symbols, then regenerate this view.
+
+<!-- inventory-ownership:start -->
+| Implementation owner | Baseline symbols |
+|---|---|
+| `tradingagents/execution/dispatch.py` | `ExecutionService._market_clock_closed`, `ExecutionService._submit_one`, `ExecutionService._validate_opening_dispatch`, `_get_execution_config`, `_submit_authority_error` |
+| `tradingagents/execution/exits.py` | `ExecutionService._abandon_prepared_rows`, `ExecutionService._liquidate_core`, `ExecutionService._paused_result`, `ExecutionService._prepare_liquidation_outbox`, `_DeadlineGapOutcome`, `_DeadlineGapOutcome.__init__`, `_maintenance_summary`, `_new_maintenance_collector` |
+| `tradingagents/execution/intent_execution.py` | `ExecutionService._execute_core` |
+| `tradingagents/execution/order_planning.py` | `_planned_order_specs`, `_position_unchanged`, `_resolve_protective_prices`, `validate_trade_intent` |
+| `tradingagents/execution/protection.py` | `ExecutionService._apply_protection_coverage`, `ExecutionService._broker_order_live`, `ExecutionService._cancel_owned_close_protections`, `ExecutionService._cancel_protection_with_race_check`, `ExecutionService._evaluate_protection_gap`, `ExecutionService._program_owned_live_reducing_qty`, `ExecutionService._protection_coverage_gaps`, `ExecutionService._recover_persisted_protection_gaps`, `ExecutionService._verified_reducing_exit`, `ExecutionService._verify_owned_close_protections`, `StaleRecoveryPositionError`, `StaleRecoveryPositionError.stale_position_transition` |
+| `tradingagents/execution/recovery.py` | `ExecutionService._adopt_recovery_order`, `ExecutionService._lookup_for_recovery`, `ExecutionService._reconcile_snapshot`, `ExecutionService._recover_locked`, `ExecutionService._recover_locked._blocking_anomalies`, `ExecutionService._recover_locked._broker_clients`, `ExecutionService._recovery_crossing_block`, `ExecutionService._resubmit_recovered`, `_evaluate_opening_caps` |
+| `tradingagents/execution/requests.py` | `RequestBuildError`, `_TIMEOUT_MARKERS`, `_build_market_request`, `_build_protective_request`, `_definitive_rejection`, `_exception_http_status`, `_is_ambiguous_error`, `_resolve_qty` |
+| `tradingagents/execution/service.py` | `ExecutionService`, `ExecutionService.__init__`, `ExecutionService._attach_quarantine_status`, `ExecutionService._default_broker_factory`, `ExecutionService._quarantine_rejection`, `ExecutionService.account_status`, `ExecutionService.enforce_exit_deadlines`, `ExecutionService.enforce_exit_deadlines._deadline_maintenance`, `ExecutionService.enforce_exit_deadlines._fail_with_gap_check`, `ExecutionService.execute`, `ExecutionService.liquidate`, `ExecutionService.lookup_unknown`, `ExecutionService.quarantine_gate`, `ExecutionService.startup_recover`, `ExecutionService.store`, `_DEFAULT_DB`, `__all__`, `_default_db_path`, `_service`, `execute_trade_intent`, `liquidate_position`, `resolve_execution_db_path` |
+| `tradingagents/long_run.py` | `DEFAULT_DURATION_CALENDAR_DAYS`, `DEFAULT_RUN_TIME_ET`, `LONG_RUN_SCHEMA_VERSION`, `LongRunDeps`, `LongRunStop`, `LongRunStop.__init__`, `PLACEHOLDER_MARKERS`, `PROVIDERS_REQUIRING_URL`, `REDACTED_API_KEY`, `SCHEDULER_RETRY_ATTEMPTS`, `SCHEDULER_RETRY_DELAY_SECONDS`, `SCREENING_AUDIT_SYMBOL`, `SESSION_CLOSE_ET`, `SESSION_OPEN_ET`, `STOP_REASON_NONE`, `STOP_REASON_STOP_REQUESTED`, `STOP_REASON_WINDOW_ENDED`, `SYMBOL_ANALYZED`, `SYMBOL_ANALYZING`, `SYMBOL_DONE`, `SYMBOL_EXECUTING`, `SYMBOL_FAILED`, `SYMBOL_PENDING`, `VALID_ANALYSTS`, `VALID_RESEARCH_DEPTHS`, `_control_stop_reason`, `_install_signal_handlers`, `_install_signal_handlers._handler`, `_stop_requested`, `finalize_observation`, `request_stop`, `run_daily_round`, `run_daily_round._record_maintenance`, `run_daily_round._recovery_can_submit`, `run_observation_loop`, `run_observation_loop._scheduling_operation`, `setup_or_resume` |
+| `tradingagents/long_run_support/config.py` | `_apply_runtime_config`, `_unattended_safety_error`, `_valid_backend_url`, `_validate_long_run_execution_config`, `_validate_unattended_safety`, `build_runtime_config`, `default_long_run_config`, `git_baseline_commit`, `load_long_run_config`, `missing_config_fields`, `parse_run_time_et`, `save_long_run_config`, `validate_long_run_config` |
+| `tradingagents/long_run_support/preflight.py` | `SnapshotUnavailable`, `_default_broker_client`, `_default_execution_service`, `_default_graph_factory`, `_default_llm_probe`, `_default_screening`, `capture_account_snapshot`, `capture_account_snapshot._get`, `capture_account_snapshot._num`, `run_post_authorization_recovery`, `run_preflight`, `run_preflight._check` |
+| `tradingagents/long_run_support/reporting.py` | `_fmt_pct`, `_fmt_usd`, `_load_rounds`, `_load_snapshots`, `_sum_unrealized`, `aggregate_final_report`, `compute_drawdown`, `render_final_markdown`, `send_long_run_alert`, `write_final_report` |
+| `tradingagents/long_run_support/round_support.py` | `_build_graph_config`, `_check_execution_hard_stop`, `_execute_intent`, `_normalize_intent`, `_record_execution`, `_recover_intent_from_run_log`, `_screening_with_audit_scope`, `summarize_execution_result` |
+| `tradingagents/long_run_support/sessions.py` | `_run_scheduler_operation_with_retry`, `eastern_now`, `effective_target_for_session`, `fetch_session_dates`, `mark_session_missed_after_close`, `next_due_session`, `session_close_et`, `sweep_missed_sessions` |
+| `tradingagents/long_run_support/state.py` | `RunnerLockBusy`, `TERMINAL_ROUND_STATUSES`, `_empty_maintenance_summary`, `_looks_placeholder`, `active_path`, `append_jsonl`, `atomic_write_json`, `base_dir`, `clear_active_state`, `completed_sessions`, `config_path`, `load_active_state`, `load_round_journal`, `lock_path`, `log_event`, `new_observation_state`, `new_round_journal`, `read_json`, `round_path`, `run_dir`, `runner_lock`, `save_active_state`, `save_round_journal`, `scan_files_for_secrets`, `settled_sessions`, `utc_now_iso` |
+| `tradingagents/long_run_support/symbols.py` | `run_daily_round._execute_symbol` |
+<!-- inventory-ownership:end -->
+
+
 ## 3. Temporal invariants (must hold before and after; tests listed are the
 existing owners — the refactor must keep them passing, it does not invent new
 proof of equivalence)
@@ -400,7 +433,7 @@ proof of equivalence)
    the final freshness/authority proof, never after (R05 ordering in
    `_validate_opening_dispatch`; N03/N04 in `_resubmit_recovered` and
    `_cancel_protection_with_race_check`).
-3. Journal/state writes are atomic (`atomic_write_json` tmp+fsync+replace) and
+3. Journal/state writes are atomic and durable (`atomic_write_json` tmp+file fsync+replace+directory fsync) and
    precede the risky work they give evidence about (journal created before
    recovery in `run_daily_round`; `analysis_run_ref` written before
    `propagate`).
@@ -426,9 +459,8 @@ proof of equivalence)
 - SQLite writes: `create_outbox`, `transition_order`, `update_intent_state`,
   `sync_order_from_broker`, `register_protective_child`, `save_account_state`,
   `ensure_account_binding` — all through `self._store` under the
-  `AccountExecutionLock` for mutating entries; `account_status` and
-  `lookup_unknown` are the documented read-side exceptions to the lock (see
-  section 6 item 2).
+  `AccountExecutionLock` for mutating entries, including UNKNOWN adoption;
+  `account_status` is the read-side exception.
 - Filesystem: `AccountExecutionLock` (flock under the lock dir),
   quarantine ledger (via `build_quarantine_gate`), execution DB file.
 - Env reads at call time: `TRADINGAGENTS_EXECUTION_DB`
@@ -496,8 +528,7 @@ The refactor MUST preserve, with same-name module attributes:
 
 ---
 
-## 6. Verified caveats / observations (reported to coordinator; no fixes in
-this task; behavior must not change)
+## 6. Baseline caveats / observations (hardening amendments noted below)
 
 1. `setup_or_resume` (long_run.py:3088-3103) probes the runner lock, bumps
    and persists `restart_count` BEFORE acquiring the lock that guards the
@@ -505,9 +536,11 @@ this task; behavior must not change)
    `test_race_inside_the_lock_refuses_without_recovery_or_writes`) pin the
    current sequencing; any ownership change must keep this exact order or the
    regression semantics break.
-2. `lookup_unknown` (service.py:3702) performs a broker GET + ledger adoption
-   WITHOUT the account lock, unlike every other mutation path (documented as
-   bounded UNKNOWN adopt; callers: WebUI/ops tooling). Preserve as-is.
+2. Baseline `lookup_unknown` adopted without the account lock. The hardening
+   amendment now verifies broker identity, acquires the shared account lock,
+   re-reads the row, verifies a fresh snapshot and DB account binding, then
+   performs bounded lookup/adoption. Busy or unprovable authority pauses
+   without adoption; this entry never POSTs.
 3. `enforce_exit_deadlines` returns `broker_calls` as
    `cancellation_calls + submit POSTs` while some early `BrokerAuthorityError`
    paths inside the loop have already mutated the ledger (prepared rows
@@ -562,7 +595,7 @@ boundaries rather than requiring readers to reverse-engineer the wrappers.
 | service -> exits | Original self/symbol/decision/run/quantity/side/prepared outbox; named clock/ID/build/classifier/authority/status collaborators | Prepare returns exact outbox or error dict; close returns exact existing success/dedupe/unknown/rejected shape; prepared abandonment and summaries preserve ledger/state/count behavior; no new lock |
 | service -> intent_execution | Original self and complete _execute_core arguments; named validation/spec/price/qty/ID/cap/json collaborators | Complete original sizing/outbox/replay/dispatch/result body; original self cross-method calls; broker mutation only at delegated submit boundary; inherits execute lock |
 | long_run -> config | Original cfg/runtime plus policy constants and named paths/writes/errors/time | Config load/save/validation shapes unchanged; runtime install and budget normalization still mutate global config/guard/local event at original time; no broker mutation |
-| long_run -> state | Original paths/records/journals/run ID plus named path/clock/redaction/atomic-write/error collaborators | Same fsync/replace/error handling and journal schema; runner generator holds/relinquishes original flock; corrupt active state raises same LongRunStop; no broker mutation |
+| long_run -> state | Original paths/records/journals/run ID plus named path/clock/redaction/atomic-write/error collaborators | File and directory fsync for authoritative JSON; durable active unlink; best-effort JSONL; unchanged journal schema; runner generator holds/relinquishes original flock; corrupt active state raises same LongRunStop; no broker mutation |
 | long_run -> sessions | Same date/window/settled/calendar rows/client plus named journal/state/clock/retry callbacks/constants | Authoritative GET can raise calendar error; existing retry converts exhausted ordinary errors to CALENDAR_UNAVAILABLE; journal settlement and log effects unchanged; inherits runner scope |
 | long_run -> preflight | Original cfg/runtime/deps, named LongRunDeps/LongRunStop/default factories/probe/snapshot/calendar callbacks | Redacted probe boundary, same checked optional sources and snapshot results; read-only probes/GET before external observation authorization; later authorized recovery delegates to the sole service |
 | long_run -> round_support | Same runtime/journal/symbol/intent/result/observation/notional plus named summary/journal/log/halt callbacks/constants | Same global graph config, scoped audit logger, deterministic IDs and auto-trade bridge; unknown/paused/breaker/kill flags convert to exact old LongRunStop; no direct broker mutation |
@@ -597,3 +630,17 @@ malformed maps/entries/statuses. No I/O, state writes, locks, broker calls or
 new state owner. Empty maps remain valid. This corrects an original silent-skip
 defect and is the only added production behavior in the independent review.
 See [review and full evidence](execution-long-run-independent-review.md).
+
+# Review hardening amendment — 2026-09-17
+
+Authoritative JSON writes now fsync directory metadata after replacement and
+persist newly created ancestor directory entries. Active-state unlink fsyncs
+its parent and suppresses only FileNotFoundError. A failure after replace or
+unlink is reported even though the namespace operation may already have taken
+place; callers must not infer rollback. JSONL events and account-snapshot
+telemetry stay best effort and are not resume authority. UNKNOWN adoption now
+shares the verified-account lock and binding proof with startup recovery;
+a busy lock requires a later retry. Scheduler cleanup removes an always-true
+branch without changing calendar authority or output. Refactor AST/differential
+evidence above describes the baseline extraction; these deliberate hardening
+changes are covered by the new regression tests and combined suite validation.

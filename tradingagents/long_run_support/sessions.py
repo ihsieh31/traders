@@ -108,12 +108,10 @@ def next_due_session(
     # find overdue incomplete sessions first (resume-before-advance).
     day = start_day
     candidates: List[date] = []
-    use_rows = calendar_rows is not None or calendar_client is not None
     while day <= eastern.date() and day < end_day:
-        if use_rows or True:
-            trading = is_us_trading_day_auth(
-                day, client=calendar_client, calendar_rows=calendar_rows
-            )
+        trading = is_us_trading_day_auth(
+            day, client=calendar_client, calendar_rows=calendar_rows
+        )
         if trading and day.isoformat() not in done:
             candidates.append(day)
         day += timedelta(days=1)

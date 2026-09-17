@@ -2,6 +2,7 @@
 import ast
 import importlib
 import inspect
+import json
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,23 @@ OWNERS = {
         '_liquidate_core', '_paused_result'),
     'intent_execution': ('_execute_core',),
 }
+
+
+def test_boundary_document_ownership_matches_inventory():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        'sync_boundary_ownership', ROOT / 'scripts/refactoring/sync_boundary_ownership.py'
+    )
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+    inventory = json.loads((ROOT / 'docs/refactoring/execution-long-run-inventory.json').read_text())
+    document = (ROOT / 'docs/refactoring/execution-long-run-boundaries.md').read_text()
+    assert document.count(sync.START) == document.count(sync.END) == 1
+    actual = sync.START + document.split(sync.START, 1)[1].split(sync.END, 1)[0] + sync.END
+    assert actual == sync.render_ownership(inventory), (
+        'Ownership drift: run python scripts/refactoring/sync_boundary_ownership.py'
+    )
 
 
 @pytest.mark.parametrize('owner,name', [(owner, name) for owner, names in OWNERS.items() for name in names])

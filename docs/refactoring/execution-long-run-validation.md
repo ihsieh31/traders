@@ -192,3 +192,43 @@ their original import aliases, signatures and exception object identity remain.
 `git diff --check` passes. Source audit, full collection comparison and eight
 byte-identical characterizations were checked after final production/test edits.
 Final documentation edits only record these results. No Git commit or push was made.
+
+
+## Review hardening validation — 2026-09-17
+
+This amendment supersedes the baseline caveat that UNKNOWN adoption runs without
+an account lock. The combined repair adds generated inventory ownership plus
+its CI consistency test, file/directory durability barriers and durable unlink,
+verified-account serialization and binding proof for UNKNOWN adoption, and the
+scheduler always-true branch cleanup. Inventory implementation line references
+are refreshed; the four changed records explicitly distinguish hardening from
+baseline AST equivalence. Earlier refactor audit/differential artifacts remain
+historical evidence of the extraction, not claims of hardening AST equivalence.
+
+The full offline suite ran on Python 3.12.13 after all production and test edits:
+**1363 passed, 275 subtests passed, 2 existing dependency warnings, exit code 0**
+in 36.06 seconds. Command:
+`python scripts/refactoring/run_tests.py -- tests -q --tb=short`.
+Artifacts (runner metadata, collected IDs, JUnit, stdout/stderr and return code):
+`/private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/tradingalpaca-refactor-jxgezb7n/`.
+
+The 44 cases in `tests/test_review_hardening.py` cover file/rename/directory sync
+ordering, newly created ancestor entries, pre/post-replace faults and process
+interruption, partial serialization preserving the valid target, directory FD
+cleanup, durable unlink and propagated permission/I/O/sync errors, telemetry
+without fsync, real concurrent account-lock contention between two services
+(manual/manual and manual/startup), lock-time ledger re-read after competing
+adoption, identity/account/binding/lock/lookup failures, and scheduler default
+client/injected client/rows/calendar failure across overdue/future/settled/end
+exclusion/early close cases. Concurrent recovery checks require one persisted
+order, one adoption and zero submit/cancel calls. A further ownership test checks
+all 184 inventory symbols in the generated Markdown table and runs in existing
+CI without a new workflow. The legacy lookup fixture now supplies verified
+broker identity instead of an identity-less MagicMock.
+
+Fault injection checks software ordering and failure semantics; it does not
+simulate physical power loss or prove storage hardware guarantees. JSONL remains
+best-effort evidence, never authority. A post-replace/unlink sync failure is
+reported although the namespace change may already be visible. Account locks
+remain non-blocking and same-host: a busy UNKNOWN lookup pauses for later retry.
+No live broker or paid provider calls were made.
