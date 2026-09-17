@@ -142,6 +142,19 @@ def _normalize_symbol(value):
     return "".join(symbol.split())
 
 
+def _resolve_start_symbols(tickers, auto_screening_enabled):
+    """U15: resolve the Start callback's symbol list.
+
+    Manual mode requires at least one ticker. Auto-screening derives the
+    round symbols from the validated scan plan, so an empty ticker field is
+    accepted there (the scheduler runs the screening round first).
+    """
+    symbols = [s.strip().upper() for s in str(tickers or "").split(',') if s.strip()]
+    if symbols:
+        return symbols, None
+    if auto_screening_enabled:
+        return [], None
+    return None, "Please enter at least one stock symbol."
 def _parse_symbol_text(value):
     if isinstance(value, list):
         raw_symbols = value
@@ -1655,9 +1668,9 @@ def register_control_callbacks(app):
         if app_state.analysis_running:
             return "Analysis already in progress. Please wait.", dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
-        symbols = [s.strip().upper() for s in tickers.split(',') if s.strip()]
-        if not symbols:
-            return "Please enter at least one stock symbol.", {}, 1, 1, 1, 1
+        symbols, symbols_error = _resolve_start_symbols(tickers, bool(auto_screening_enabled))
+        if symbols_error:
+            return symbols_error, {}, 1, 1, 1, 1
 
         if not app_state.analysis_running:
             app_state.reset()
