@@ -999,24 +999,39 @@ def _evaluate_frame_quality(
             most_recent_completed_session_auth,
             previous_trading_day_auth,
             session_close_et_auth,
+            session_open_et_auth,
         )
 
         eastern = ZoneInfo(_ET)
         completion = cleaned["timestamp"] + pd.Timedelta(duration)
         try:
-            # Bars of the reference's own session complete no later than that
-            # session's actual close (early closes honored). When the
-            # reference day is not a session at all (weekend/holiday) no
-            # such bars exist and the plain duration applies.
+            # D04: the close-based truncation is only legitimate for bars
+            # that START inside the reference's own session. A bar starting
+            # after that session's close (extended-hours feed) must not be
+            # clipped back into the session — it keeps the full duration and
+            # is filtered below as not-yet-complete; bars of other sessions
+            # also complete by plain start + duration.
             ref_et = reference.tz_convert(eastern)
             today = ref_et.date()
+            today_open = session_open_et_auth(
+                today, client=calendar_client, calendar_rows=calendar_rows
+            )
             today_close = session_close_et_auth(
                 today, client=calendar_client, calendar_rows=calendar_rows
             )
+            open_ts = pd.Timestamp(
+                datetime.combine(today, today_open), tz=eastern
+            ).tz_convert("UTC")
             close_ts = pd.Timestamp(
                 datetime.combine(today, today_close), tz=eastern
             ).tz_convert("UTC")
-            completion = completion.clip(upper=close_ts)
+            bar_start_et = cleaned["timestamp"].dt.tz_convert(eastern)
+            clip_mask = (
+                (bar_start_et.dt.date == today)
+                & (bar_start_et >= open_ts)
+                & (bar_start_et < close_ts)
+            )
+            completion = completion.mask(clip_mask, completion.clip(upper=close_ts))
         except CalendarError:
             pass
         cleaned = cleaned[completion <= reference].reset_index(drop=True)

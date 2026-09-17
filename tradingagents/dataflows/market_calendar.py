@@ -264,6 +264,16 @@ def _calendar_close_map(rows: List[Any]) -> Dict[date, time]:
     return out
 
 
+def _calendar_open_map(rows: List[Any]) -> Dict[date, time]:
+    out: Dict[date, time] = {}
+    for row in rows:
+        day = _row_date(row)
+        open_t = _row_open_et(row)
+        if day is not None and open_t is not None:
+            out[day] = open_t
+    return out
+
+
 def _eastern_now_auth(now: Any = None) -> datetime:
     if now is None:
         return datetime.now(EASTERN)
@@ -345,6 +355,22 @@ def session_dates_ending_at_auth(
             f"calendar proves only {len(window)} sessions ending at {last_session}; {count} required"
         )
     return window
+
+
+def session_open_et_auth(
+    day: date, client: Any = None, calendar_rows: Optional[List[Any]] = None
+) -> time:
+    """Actual ET open time for an authoritative session (e.g. 09:30)."""
+    if calendar_rows is not None:
+        open_map = _calendar_open_map(calendar_rows)
+        if day not in open_map:
+            raise CalendarError(f"calendar rows have no open time for {day}")
+        return open_map[day]
+    rows = fetch_trading_calendar(day - timedelta(days=1), day + timedelta(days=7), client=client)
+    open_map = _calendar_open_map(rows)
+    if day not in open_map:
+        raise CalendarError(f"calendar has no open time for {day}")
+    return open_map[day]
 
 
 def session_close_et_auth(
