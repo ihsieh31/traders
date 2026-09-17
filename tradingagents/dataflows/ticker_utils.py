@@ -17,13 +17,28 @@ class TickerUtils:
     }
     
     @staticmethod
+    def _split_crypto_pair(ticker: str) -> Tuple[str, str]:
+        """Split a crypto ticker into (base, quote); quote is '' for bare symbols."""
+        ticker = ticker.upper()
+        if "/" in ticker:
+            base, _, quote = ticker.partition("/")
+            return base, quote or "USD"
+        if "-" in ticker:
+            base, _, quote = ticker.partition("-")
+            return base, quote or "USD"
+        for suffix, quote in (("USDT", "USDT"), ("USDC", "USDC"), ("USD", "USD")):
+            if ticker.endswith(suffix) and len(ticker) > len(suffix):
+                return ticker[: -len(suffix)], quote
+        return ticker, "USD"
+
+    @staticmethod
     def standardize_ticker(ticker: str) -> Dict[str, str]:
         """
         Standardize a ticker symbol and return multiple formats.
-        
+
         Args:
             ticker: Raw ticker symbol (e.g., "BTC/USD", "BTC-USD", "BTCUSD", "AAPL")
-            
+
         Returns:
             Dict with standardized formats:
             - 'original': Original input ticker
@@ -34,41 +49,47 @@ class TickerUtils:
             - 'display_format': Human-readable format (BTC/USD, AAPL)
             - 'clean_symbol': Clean base symbol for APIs that need just the symbol
         """
-        
+
         if not ticker:
             raise ValueError("Ticker cannot be empty")
-            
+
         ticker = ticker.strip().upper()
-        
+
         # Detect if this is a crypto pair
         is_crypto = TickerUtils._is_crypto_ticker(ticker)
-        
+
         if is_crypto:
-            base_symbol = TickerUtils._extract_crypto_base(ticker)
+            base_symbol, quote = TickerUtils._split_crypto_pair(ticker)
+            # D10: keep the actual quote currency — rewriting BTC/USDC to
+            # BTC/USD misreports the traded pair. Only USD-quoted pairs are
+            # supported end-to-end; other quotes pass through unchanged.
+            pair = f"{base_symbol}/{quote}"
             return {
                 'original': ticker,
                 'base_symbol': base_symbol,
                 'is_crypto': True,
-                'alpaca_format': f"{base_symbol}/USD",  # Alpaca uses BTC/USD format
-                'openai_format': f"{base_symbol}USD",   # Some APIs use BTCUSD format
-                'display_format': f"{base_symbol}/USD",  # Human readable
-                'clean_symbol': base_symbol,             # Just BTC
-                'yahoo_format': f"{base_symbol}-USD",   # Yahoo Finance format
-                'coindesk_format': base_symbol          # CoinDesk format
+                'alpaca_format': pair,                    # Alpaca uses BTC/USD format
+                'openai_format': f"{base_symbol}{quote}", # Some APIs use BTCUSD format
+                'display_format': pair,                   # Human readable
+                'clean_symbol': base_symbol,              # Just BTC
+                'yahoo_format': f"{base_symbol}-{quote}", # Yahoo Finance format
+                'coindesk_format': base_symbol            # CoinDesk format
             }
         else:
-            # Stock ticker - just clean it up
-            clean_ticker = re.sub(r'[^A-Z0-9]', '', ticker)
+            # Stock ticker — D10: preserve share-class separators (BRK.B is
+            # a different security than the stripped BRKB); only whitespace
+            # is removed.
+            clean_ticker = re.sub(r'\s+', '', ticker)
             return {
                 'original': ticker,
                 'base_symbol': clean_ticker,
                 'is_crypto': False,
-                'alpaca_format': clean_ticker,      # AAPL
-                'openai_format': clean_ticker,      # AAPL
-                'display_format': clean_ticker,     # AAPL  
-                'clean_symbol': clean_ticker,       # AAPL
-                'yahoo_format': clean_ticker,       # AAPL
-                'coindesk_format': clean_ticker     # AAPL
+                'alpaca_format': clean_ticker,      # AAPL / BRK.B
+                'openai_format': clean_ticker,      # AAPL / BRK.B
+                'display_format': clean_ticker,     # AAPL / BRK.B
+                'clean_symbol': clean_ticker,       # AAPL / BRK.B
+                'yahoo_format': clean_ticker.replace('.', '-'),  # BRK.B -> BRK-B
+                'coindesk_format': clean_ticker     # AAPL / BRK.B
             }
     
     @staticmethod
