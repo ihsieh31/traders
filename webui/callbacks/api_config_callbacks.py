@@ -111,7 +111,7 @@ def register_api_config_callbacks(app):
             env_status = dbc.Alert([
                 html.I(className="fas fa-file-alt me-2"),
                 f".env file detected with {env_keys_set} API key(s) configured. ",
-                "LocalStorage keys will take precedence."
+                "Server-managed keys are applied to the runtime but are never sent to the browser."
             ], color="success", className="mb-0 py-2")
         else:
             env_status = dbc.Alert([
@@ -119,11 +119,22 @@ def register_api_config_callbacks(app):
                 "No .env file detected or no keys configured. Please enter your API keys below."
             ], color="warning", className="mb-0 py-2")
 
+        # U16: an explicitly cleared store is NOT an uninitialized one —
+        # never re-apply env keys after the operator pressed Clear.
+        if stored_keys and stored_keys.get("_cleared"):
+            apply_api_keys_to_config(
+                {**{api["id"]: "" for api in api_configs}, "alpaca-paper": True}
+            )
+            return tuple("" for _ in api_ids) + (True, env_status)
+
         has_stored_keys = stored_keys and any(stored_keys.get(key) for key in api_ids)
         if not has_stored_keys:
+            # U06: server-managed (.env) keys are applied to the runtime
+            # config but NEVER returned as input values — the browser only
+            # sees the configured count in the status alert.
             keys_to_apply = {**env_vars, "alpaca-paper": env_alpaca_paper}
             apply_api_keys_to_config(keys_to_apply)
-            return tuple(env_vars.get(api_id, "") for api_id in api_ids) + (
+            return tuple("" for _ in api_ids) + (
                 env_alpaca_paper,
                 env_status,
             )
@@ -179,7 +190,14 @@ def register_api_config_callbacks(app):
         if not n_clicks:
             raise PreventUpdate
 
+        # U16: mark the store explicitly cleared so the next page load does
+        # not mistake it for an uninitialized browser and re-apply env keys;
+        # also drop the runtime keys (Clear must actually clear).
         defaults = get_default_api_keys()
+        apply_api_keys_to_config(
+            {**{api["id"]: "" for api in api_configs}, "alpaca-paper": True}
+        )
+        defaults["_cleared"] = True
         return tuple("" for _ in api_ids) + (True, defaults)
 
     # Callback to load API keys from .env file
