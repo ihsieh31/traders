@@ -40,6 +40,15 @@ def compute_atr(bars, period: int = 14) -> Optional[float]:
         return None
 
     prev_close = close.shift(1)
+    # D03: pandas .max(axis=1) skips NaN, which would fabricate an ATR from
+    # partial rows. Any non-finite high/low/close in the evaluated window
+    # disqualifies the ATR entirely.
+    if not (
+        high.map(math.isfinite).all()
+        and low.map(math.isfinite).all()
+        and close.map(math.isfinite).all()
+    ):
+        return None
     true_range = pd.concat(
         [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
         axis=1,
