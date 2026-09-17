@@ -445,11 +445,18 @@ def _yfinance_fallback_data(
         return pd.DataFrame()
 
     tf_text = str(timeframe).lower()
-    interval = "1d"
-    if "hour" in tf_text or tf_text in ("1h",):
+    # D02: only pass through intervals Yahoo actually supports. Mapping a
+    # 4-hour request to 1h bars would silently change bar granularity under
+    # the caller's expectation — unsupported intervals return no data
+    # (fail closed) instead.
+    if "hour" in tf_text:
+        if "4" in tf_text:
+            return pd.DataFrame()
         interval = "1h"
     elif "min" in tf_text:
         return pd.DataFrame()
+    else:
+        interval = "1d"
 
     try:
         import yfinance as yf
