@@ -209,13 +209,23 @@ class QuarantineStore:
         # Hold one cross-process lock across reload + mutation + replace.
         with self._lock, self._file_lock():
             self._load()
-            if not any(
-                r["reason"] == reason_key and r["status"] == "active"
-                for r in self._records.get(normalized, [])
-            ):
+            existing = next((
+                r for r in self._records.get(normalized, [])
+                if r["reason"] == reason_key and r["status"] == "active"
+            ), None)
+            if existing is None:
                 self._records.setdefault(normalized, []).append(record)
                 self._save()
-        return record
+            else:
+                # Earliest effective time wins: None (immediate) is the
+                # earliest possible, so a later-dated report can never push
+                # an already-known event's activation further out.
+                previous = _parse_timestamp(existing.get("effective_at"))
+                if previous is not None and (effective is None or effective < previous):
+                    existing.update(record)
+                    self._save()
+                record = existing
+            return dict(record)
 
     def active_for(self, symbol: str, *, now: Optional[datetime] = None) -> list[dict]:
         """Active quarantine records for a symbol (effective time applied)."""
@@ -270,11 +280,22 @@ class QuarantineStore:
         return {"symbol": normalized, "released": released}
 
     def all_active(self, *, now: Optional[datetime] = None) -> list[dict]:
-        symbols = sorted(self._records.keys())
-        active: list[dict] = []
-        for symbol in symbols:
-            active.extend(self.active_for(symbol, now=now))
-        return active
+        """Active records across all symbols, re-read from the file first.
+
+        E06: the symbol list must come from a fresh load — a stale in-memory
+        copy misses symbols another instance quarantined after this one was
+        constructed.
+        """
+        current = now or utc_now()
+        with self._lock, self._file_lock():
+            self._load()
+            return [
+                dict(record)
+                for symbol in sorted(self._records)
+                for record in self._records[symbol]
+                if record.get("status") == "active"
+                and ((_parse_timestamp(record.get("effective_at")) or current) <= current)
+            ]
 
 
 class QuarantineGate:
