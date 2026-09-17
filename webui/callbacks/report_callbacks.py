@@ -1048,24 +1048,9 @@ def register_report_callbacks(app):
         # Fallback - keep everything unchanged
         return dash.no_update, dash.no_update, dash.no_update, modal_state or {"is_open": False, "report_type": None, "title": "Agent Prompt"}
 
-    @app.callback(
-        Output("copy-prompt-btn", "children"),
-        [Input("copy-prompt-btn", "n_clicks")],
-        prevent_initial_call=True
-    )
-    def copy_prompt_to_clipboard(n_clicks):
-        """Handle copying prompt to clipboard (visual feedback only)"""
-        if n_clicks:
-            # In a real implementation, you'd use clientside callback or JavaScript
-            # For now, just provide visual feedback
-            return [
-                html.I(className="fas fa-check me-2"),
-                "Copied!"
-            ]
-        return [
-            html.I(className="fas fa-copy me-2"),
-            "Copy to Clipboard"
-        ]
+    # U17: the fake copy/export feedback callbacks were removed along with
+    # the disabled buttons in the modals (they never touched the clipboard
+    # or the filesystem, only swapped their own label to "Copied!").
 
     # Tool Outputs Modal Callbacks
     @app.callback(
@@ -1154,37 +1139,6 @@ def register_report_callbacks(app):
         # Fallback - keep everything unchanged
         return dash.no_update, dash.no_update, dash.no_update, modal_state or {"is_open": False, "report_type": None, "title": "Tool Outputs"}
 
-    @app.callback(
-        Output("copy-tool-outputs-btn", "children"),
-        [Input("copy-tool-outputs-btn", "n_clicks")],
-        prevent_initial_call=True
-    )
-    def copy_tool_outputs_to_clipboard(n_clicks):
-        """Handle copying tool outputs to clipboard (visual feedback only)"""
-        if n_clicks:
-            return [
-                html.I(className="fas fa-check me-2"),
-                "Copied!"
-            ]
-        return [
-            html.I(className="fas fa-copy me-2"),
-            "Copy All"
-        ]
-
-    @app.callback(
-        Output("export-tool-outputs-btn", "children"),
-        [Input("export-tool-outputs-btn", "n_clicks")],
-        prevent_initial_call=True
-    )
-    def export_tool_outputs_as_json(n_clicks):
-        """Handle exporting tool outputs as JSON (visual feedback only)"""
-        if n_clicks:
-            # In a real implementation, this would trigger a download
-            return [
-                html.I(className="fas fa-check me-2"),
-                "Exported!"
-            ]
-        return [
-            html.I(className="fas fa-download me-2"),
-            "Export JSON"
-        ] 
+    # U17: the tool-outputs copy/export feedback callbacks were removed
+    # along with the disabled buttons in the modal (they never touched the
+    # clipboard or the filesystem, only swapped their own label).

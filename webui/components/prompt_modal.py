@@ -59,6 +59,9 @@ def create_prompt_modal():
             ),
             dbc.ModalFooter(
                 [
+                    # U17: browser clipboard access needs a clientside
+                    # callback; the button never actually copied, so it is
+                    # disabled instead of faking success feedback.
                     dbc.Button(
                         [
                             html.I(className="fas fa-copy me-2"),
@@ -67,7 +70,9 @@ def create_prompt_modal():
                         id="copy-prompt-btn",
                         color="outline-primary",
                         size="sm",
-                        className="me-2"
+                        className="me-2",
+                        disabled=True,
+                        title="Not implemented — select the prompt text to copy",
                     ),
                     dbc.Button(
                         [

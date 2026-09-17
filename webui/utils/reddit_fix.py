@@ -69,13 +69,23 @@ def create_mock_reddit_data():
         }
         
         company_file = os.path.join(reddit_data_path, "company_news", "stocks.jsonl")
-        with open(company_file, 'w') as f:
-            f.write(json.dumps(mock_data) + '\n')
-            
-        global_file = os.path.join(reddit_data_path, "global_news", "worldnews.jsonl") 
-        with open(global_file, 'w') as f:
-            f.write(json.dumps(mock_data) + '\n')
-            
+        global_file = os.path.join(reddit_data_path, "global_news", "worldnews.jsonl")
+
+        # U19: never overwrite an existing data file — the mock must only
+        # fill a missing file, otherwise a manual diagnose run could destroy
+        # real collected Reddit data with placeholder rows.
+        targets = []
+        if not os.path.exists(company_file):
+            targets.append(company_file)
+        if not os.path.exists(global_file):
+            targets.append(global_file)
+        if not targets:
+            print("ℹ️ Existing Reddit data files left untouched (no mock written)")
+            return True
+        for target in targets:
+            with open(target, 'w') as f:
+                f.write(json.dumps(mock_data) + '\n')
+
         print("✅ Created mock Reddit data files")
         return True
         

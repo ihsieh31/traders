@@ -507,27 +507,9 @@ body {
     border-bottom-right-radius: 10px;
 }
 
-/* Special styling for different types of table cells */
-.dash-markdown table td:contains("BUY"),
-.dash-markdown table td:contains("LONG"),
-.dash-markdown table td:contains("Bullish") {
-    color: #10B981;
-    font-weight: 600;
-}
-
-.dash-markdown table td:contains("SELL"),
-.dash-markdown table td:contains("SHORT"),
-.dash-markdown table td:contains("Bearish") {
-    color: #EF4444;
-    font-weight: 600;
-}
-
-.dash-markdown table td:contains("HOLD"),
-.dash-markdown table td:contains("NEUTRAL"),
-.dash-markdown table td:contains("Neutral") {
-    color: #F59E0B;
-    font-weight: 600;
-}
+/* U20: the former td:contains(...) BUY/SELL/HOLD color rules were removed
+   — :contains() is not a valid CSS selector, so those blocks never applied
+   and were silently dropped by the browser. */
 
 /* Responsive table styling */
 @media (max-width: 768px) {

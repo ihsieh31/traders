@@ -643,11 +643,82 @@ def update_chart_period(period, analysis_date=None):
     # If no ticker, return welcome chart
     return create_welcome_chart()
 
+_RISK_DEBATE_PREFIXES = (
+    ("Risky Analyst:", "risky"),
+    ("Safe Analyst:", "safe"),
+    ("Neutral Analyst:", "neutral"),
+)
+
+
+def _parse_risk_debate_history(debate_history):
+    """Parse a risk-debate transcript into (speaker, content) messages.
+
+    U18: prefixes are stripped with len(prefix), not magic slice numbers —
+    "Risky Analyst:" is 14 characters, and the old [:13] slice left a stray
+    leading ':' on every risky message.
+    """
+    import re
+
+    messages = []
+    if not debate_history:
+        return messages
+
+    debate_history = debate_history.replace('\r\n', '\n').replace('\r', '\n')
+
+    def _strip_prefix(text, prefix):
+        return text[len(prefix):].strip()
+
+    # Split the content into sections by looking for analyst headers
+    sections = re.split(r'(?=Risky Analyst:|Safe Analyst:|Neutral Analyst:)', debate_history)
+
+    for section in sections:
+        section = section.strip()
+        if not section:
+            continue
+
+        for prefix, speaker in _RISK_DEBATE_PREFIXES:
+            if section.startswith(prefix):
+                content = _strip_prefix(section, prefix)
+                if content:
+                    messages.append((speaker, content))
+                break
+
+    # If no messages were parsed and we have content, try to detect the format
+    if not messages and debate_history.strip():
+        # Try to parse line by line for cases where headers appear mid-text
+        lines = debate_history.split('\n')
+        current_speaker = None
+        current_message = ""
+
+        for line in lines:
+            line = line.strip()
+            matched = False
+            for prefix, speaker in _RISK_DEBATE_PREFIXES:
+                if line.startswith(prefix):
+                    if current_speaker and current_message.strip():
+                        messages.append((current_speaker, current_message.strip()))
+                    current_speaker = speaker
+                    current_message = _strip_prefix(line, prefix)
+                    matched = True
+                    break
+            if not matched and current_speaker:
+                if current_message:
+                    current_message += "\n" + line
+                else:
+                    current_message = line
+
+        # Add the last message
+        if current_speaker and current_message.strip():
+            messages.append((current_speaker, current_message.strip()))
+
+    return messages
+
+
 def render_risk_debate(symbol):
     """Render the Risk, Safe, and Neutral debators debate as a chat-like interface"""
     if not symbol:
         return "<p></p>"
-        
+
     state = app_state.get_state(symbol)
 
     if not state:
@@ -656,82 +727,18 @@ def render_risk_debate(symbol):
     # Get the debate history from the stored risk_debate_state
     debate_state = state.get("risk_debate_state")
     debate_history = ""
-    
+
     if debate_state and "history" in debate_state:
         debate_history = debate_state["history"]
 
     # Parse the debate history into individual messages
-    messages = []
     if debate_history:
-        import re
-        import html
-        
+        import html as _html
+
         # Clean up any HTML escaping that might be present
-        debate_history = html.unescape(debate_history)
-        
-        # Clean up the content
-        debate_history = debate_history.replace('\r\n', '\n').replace('\r', '\n')
-        
-        # Split the content into sections by looking for analyst headers
-        sections = re.split(r'(?=Risky Analyst:|Safe Analyst:|Neutral Analyst:)', debate_history)
-        
-        for section in sections:
-            section = section.strip()
-            if not section:
-                continue
-                
-            # Determine the speaker and extract content
-            if section.startswith('Risky Analyst:'):
-                # Risky section
-                content = section[13:].strip()  # Remove "Risky Analyst:" prefix
-                if content:
-                    messages.append(("risky", content))
-                    
-            elif section.startswith('Safe Analyst:'):
-                # Safe section  
-                content = section[13:].strip()  # Remove "Safe Analyst:" prefix
-                if content:
-                    messages.append(("safe", content))
-                    
-            elif section.startswith('Neutral Analyst:'):
-                # Neutral section
-                content = section[16:].strip()  # Remove "Neutral Analyst:" prefix
-                if content:
-                    messages.append(("neutral", content))
-        
-        # If no messages were parsed and we have content, try to detect the format
-        if not messages and debate_history.strip():
-            # Try to parse line by line for cases where headers appear mid-text
-            lines = debate_history.split('\n')
-            current_speaker = None
-            current_message = ""
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith("Risky Analyst:"):
-                    if current_speaker and current_message.strip():
-                        messages.append((current_speaker, current_message.strip()))
-                    current_speaker = "risky"
-                    current_message = line[13:].strip()
-                elif line.startswith("Safe Analyst:"):
-                    if current_speaker and current_message.strip():
-                        messages.append((current_speaker, current_message.strip()))
-                    current_speaker = "safe"
-                    current_message = line[13:].strip()
-                elif line.startswith("Neutral Analyst:"):
-                    if current_speaker and current_message.strip():
-                        messages.append((current_speaker, current_message.strip()))
-                    current_speaker = "neutral"
-                    current_message = line[16:].strip()
-                elif current_speaker:
-                    if current_message:
-                        current_message += "\n" + line
-                    else:
-                        current_message = line
-            
-            # Add the last message
-            if current_speaker and current_message.strip():
-                messages.append((current_speaker, current_message.strip()))
+        debate_history = _html.unescape(debate_history)
+
+    messages = _parse_risk_debate_history(debate_history)
 
     # Create a complete HTML document for the iframe with improved smooth scrolling
     html = f"""

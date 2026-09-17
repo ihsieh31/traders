@@ -52,6 +52,8 @@ def create_tool_outputs_modal():
             ),
             dbc.ModalFooter(
                 [
+                    # U17: never actually copied anything — disabled instead
+                    # of faking success feedback.
                     dbc.Button(
                         [
                             html.I(className="fas fa-copy me-2"),
@@ -60,8 +62,12 @@ def create_tool_outputs_modal():
                         id="copy-tool-outputs-btn",
                         color="outline-primary",
                         size="sm",
-                        className="me-2"
+                        className="me-2",
+                        disabled=True,
+                        title="Not implemented — select the output text to copy",
                     ),
+                    # U17: never triggered a download — disabled instead of
+                    # faking export success.
                     dbc.Button(
                         [
                             html.I(className="fas fa-download me-2"),
@@ -70,7 +76,9 @@ def create_tool_outputs_modal():
                         id="export-tool-outputs-btn",
                         color="outline-success",
                         size="sm",
-                        className="me-2"
+                        className="me-2",
+                        disabled=True,
+                        title="Not implemented",
                     ),
                     dbc.Button(
                         [
