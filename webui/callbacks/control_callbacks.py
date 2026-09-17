@@ -410,6 +410,80 @@ def _scheduler_thread(
     auto_screening_on,
     scheduler_generation,
 ):
+    """U14 wrapper: whatever happens inside the scheduler body — an early
+    return, an unexpected exception at startup — this run's own running /
+    mode flags are cleared in a generation-aware finally, so the UI never
+    shows a stuck Stop button after a worker that never reached its loops.
+    A stale worker (Stop→Start replaced it) must not clear the NEW run's
+    flags, hence the generation re-check before every cleanup write.
+    """
+    try:
+        _scheduler_thread_inner(
+            symbols=symbols,
+            market_hour_enabled=market_hour_enabled,
+            market_hours_list=market_hours_list,
+            loop_enabled=loop_enabled,
+            analysts_market=analysts_market,
+            analysts_social=analysts_social,
+            analysts_news=analysts_news,
+            analysts_fundamentals=analysts_fundamentals,
+            analysts_macro=analysts_macro,
+            research_depth=research_depth,
+            allow_shorts=allow_shorts,
+            quick_llm=quick_llm,
+            deep_llm=deep_llm,
+            quick_llm_params=quick_llm_params,
+            deep_llm_params=deep_llm_params,
+            llm_provider=llm_provider,
+            backend_url=backend_url,
+            output_language=output_language,
+            checkpoint_enabled=checkpoint_enabled,
+            provider_settings=provider_settings,
+            trade_enabled=trade_enabled,
+            trade_amount=trade_amount,
+            auto_screening_on=auto_screening_on,
+            scheduler_generation=scheduler_generation,
+        )
+    except Exception as exc:
+        if scheduler_generation == app_state.run_generation:
+            print(f"[SCHEDULER] Worker failed: {exc}")
+            app_state.provider_stop_reason = f"worker failed: {exc}"
+        else:
+            print(f"[SCHEDULER] Stale worker failed after Stop→Start: {exc}")
+    finally:
+        if scheduler_generation == app_state.run_generation:
+            app_state.analysis_running = False
+            app_state.loop_enabled = False
+            app_state.market_hour_enabled = False
+
+
+def _scheduler_thread_inner(
+    *,
+    symbols,
+    market_hour_enabled,
+    market_hours_list,
+    loop_enabled,
+    analysts_market,
+    analysts_social,
+    analysts_news,
+    analysts_fundamentals,
+    analysts_macro,
+    research_depth,
+    allow_shorts,
+    quick_llm,
+    deep_llm,
+    quick_llm_params,
+    deep_llm_params,
+    llm_provider,
+    backend_url,
+    output_language,
+    checkpoint_enabled,
+    provider_settings,
+    trade_enabled,
+    trade_amount,
+    auto_screening_on,
+    scheduler_generation,
+):
     """Auto-scheduling thread body (F02: extracted verbatim from the Start
     callback closure so regression tests can drive it deterministically).
 

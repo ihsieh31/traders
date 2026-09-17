@@ -875,7 +875,8 @@ class WebuiAnalysisTest(unittest.TestCase):
                 "AAPL", ["market"], {"rounds": 1, "level": "Shallow"},
                 False, "m", "m", run_generation=my_gen,
             )
-        self.assertIn("discarded", result)
+        self.assertIn("discarded", result.get("status", "") + str(result.get("error", ""))
+                      if isinstance(result, dict) else result)
         self.assertNotIn("called", captured)
 
     def test_r12_stale_provider_failure_does_not_clear_new_queue(self):

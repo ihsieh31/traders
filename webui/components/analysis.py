@@ -211,6 +211,9 @@ def run_analysis(
     run_started = False
     final_state = None
     current_date = None
+    # U12: bound before the try so the finally block can never raise
+    # UnboundLocalError when the symbol state lookup fails.
+    current_state = None
     # F02/R11: this run's generation is fixed at entry and never re-read.
     # An operator Stop bumps app_state.run_generation; a stale run may finish
     # its LLM work but must never persist an executable result, trade, or
@@ -234,8 +237,11 @@ def run_analysis(
         print(f"Starting real-time analysis for {ticker} with current date: {current_date}")
         current_state = app_state.get_state(ticker)
         if not current_state:
+            # U12: missing symbol state — fail with an explicit result
+            # instead of returning None (the finally block would otherwise
+            # raise UnboundLocalError on current_state and mask this path).
             print(f"Error: No state found for {ticker}")
-            return
+            return {"status": "failed", "symbol": ticker, "error": f"no symbol state for {ticker}"}
         current_state["analysis_running"] = True
         current_state["analysis_complete"] = False
 
@@ -389,7 +395,8 @@ def run_analysis(
                 f"({my_generation} != {app_state.run_generation}); result "
                 "discarded without trading"
             )
-            return "Analysis completed but result discarded: a stop invalidated this run"
+            return {"status": "discarded", "symbol": ticker,
+                    "error": "a stop invalidated this run; result discarded"}
 
         current_state["recommended_action"] = decision
         current_state["final_trade_intent"] = trade_intent
@@ -425,13 +432,15 @@ def run_analysis(
         # further symbol is dispatched.
         if getattr(app_state, 'stop_requested', False):
             print(f"[TRADE] Stop requested during {ticker}'s analysis; trade suppressed.")
-            return
+            return {"status": "stopped", "symbol": ticker,
+                    "error": "stop requested; result kept, trade suppressed"}
 
         # F02 boundary: no order may leave a stale run, even when a new
         # Start has already cleared the shared stop flags.
         if _run_is_stale():
             print(f"[TRADE] {ticker}: stale run generation; trade suppressed.")
-            return
+            return {"status": "discarded", "symbol": ticker,
+                    "error": "stale run generation; trade suppressed"}
 
         if trade_enabled:
             print(f"[TRADE] Trading enabled for {ticker}, executing trade with ${trade_amount}")
@@ -466,11 +475,18 @@ def run_analysis(
                 f"({my_generation} != {app_state.run_generation}); provider "
                 "failure recorded for the old run only"
             )
+            result = {"status": "discarded", "symbol": ticker,
+                      "error": f"provider failure in stale run: {exc}"}
         else:
             mark_provider_stop(ticker, exc)
+            result = {"status": "stopped", "symbol": ticker,
+                      "error": str(exc)}
         if progress is not None:
             progress(1.0)
     except Exception as e:
+        # U13: an ordinary failure must be visible to the caller — return an
+        # explicit failure result instead of falling through to the success
+        # message.
         print(f"Analysis error: {e}")
         import traceback
         traceback.print_exc()
@@ -482,16 +498,19 @@ def run_analysis(
                 error_message=str(e),
             )
             run_started = False
+        result = {"status": "failed", "symbol": ticker, "error": str(e)}
         if progress is not None:
             progress(1.0)  # Complete the progress bar
+    else:
+        result = {"status": "complete", "symbol": ticker, "error": ""}
     finally:
         # Mark analysis as no longer running — but only for the run that
         # still owns the current generation (F02): a stale run returning
         # from a blocked LLM call must never clear a newer run's flag.
-        if not _run_is_stale():
+        if current_state is not None and not _run_is_stale():
             current_state["analysis_running"] = False
 
-    return "Real-time analysis complete"
+    return result
 
 
 def start_analysis(
@@ -602,7 +621,9 @@ def start_analysis(
 
     # Run analysis with current data; the dispatch token travels with the
     # work item so run_analysis never re-reads the global to decide identity.
-    run_analysis(
+    # U13: propagate the failure result to the operator instead of reporting
+    # routine completion after a failed analysis.
+    outcome = run_analysis(
         ticker,
         selected_analysts,
         depth_config,
@@ -619,6 +640,11 @@ def start_analysis(
         progress=progress,
         run_generation=my_generation,
     )
+    if isinstance(outcome, dict) and outcome.get("status") not in ("complete",):
+        status_label = outcome.get("status", "failed")
+        error_text = outcome.get("error") or ""
+        message = f"Analysis for {ticker} {status_label}: {error_text}".rstrip(": ")
+        return message
 
     # A provider failure stops the whole scheduling round; surface it to the
     # operator instead of the routine completion message.
