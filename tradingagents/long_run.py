@@ -1553,20 +1553,28 @@ def setup_or_resume(
 
     Interactive setup lives in the CLI command; this owns the resume path:
     lock → recover → continue the original window. Never starts a second run.
+
+    E07: the lock probe and the loop now share ONE runner lock. The
+    previous probe-then-release-then-rewrite-then-relock sequence let a
+    concurrent resume read the state between probe and rewrite, losing a
+    restart_count increment (read-modify-write outside the lock); lock
+    contention anywhere in the path now surfaces as ALREADY_RUNNING.
     """
     deps = deps or LongRunDeps()
-    state = load_active_state()
-    if state is None:
-        raise LongRunStop("NO_ACTIVE_OBSERVATION", "no unfinished observation to resume")
+    cfg = long_cfg or dict(default_long_run_config())
     try:
         with runner_lock():
-            pass
+            state = load_active_state()
+            if state is None:
+                raise LongRunStop(
+                    "NO_ACTIVE_OBSERVATION", "no unfinished observation to resume"
+                )
+            state["restart_count"] = int(state.get("restart_count") or 0) + 1
+            save_active_state(state)
+            long_cfg_effective = long_cfg or dict(cfg, **(state.get("config") or {}))
+            run_config = runtime or build_runtime_config(long_cfg_effective)
+            return run_observation_loop(state, long_cfg_effective, run_config, deps)
     except RunnerLockBusy as exc:
-        raise LongRunStop("ALREADY_RUNNING",
-                          f"runner active for {state['run_id']}") from exc
-    state["restart_count"] = int(state.get("restart_count") or 0) + 1
-    save_active_state(state)
-    cfg = long_cfg or dict(default_long_run_config(), **(state.get("config") or {}))
-    run_config = runtime or build_runtime_config(cfg)
-    with runner_lock():
-        return run_observation_loop(state, cfg, run_config, deps)
+        raise LongRunStop(
+            "ALREADY_RUNNING", f"runner active while resuming observation"
+        ) from exc
