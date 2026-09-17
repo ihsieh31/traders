@@ -1536,12 +1536,14 @@ class F02StaleSchedulerTests(unittest.TestCase):
         observed = {}
 
         def fake_sleep(_seconds):
-            # Run A waits for the next 03:00 ET execution; the operator
-            # Stops Run A and Starts Run B while it sleeps.
+            # Run A waits for the next 11:00 ET execution; the operator
+            # Stops Run A and Starts Run B while it sleeps. (11:00 is an
+            # executable whole-hour slot; U08 rejects slots the open gate
+            # can never run.)
             entered_sleep.set()
             state.request_stop()
             state.reset()
-            state.start_market_hour_mode(["AAPL"], {}, [3])
+            state.start_market_hour_mode(["AAPL"], {}, [11])
             state.init_symbol_state("AAPL")
             state.analysis_queue = ["MSFT"]
             state.analysis_running = True
@@ -1568,7 +1570,7 @@ class F02StaleSchedulerTests(unittest.TestCase):
                 target=cc._scheduler_thread,
                 kwargs=self._sched_kwargs(
                     market_hour_enabled=True,
-                    market_hours_list=[3],
+                    market_hours_list=[11],
                     auto_screening_on=True,  # prove screening never runs
                     scheduler_generation=dispatch_generation,
                 ),

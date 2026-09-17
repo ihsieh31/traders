@@ -27,6 +27,16 @@ from tradingagents.dataflows.market_calendar import (  # noqa: F401
 MARKET_OPEN_HOUR = 9   # 9:30 AM (use 9 for conservative approach)
 MARKET_CLOSE_HOUR = 16  # 4:00 PM
 
+# Whole-hour scheduling slots must be strictly after the 09:30 open and at
+# or before the 16:00 close, so the executable whole-hour window is 10-16
+# (16 runs at the close instant on full sessions).
+EXECUTABLE_FIRST_HOUR = 10
+EXECUTABLE_LAST_HOUR = 16
+
+
+class MarketScheduleError(RuntimeError):
+    """Raised when no executable market slot can be proven (fail closed)."""
+
 
 def _get_eastern_timezone():
     return pytz.timezone("US/Eastern")
@@ -69,6 +79,14 @@ def validate_market_hours(hours_str: str) -> Tuple[bool, List[int], str]:
             hour = int(hour_str)
             if hour < MARKET_OPEN_HOUR or hour > MARKET_CLOSE_HOUR:
                 return False, [], f"Hour {hour} is outside market hours ({MARKET_OPEN_HOUR}AM-{MARKET_CLOSE_HOUR}PM EST/EDT)"
+            # U08: hour 9 can never execute — the authoritative open gate is
+            # 09:30 and the scheduler builds whole-hour slots. Reject it up
+            # front instead of scheduling a wait that never fires.
+            if hour < EXECUTABLE_FIRST_HOUR:
+                return False, [], (
+                    f"Hour {hour} can never execute: the market opens at 9:30 AM, "
+                    f"so whole-hour slots start at {EXECUTABLE_FIRST_HOUR} AM EST/EDT"
+                )
             hours.append(hour)
 
         # Remove duplicates and sort
@@ -155,8 +173,29 @@ def get_next_market_datetime(
 
     Returns:
         Next datetime when market will be open at the target hour
+
+    Raises:
+        MarketScheduleError: when no executable slot can be proven (U09:
+        all-unavailable calendars and permanently closed slots fail closed
+        instead of returning a guessed date).
     """
+    from tradingagents.dataflows.market_calendar import CalendarError
+
+    if not EXECUTABLE_FIRST_HOUR <= target_hour <= EXECUTABLE_LAST_HOUR:
+        raise MarketScheduleError(
+            f"hour {target_hour} cannot execute: whole-hour slots must be "
+            f"{EXECUTABLE_FIRST_HOUR}-{EXECUTABLE_LAST_HOUR} (market opens 09:30 ET)"
+        )
+
     from_datetime = _coerce_to_eastern(from_datetime)
+
+    # U10: rebuild the Eastern wall time on each candidate date. Adding a
+    # timedelta to an aware pytz datetime keeps the old UTC offset across a
+    # DST transition, which shifts the scheduled wall time by an hour.
+    eastern = _get_eastern_timezone()
+
+    max_attempts = 15  # Bounded search; exhausting it fails closed below.
+    attempts = 0
 
     # Start with today at the target hour
     target_dt = from_datetime.replace(hour=target_hour, minute=0, second=0, microsecond=0)
@@ -165,14 +204,25 @@ def get_next_market_datetime(
     if target_dt <= from_datetime:
         target_dt += datetime.timedelta(days=1)
 
-    # Keep advancing until we find a valid market day (authoritative).
-    max_attempts = 15  # Prevent infinite loops
-    attempts = 0
-
     while attempts < max_attempts:
-        is_open, reason = is_market_open(
-            target_dt, calendar_client=calendar_client, calendar_rows=calendar_rows
+        # Rebuild the wall clock for the candidate date so the UTC offset
+        # matches that date's DST status.
+        target_dt = eastern.localize(
+            datetime.datetime(
+                target_dt.year, target_dt.month, target_dt.day,
+                target_hour, 0, 0,
+            )
         )
+        try:
+            is_open, reason = is_market_open(
+                target_dt, calendar_client=calendar_client, calendar_rows=calendar_rows
+            )
+        except CalendarError as exc:
+            # U09: an unusable calendar proves nothing — fail closed instead
+            # of returning an unvalidated date.
+            raise MarketScheduleError(
+                f"cannot prove a market slot for hour {target_hour}: {exc}"
+            ) from exc
         if is_open:
             return target_dt
 
@@ -180,8 +230,12 @@ def get_next_market_datetime(
         target_dt += datetime.timedelta(days=1)
         attempts += 1
 
-    # Fallback - return the target datetime even if we couldn't validate
-    return target_dt
+    # U09: no valid slot within the bounded window — fail closed, never
+    # guess a date the calendar could not validate.
+    raise MarketScheduleError(
+        f"no executable market slot for hour {target_hour} within {max_attempts} days "
+        "of calendar-verified search"
+    )
 
 def format_market_hours_info(hours: List[int]) -> Dict[str, Any]:
     """

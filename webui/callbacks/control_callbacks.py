@@ -507,7 +507,11 @@ def _scheduler_thread(
         # Market hour scheduling loop
         import datetime
         import pytz
-        from webui.utils.market_hours import get_next_market_datetime, is_market_open
+        from webui.utils.market_hours import (
+            MarketScheduleError,
+            get_next_market_datetime,
+            is_market_open,
+        )
 
         eastern = pytz.timezone('US/Eastern')
         utc = pytz.utc
@@ -521,7 +525,16 @@ def _scheduler_thread(
             next_execution_times = []
 
             for hour in app_state.market_hours:
-                next_dt = get_next_market_datetime(hour, now)
+                try:
+                    next_dt = get_next_market_datetime(hour, now)
+                except MarketScheduleError as exc:
+                    # U09: no provable slot (calendar outage, exhausted
+                    # search). Stop the schedule with a visible error
+                    # instead of sleeping toward an unverifiable date.
+                    print(f"[MARKET_HOUR] Scheduling failed, halting: {exc}")
+                    app_state.analysis_running = False
+                    app_state.provider_stop_reason = f"market-hour scheduling failed: {exc}"
+                    return
                 next_execution_times.append((hour, next_dt))
 
             # Sort by next execution time
@@ -1331,7 +1344,17 @@ def register_control_callbacks(app):
                     icon="fa-triangle-exclamation",
                 )
 
-            hours_info = format_market_hours_info(hours)
+            try:
+                hours_info = format_market_hours_info(hours)
+            except MarketScheduleError as exc:
+                # U09: display fails closed with the reason instead of
+                # crashing the callback.
+                return _status_panel(
+                    "Market-hour scheduling unavailable",
+                    str(exc),
+                    tone="danger",
+                    icon="fa-triangle-exclamation",
+                )
             next_executions = [
                 f"Next {exec_info['formatted_hour']}: {exec_info['next_formatted']}"
                 for exec_info in hours_info["next_executions"]
