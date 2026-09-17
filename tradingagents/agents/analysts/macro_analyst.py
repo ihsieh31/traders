@@ -15,6 +15,15 @@ except ImportError:
         pass
 
 
+def _result_tool_calls(result) -> list:
+    """L02: standard LangChain .tool_calls first (Anthropic/Google
+    adapters), legacy raw additional_kwargs["tool_calls"] second."""
+    standard = getattr(result, "tool_calls", None)
+    if standard:
+        return list(standard)
+    return list((getattr(result, "additional_kwargs", {}) or {}).get("tool_calls") or [])
+
+
 def create_macro_analyst(llm, toolkit):
     def macro_analyst_node(state):
         # print(f"[MACRO] Starting macro economic analysis for {state['trade_date']}")
@@ -144,11 +153,11 @@ def create_macro_analyst(llm, toolkit):
             tool_result_cache = {}
             iteration_count = 0
             
-            while tools and getattr(result, "additional_kwargs", {}).get("tool_calls") and iteration_count < max_iterations:
+            while tools and _result_tool_calls(result) and iteration_count < max_iterations:
                 iteration_count += 1
                 # print(f"[MACRO] Tool execution iteration {iteration_count}")
                 
-                for tool_call in result.additional_kwargs["tool_calls"]:
+                for tool_call in _result_tool_calls(result):
                     # Handle different tool call structures
                     if isinstance(tool_call, dict):
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")

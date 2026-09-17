@@ -15,6 +15,15 @@ except ImportError:
         pass
 
 
+def _result_tool_calls(result) -> list:
+    """L02: standard LangChain .tool_calls first (Anthropic/Google
+    adapters), legacy raw additional_kwargs["tool_calls"] second."""
+    standard = getattr(result, "tool_calls", None)
+    if standard:
+        return list(standard)
+    return list((getattr(result, "additional_kwargs", {}) or {}).get("tool_calls") or [])
+
+
 def create_fundamentals_analyst(llm, toolkit):
     def fundamentals_analyst_node(state):
         # print(f"[FUNDAMENTALS] Starting fundamentals analysis for {state['company_of_interest']}")
@@ -181,9 +190,9 @@ def create_fundamentals_analyst(llm, toolkit):
             iteration_count = 0
 
             # Handle iterative tool calls until the model stops requesting them
-            while tools and getattr(result, "additional_kwargs", {}).get("tool_calls") and iteration_count < max_tool_iterations:
+            while tools and _result_tool_calls(result) and iteration_count < max_tool_iterations:
                 iteration_count += 1
-                for tool_call in result.additional_kwargs["tool_calls"]:
+                for tool_call in _result_tool_calls(result):
                     # Handle different tool call structures
                     if isinstance(tool_call, dict):
                         tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")

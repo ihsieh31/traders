@@ -53,6 +53,19 @@ def _normalize_market_report_markdown(content: str) -> str:
     return normalized
 
 
+def _result_tool_calls(result) -> list:
+    """L02: unified tool-call reader for analyst loops.
+
+    LangChain's standard AIMessage.tool_calls field (produced by the
+    Anthropic/Google adapters) is preferred; the legacy raw
+    additional_kwargs["tool_calls"] shape stays supported.
+    """
+    standard = getattr(result, "tool_calls", None)
+    if standard:
+        return list(standard)
+    return list((getattr(result, "additional_kwargs", {}) or {}).get("tool_calls") or [])
+
+
 def create_market_analyst(llm, toolkit):
 
     def market_analyst_node(state):
@@ -207,9 +220,9 @@ def create_market_analyst(llm, toolkit):
         iteration_count = 0
 
         # Handle iterative tool calls until the model stops requesting them
-        while tools and getattr(result, "additional_kwargs", {}).get("tool_calls") and iteration_count < max_tool_iterations:
+        while tools and _result_tool_calls(result) and iteration_count < max_tool_iterations:
             iteration_count += 1
-            for tool_call in result.additional_kwargs["tool_calls"]:
+            for tool_call in _result_tool_calls(result):
                 # Handle different tool call structures
                 if isinstance(tool_call, dict):
                     tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name")
