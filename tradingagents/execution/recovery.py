@@ -493,6 +493,12 @@ def _recover_locked(
         # auto-resubmitted — without a broker fact it stays unresolved
         # and the account stays paused.
         "unresolved SUBMITTING order:",
+        # E04: a crash between broker accept and journal write leaves an
+        # ACCEPTED row the broker snapshot may no longer list. It gets the
+        # same read-only client-ID lookup as SUBMITTING: a broker terminal
+        # fact (filled/canceled/expired) is adopted, anything else stays
+        # unresolved and PAUSED. Never auto-resubmitted.
+        "unresolved ACCEPTED order:",
     )
     if any(not reason.startswith(recoverable_reasons) for reason in initial.reasons):
         return snapshot, self._apply_protection_coverage(snapshot, initial)
@@ -512,7 +518,7 @@ def _recover_locked(
         blocking = []
         for reason in result.reasons:
             match = re.match(
-                r"unresolved (PENDING|UNKNOWN|SUBMITTING) order: (\S+)$",
+                r"unresolved (PENDING|UNKNOWN|SUBMITTING|ACCEPTED|PARTIAL) order: (\S+)$",
                 reason,
             )
             if match and match.group(2) in (queued - processed):

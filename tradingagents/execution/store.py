@@ -434,8 +434,12 @@ class ExecutionStore:
     def list_recoverable_orders(self) -> list[dict[str, Any]]:
         conn = self._connect()
         try:
+            # E04: ACCEPTED joins the recoverable set — a crash between
+            # broker accept and journal write leaves an ACCEPTED row that
+            # must reach the read-only client-ID lookup (a broker terminal
+            # fact is adopted; it is never auto-resubmitted).
             rows = conn.execute(
-                "SELECT * FROM orders WHERE status IN ('PENDING','SUBMITTING','UNKNOWN','PARTIAL') "
+                "SELECT * FROM orders WHERE status IN ('PENDING','SUBMITTING','UNKNOWN','PARTIAL','ACCEPTED') "
                 "ORDER BY created_at"
             ).fetchall()
             return [dict(row) for row in rows]

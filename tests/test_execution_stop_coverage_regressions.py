@@ -183,6 +183,46 @@ def test_e01_fully_sold_out_lots_never_gap_manual_position(env):
     assert service._protection_coverage_gaps(snapshot) == []
 
 
+def test_e04_accepted_row_adopts_broker_terminal_fact_and_cleans(env):
+    """E04: a durable ACCEPTED row whose order is missing from the broker
+    snapshot must enter the read-only client-ID lookup; a broker terminal
+    fact (canceled) is adopted and the account recovers to CLEAN with zero
+    POSTs. On HEAD the row is invisible to recovery and the account stays
+    PAUSED forever (F-02)."""
+    service, broker = env
+    service.store.ensure_account_binding("audit-fixture")
+    prepared = service._prepare_liquidation_outbox("AAPL", decision_id="e04-accepted", quantity=4)
+    row = prepared["order_rows"][0]
+    service.store.sync_order_from_broker(row["order_id"], "ACCEPTED",
+                                         broker_order_id="e04-oid", filled_qty=0)
+    canceled = NS(id="e04-oid", client_order_id=row["client_order_id"], symbol="AAPL",
+                  side="sell", type="market", status="canceled", qty=4, filled_qty=0,
+                  filled_avg_price=None, updated_at=now(), legs=[], notional=None)
+    # Order absent from the listing window, but findable by client ID.
+    broker.orders = []
+    broker.get_order_by_client_id = lambda cid: canceled if cid == row["client_order_id"] else None
+    result = service.startup_recover()
+    assert result["success"], result
+    assert result["account_execution_state"] == "CLEAN"
+    assert service.store.get_order(row["order_id"])["status"] == "CANCELED"
+    assert broker.submits == []
+
+
+def test_e04_accepted_row_not_on_broker_stays_paused_without_resubmit(env):
+    """E04 guard: an ACCEPTED row with NO broker fact anywhere is never
+    resubmitted — the bounded lookup fails and the account stays PAUSED."""
+    service, broker = env
+    prepared = service._prepare_liquidation_outbox("AAPL", decision_id="e04-ghost", quantity=4)
+    row = prepared["order_rows"][0]
+    service.store.sync_order_from_broker(row["order_id"], "ACCEPTED",
+                                         broker_order_id="e04-ghost-oid", filled_qty=0)
+    broker.orders = []
+    result = service.startup_recover()
+    assert not result["success"]
+    assert broker.submits == []
+    assert service.store.get_order(row["order_id"])["status"] == "ACCEPTED"
+
+
 def seed_pending(service, symbol):
     did = "pending-" + symbol
     coid = client_order_id_for(did, symbol, "buy", role="open", seq=0)
