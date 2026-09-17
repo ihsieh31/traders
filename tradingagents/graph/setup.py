@@ -259,14 +259,18 @@ class GraphSetup:
                     if analyst_type == "social":
                         report_field = "sentiment_report"
                     
-                    # Extract report content immediately
+                    # Extract report content immediately.
+                    # L05: the explicit report field is authoritative — the
+                    # market analyst appends the deterministic regime block
+                    # to the field AFTER creating the trailing message, so
+                    # message-first extraction published the stale variant.
                     report_content = None
-                    if final_state.get("messages"):
+                    if report_field in final_state and final_state.get(report_field):
+                        report_content = final_state.get(report_field)
+                    if not report_content and final_state.get("messages"):
                         last_msg = final_state["messages"][-1]
                         if hasattr(last_msg, 'content') and last_msg.content:
                             report_content = last_msg.content
-                    if not report_content and report_field in final_state:
-                        report_content = final_state.get(report_field)
                     
                     # Update UI state immediately (real-time update)
                     if ui_available:
@@ -364,18 +368,19 @@ class GraphSetup:
                 if analyst_type == "social":
                     report_field = "sentiment_report"
                 
-                # Try to extract content from the result state
+                # Extract content from the result state.
+                # L05: the explicit report field is authoritative (the
+                # trailing message may predate the field's regime-block
+                # update); the message is only the fallback.
                 content = None
-                
-                # First, try to get from messages
-                if result_state.get("messages"):
+                if result_state.get(report_field):
+                    content = result_state.get(report_field)
+
+                # If no field content, fall back to the messages
+                if not content and result_state.get("messages"):
                     final_message = result_state["messages"][-1]
                     if hasattr(final_message, 'content') and final_message.content:
                         content = final_message.content
-                
-                # If no content from messages, check if the report field was set directly
-                if not content and report_field in result_state:
-                    content = result_state.get(report_field)
                 
                 # Store the content if we have any
                 if content:
