@@ -891,7 +891,31 @@ def _clean_frame(df: Optional[pd.DataFrame], reference: pd.Timestamp) -> Optiona
     cleaned = cleaned[cleaned["timestamp"] <= reference]
     if cleaned.empty:
         return None
-    return cleaned.sort_values("timestamp").reset_index(drop=True)
+    # D01: numeric validity before indicators — NaN/inf prices, non-positive
+    # prices, inverted OHLC relationships and negative volumes are rejected.
+    # volume=0 is a legitimate no-trade bar and stays.
+    numeric = cleaned[["open", "high", "low", "close"]].apply(pd.to_numeric, errors="coerce")
+    volume = pd.to_numeric(cleaned["volume"], errors="coerce")
+    valid = (
+        numeric.notna().all(axis=1)
+        & numeric.apply(lambda s: s != float("inf")).all(axis="columns")
+        & (numeric > 0).all(axis="columns")
+        & (numeric["high"] >= numeric["low"])
+        & (numeric["high"] >= numeric["open"])
+        & (numeric["high"] >= numeric["close"])
+        & (numeric["low"] <= numeric["open"])
+        & (numeric["low"] <= numeric["close"])
+        & (volume.notna())
+        & (volume >= 0)
+    )
+    cleaned = cleaned[valid]
+    if cleaned.empty:
+        return None
+    cleaned = cleaned.sort_values("timestamp").reset_index(drop=True)
+    # D01: duplicate timestamps keep the last occurrence (vendor re-stamps
+    # supersede older rows) — one bar per timestamp enters the indicators.
+    cleaned = cleaned.drop_duplicates(subset="timestamp", keep="last")
+    return cleaned.reset_index(drop=True)
 
 
 def _evaluate_frame_quality(
