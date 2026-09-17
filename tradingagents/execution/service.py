@@ -829,13 +829,13 @@ class ExecutionService:
     def _program_owned_live_reducing_qty(
         self, snapshot: BrokerSnapshot, symbol: str, reducing_side: str
     ) -> float:
-        """Remaining qty of live program-owned reducing orders for a symbol.
+        """Proven stop coverage plus live program-owned market closes.
 
-        Program-owned means the durable ledger knows the row (submitted
-        orders and registered protective children both qualify). Manual or
-        unknown broker orders never prove protection.
+        Siblings cover one lot only. A take-profit child is not downside
+        protection, and an unreadable parent relation cannot prove a close.
         """
         covered = 0.0
+        group_best: dict[str, float] = {}
         for order in snapshot.orders:
             if order.symbol != symbol or order.side != reducing_side:
                 continue
@@ -846,8 +846,22 @@ class ExecutionService:
             local = self._store.get_order_by_client(order.client_order_id)
             if not local or local.get("broker_order_id") != order.broker_order_id:
                 continue
-            covered += max(0.0, float(order.qty or 0) - float(order.filled_qty or 0))
-        return covered
+            remaining = max(0.0, float(order.qty or 0) - float(order.filled_qty or 0))
+            try:
+                parent_id = self._store.protective_parent(local["order_id"])
+            except Exception:
+                continue
+            if parent_id:
+                if order.order_type not in {"stop", "stop_limit", "trailing_stop"}:
+                    continue
+                if str(order.status).lower() == "held":
+                    parent = self._store.get_order(parent_id)
+                    if not parent or str(parent.get("status") or "").upper() != "FILLED":
+                        continue
+                group_best[parent_id] = max(group_best.get(parent_id, 0.0), remaining)
+            elif order.order_type == "market":
+                covered += remaining
+        return covered + sum(group_best.values())
 
     def _evaluate_protection_gap(
         self,
@@ -976,7 +990,7 @@ class ExecutionService:
         For each such live position the provable coverage is:
 
         - live program-owned protective children, grouped by their opening
-          parent: a sibling stop/target pair contributes its LARGEST single
+          parent: only stop-bearing children contribute their LARGEST single
           remaining qty (never the sum — one lot is covered once);
         - plus any other program-owned live exposure-reducing order
           (a proven close in progress covers the exit).
@@ -1045,36 +1059,9 @@ class ExecutionService:
             if not has_protected_entry:
                 continue  # never a program-protected entry: manual position
             reducing_side = "sell" if position.qty > 0 else "buy"
-            group_best: dict[str, float] = {}
-            close_covered = 0.0
-            for order in snapshot.orders:
-                if order.symbol != symbol or order.side != reducing_side:
-                    continue
-                if broker_status_to_local(order.status) in {
-                    "FILLED", "CANCELED", "REJECTED", "EXPIRED",
-                }:
-                    continue  # terminal children/orders cover nothing
-                local = self._store.get_order_by_client(order.client_order_id)
-                if not local or local.get("broker_order_id") != order.broker_order_id:
-                    continue  # manual/unknown orders never prove protection
-                remaining = max(0.0, float(order.qty or 0) - float(order.filled_qty or 0))
-                if remaining <= 1e-9:
-                    continue
-                try:
-                    parent_id = self._store.protective_parent(local["order_id"])
-                except Exception:
-                    parent_id = None
-                if parent_id:
-                    if str(order.status).lower() == "held":
-                        parent_row = self._store.get_order(parent_id)
-                        if not parent_row or str(parent_row.get("status") or "").upper() != "FILLED":
-                            # A held child of a not-fully-filled parent is not
-                            # yet active protection.
-                            continue
-                    group_best[parent_id] = max(group_best.get(parent_id, 0.0), remaining)
-                else:
-                    close_covered += remaining  # program-owned live reducing close
-            covered = close_covered + sum(group_best.values())
+            covered = self._program_owned_live_reducing_qty(
+                snapshot, symbol, reducing_side
+            )
             if covered >= abs(position.qty) - 1e-8:
                 continue
             gaps.append(
@@ -1333,6 +1320,19 @@ class ExecutionService:
                 current_position=current_position,
                 can_submit=can_submit,
             )
+        is_crypto = "/" in str(intent_dict["symbol"]).upper()
+        if str(intent_dict["action"]).upper() == "SHORT" and (is_crypto or not allow_shorts):
+            # Reject before maintenance or cancellation; existing outbox rows
+            # may belong to an earlier authorized attempt and must stay intact.
+            return {
+                "success": False, "fail_closed": True,
+                "broker_attempted": False, "broker_calls": 0,
+                "trade_intent": intent_dict,
+                "error": (
+                    "Crypto short exposure is not supported by Alpaca spot trading"
+                    if is_crypto else "Short exposure is disabled for this session"
+                ),
+            }
         deadlines = self.enforce_exit_deadlines(can_submit=can_submit)
         if not deadlines.get("success"):
             return deadlines
@@ -2709,7 +2709,9 @@ class ExecutionService:
             raise BrokerAuthorityError(
                 f"execution DB account binding check failed: {exc}"
             ) from exc
-        initial = self._reconcile_snapshot(broker, snapshot)
+        initial = self._apply_protection_coverage(
+            snapshot, self._reconcile_snapshot(broker, snapshot)
+        )
         recoverable_reasons = (
             "unresolved PENDING order:",
             "unresolved UNKNOWN order:",
@@ -2779,7 +2781,9 @@ class ExecutionService:
                 snapshot = capture_broker_snapshot(
                     broker, expected_account_id=snapshot.account_id
                 )
-                step_result = self._reconcile_snapshot(broker, snapshot)
+                step_result = self._apply_protection_coverage(
+                    snapshot, self._reconcile_snapshot(broker, snapshot)
+                )
             except Exception as exc:
                 raise BrokerAuthorityError(
                     f"broker snapshot refresh failed during recovery; "

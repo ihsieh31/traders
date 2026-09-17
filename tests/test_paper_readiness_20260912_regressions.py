@@ -957,10 +957,10 @@ def test_N15_adoption_only_recovery_counts_zero_mutations(isolated):
     e.broker.qty = 10
     # The broker already holds the parent AND its live protective children.
     children = [
-        NS(id="child-stop", client_order_id="broker-stop-1", symbol="AAPL", side="sell",
+        NS(id="child-stop", client_order_id="broker-stop-1", symbol="AAPL", side="sell", type="stop",
            qty=10, filled_qty=0, filled_avg_price=None, status="new", updated_at=now(),
            legs=[], notional=None),
-        NS(id="child-target", client_order_id="broker-target-1", symbol="AAPL", side="sell",
+        NS(id="child-target", client_order_id="broker-target-1", symbol="AAPL", side="sell", type="limit",
            qty=10, filled_qty=0, filled_avg_price=None, status="new", updated_at=now(),
            legs=[], notional=None),
     ]

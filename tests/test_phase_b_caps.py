@@ -378,6 +378,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                     child = SimpleNamespace(
                         id=f"{kind}-{order.id}", client_order_id=f"{kind}-{order.id}",
                         symbol=order.symbol, side="sell", status="new",
+                        type="stop" if kind == "stop" else "limit",
                         qty=order.qty, notional=None, filled_qty="0",
                         filled_avg_price=None, updated_at=_now(),
                     )

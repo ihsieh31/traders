@@ -208,7 +208,7 @@ class PaperBrokerFixture:
         if request.stop_loss:
             child = SimpleNamespace(id=f'child-{len(self.submits)}', client_order_id=f'broker-stop-{len(self.submits)}',
                                     symbol='AAPL', side='sell' if side == 'buy' else 'buy', qty=qty, filled_qty=0,
-                                    filled_avg_price=None, status='accepted', updated_at=stamp, legs=[], notional=None)
+                                    filled_avg_price=None, status='accepted', updated_at=stamp, legs=[], notional=None, type='stop')
             order.legs = [child]
             self.orders.append(child)
         return order

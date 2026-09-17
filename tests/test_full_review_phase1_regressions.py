@@ -888,7 +888,7 @@ class F04ProtectionGapTests(_GuardIsolated, unittest.TestCase):
                 id="b-close", client_order_id=get("client_order_id"),
                 symbol=str(get("symbol")),
                 side=str(getattr(get("side"), "value", get("side"))),
-                status="accepted", qty=str(get("qty") or 0), notional=None,
+                status="accepted", qty=str(get("qty") or 0), notional=None, type=get("type"),
                 filled_qty="0", filled_avg_price=None, updated_at=_now(),
             )
             state["orders"].append(order)
@@ -1110,7 +1110,7 @@ class F04ShortCloseRegressionTests(_GuardIsolated, unittest.TestCase):
                 id="b-close", client_order_id=get("client_order_id"),
                 symbol=str(get("symbol")),
                 side=str(getattr(get("side"), "value", get("side"))),
-                status="accepted", qty=str(get("qty") or 0), notional=None,
+                status="accepted", qty=str(get("qty") or 0), notional=None, type=get("type"),
                 filled_qty="0", filled_avg_price=None, updated_at=_now(),
             )
             state["orders"].append(order)

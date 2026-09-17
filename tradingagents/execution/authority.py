@@ -120,6 +120,7 @@ class BrokerOrder:
     filled_avg_price: Optional[float]
     updated_at: datetime
     notional: Optional[float] = None
+    order_type: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -398,8 +399,11 @@ def capture_broker_snapshot(
             if price_value is not None
             else None
         )
+        raw_type = _value(raw, "type", "order_type")
+        order_type = str(getattr(raw_type, "value", raw_type) or "").strip().lower() or None
         order = BrokerOrder(
             broker_id, client_id, symbol, side, status, qty, filled_qty, price, stamp,
+            order_type=order_type,
             notional=(
                 _number(_value(raw, "notional"), field=f"{client_id} notional", minimum=0)
                 if _value(raw, "notional") is not None
@@ -432,7 +436,7 @@ def capture_broker_snapshot(
             "buying_power": buying_power,
             "positions": [(p.symbol, p.qty, p.market_value) for p in positions],
             "orders": [
-                (o.broker_order_id, o.client_order_id, o.status, o.filled_qty)
+                (o.broker_order_id, o.client_order_id, o.status, o.filled_qty, o.order_type)
                 for o in orders
             ],
         },

@@ -90,14 +90,15 @@ class Broker:
         self.qty += qty if side == "buy" else -qty
         order = NS(id=f"parent-{len(self.submits)}", client_order_id=request.client_order_id,
                    symbol="AAPL", side=side, qty=qty, filled_qty=qty, filled_avg_price=100,
-                   status="filled", updated_at=now(), legs=[], notional=None)
+                   status="filled", updated_at=now(), legs=[], notional=None, type="market")
         self.orders.append(order)
         if getattr(request, "stop_loss", None):
             for kind in (["stop", "target"] if request.take_profit else ["stop"]):
                 child = NS(id=f"{kind}-{len(self.submits)}",
                            client_order_id=f"broker-{kind}-{len(self.submits)}", symbol="AAPL",
                            side="sell" if side == "buy" else "buy", qty=qty, filled_qty=0,
-                           filled_avg_price=None, status="new", updated_at=now(), legs=[], notional=None)
+                           filled_avg_price=None, status="new", updated_at=now(), legs=[], notional=None,
+                           type="stop" if kind == "stop" else "limit")
                 order.legs.append(child)
                 self.orders.append(child)
         return order
@@ -433,7 +434,7 @@ def test_r09_live_program_close_can_cover_exit(env):
     )
     service.store.transition_order(rows[0]["order_id"], "ACCEPTED", broker_order_id="b-r09-close")
     broker.orders.append(NS(
-        id="b-r09-close", client_order_id=close_coid, symbol="AAPL", side="sell",
+        id="b-r09-close", client_order_id=close_coid, symbol="AAPL", side="sell", type="market",
         qty=9, filled_qty=0, filled_avg_price=None, status="new",
         updated_at=now(), legs=[], notional=None,
     ))
