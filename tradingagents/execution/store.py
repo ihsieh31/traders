@@ -13,10 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 3
 
@@ -63,13 +67,58 @@ def is_valid_order_transition(frm: str, to: str) -> bool:
     """Central state-machine validator. Same-state is an idempotent no-op."""
     frm_u = (frm or "").upper()
     to_u = (to or "").upper()
-    if frm_u not in ORDER_STATUSES or to_u not in ORDER_STATUSES:
+    if frm_u not in ORDER_STATUSES:
         return False
     if frm_u == to_u:
         return True
     if frm_u in TERMINAL_STATUSES:
         return False
     return to_u in _ALLOWED_ORDER_TRANSITIONS.get(frm_u, frozenset())
+
+
+def _monotonic_filled_qty(current: Any, reported: Any) -> float:
+    """Cumulative fills only grow: refuse silent regressions and non-finite
+    values (same policy as _adopt_recovery_order's no-regression guard).
+
+    A stale broker poll or duplicated fill-sync must never rewrite the
+    durable filled_qty downward — deadline exits and remaining-lot sizing
+    read this column.
+    """
+    base = float(current) if current is not None else 0.0
+    if not math.isfinite(base) or base < 0:
+        base = 0.0
+    if reported is None:
+        return base
+    try:
+        value = float(reported)
+    except (TypeError, ValueError):
+        return base
+    if not math.isfinite(value) or value < 0:
+        return base
+    return value if value > base else base
+
+
+def _orders_spec_match(spec: dict[str, Any], stored: dict[str, Any]) -> bool:
+    """Compare a replayed order request against the stored durable row."""
+    if _canonical_symbol(str(spec.get("symbol") or "")) != _canonical_symbol(
+        str(stored.get("symbol") or "")
+    ):
+        return False
+    if str(spec.get("side") or "").lower() != str(stored.get("side") or "").lower():
+        return False
+    for key in ("quantity", "notional"):
+        want = spec.get(key)
+        have = stored.get(key)
+        if want is None and have is None:
+            continue
+        if want is None or have is None:
+            return False
+        try:
+            if abs(float(want) - float(have)) > 1e-9:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _canonical_symbol(symbol: str) -> str:
@@ -260,12 +309,31 @@ class ExecutionStore:
         without inserting duplicates). Unique constraints are the last line
         of defense, not application-level ifs.
         """
+        # Durable-boundary numeric validation: the ledger must never persist
+        # a size the broker layer would have to guess about. None (size
+        # resolved later, e.g. the F04 liquidation pre-commit) is allowed;
+        # anything else must be finite and strictly positive.
+        for spec in orders:
+            for key in ("quantity", "notional"):
+                value = spec.get(key)
+                if value is None:
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"order {key} must be numeric, got {value!r}"
+                    ) from None
+                if not math.isfinite(numeric) or numeric <= 0:
+                    raise ValueError(
+                        f"order {key} must be finite and positive, got {value!r}"
+                    )
         intent_id = intent_id_for_decision(decision_id)
         now = utcnow_iso()
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
+            intent_cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO execution_intents
                 (intent_id, decision_id, run_id, symbol, action, target_position,
@@ -291,7 +359,10 @@ class ExecutionStore:
             # If a concurrent insert won with a different intent_id mapping,
             # adopt the stored intent_id (first writer wins).
             stored_intent_id = intent_row["intent_id"]
-            created = intent_row["decision_id"] == decision_id and intent_row["created_at"] == now
+            # The INSERT cursor's rowcount is the authoritative created flag:
+            # a wall-clock string equality could misreport a replay that
+            # lands in the same microsecond representation as a fresh create.
+            created = intent_cursor.rowcount == 1
 
             stored_orders: list[dict[str, Any]] = []
             for spec in orders:
@@ -321,6 +392,28 @@ class ExecutionStore:
                     (client_oid,),
                 ).fetchone()
                 stored_orders.append(dict(orow))
+            if not created:
+                # Idempotent replay is the designed crash-recovery path: the
+                # stored (first-committed) spec is authoritative. A replayed
+                # request whose spec differs from the stored rows must never
+                # be adopted silently — make it loud in the run log.
+                for spec, srow in zip(orders, stored_orders):
+                    if not _orders_spec_match(spec, srow):
+                        logger.warning(
+                            "create_outbox replay spec mismatch for decision_id=%s: "
+                            "requested=%s stored=(symbol=%s side=%s quantity=%s notional=%s); "
+                            "adopting the stored first-committed order spec",
+                            decision_id,
+                            {
+                                k: spec.get(k)
+                                for k in ("symbol", "side", "quantity", "notional")
+                            },
+                            srow.get("symbol"),
+                            srow.get("side"),
+                            srow.get("quantity"),
+                            srow.get("notional"),
+                        )
+                        break
             conn.execute("COMMIT")
             return dict(intent_row), stored_orders, created
         except Exception:
@@ -491,9 +584,7 @@ class ExecutionStore:
                 conn.execute("ROLLBACK")
                 return False, current
             now = utcnow_iso()
-            new_filled = current["filled_qty"] if current["filled_qty"] is not None else 0.0
-            if filled_qty is not None:
-                new_filled = float(filled_qty)
+            new_filled = _monotonic_filled_qty(current["filled_qty"], filled_qty)
             updates: list[str] = ["status = ?", "updated_at = ?", "filled_qty = ?"]
             params: list[Any] = [to_u, now, new_filled]
             if broker_order_id is not None:
@@ -547,9 +638,12 @@ class ExecutionStore:
             # terminal local rows never regress to non-terminal state.
             current = str(existing["status"]).upper()
             target = current if current in TERMINAL_STATUSES and status_u not in TERMINAL_STATUSES else status_u
+            # No-regression guard: a stale broker payload must never lower
+            # the durable cumulative filled_qty (see _monotonic_filled_qty).
+            synced_filled = _monotonic_filled_qty(existing["filled_qty"], filled_qty)
             conn.execute(
                 "UPDATE orders SET status=?, broker_order_id=?, filled_qty=?, updated_at=? WHERE order_id=?",
-                (target, broker_order_id, float(filled_qty), utcnow_iso(), order_id),
+                (target, broker_order_id, synced_filled, utcnow_iso(), order_id),
             )
             conn.execute("COMMIT")
             updated = self.get_order(order_id)
@@ -659,6 +753,10 @@ class ExecutionStore:
                 (order_id,),
             ).fetchone()["total"]
             current_status = (orow["status"] or "").upper()
+            # SUM(fills) is append-only and monotonic; guard against any
+            # regression versus the durable filled_qty column (a late fill
+            # event must never rewrite a terminal order's accounting down).
+            stored_total = _monotonic_filled_qty(orow["filled_qty"], total)
             # Advance lifecycle on fills without auto-creating補单 (no auto補单).
             if current_status in ("ACCEPTED", "PARTIAL", "SUBMITTING", "UNKNOWN", "PENDING"):
                 next_status = "PARTIAL"
@@ -668,12 +766,12 @@ class ExecutionStore:
                 conn.execute(
                     "UPDATE orders SET filled_qty = ?, status = ?, updated_at = ?"
                     " WHERE order_id = ?",
-                    (float(total), next_status, utcnow_iso(), order_id),
+                    (stored_total, next_status, utcnow_iso(), order_id),
                 )
             else:
                 conn.execute(
                     "UPDATE orders SET filled_qty = ?, updated_at = ? WHERE order_id = ?",
-                    (float(total), utcnow_iso(), order_id),
+                    (stored_total, utcnow_iso(), order_id),
                 )
             conn.execute("COMMIT")
             updated = self.get_order(order_id)

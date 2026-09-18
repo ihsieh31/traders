@@ -256,8 +256,13 @@ def get_finnhub_news(
             current_news = f"### {headline} ({day})\n{summary}"
             combined_result += current_news + "\n\n"
 
-    # Live Finnhub API fallback when cache is missing/empty
+    # Live Finnhub API fallback when cache is missing/empty. Live Finnhub
+    # serves current-state data with no verified point-in-time cutoff, so a
+    # historical as-of must never fall through to it (look-ahead bias) —
+    # same policy as get_google_news.
     if not combined_result and online_tools_enabled:
+        if analysis_date_mode(curr_date) == "historical":
+            return HISTORICAL_SOURCE_UNAVAILABLE
         try:
             live_entries = fetch_company_news_live(ticker, before, curr_date)
             source_label = "finnhub_live_api"
@@ -331,6 +336,10 @@ def get_finnhub_company_insider_sentiment(
             )
 
     if not result_lines and online_tools_enabled:
+        # Live insider sentiment has no point-in-time cutoff: reject for a
+        # historical as-of instead of serving current-state (revised) facts.
+        if analysis_date_mode(curr_date) == "historical":
+            return HISTORICAL_SOURCE_UNAVAILABLE
         try:
             live_entries = fetch_insider_sentiment_live(ticker, before, curr_date)
             source_label = "finnhub_live_api"
@@ -423,6 +432,10 @@ def get_finnhub_company_insider_transactions(
             )
 
     if not result_lines and online_tools_enabled:
+        # Live insider transactions are current-state (amended) facts with no
+        # point-in-time cutoff: reject for a historical as-of.
+        if analysis_date_mode(curr_date) == "historical":
+            return HISTORICAL_SOURCE_UNAVAILABLE
         try:
             live_entries = fetch_insider_transactions_live(ticker, before, curr_date)
             source_label = "finnhub_live_api"
