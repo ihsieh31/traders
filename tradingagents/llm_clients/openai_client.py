@@ -1,9 +1,12 @@
 import os
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from langchain_core.messages import AIMessage
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
-from pydantic import PrivateAttr
+from pydantic import BaseModel, PrivateAttr
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
@@ -24,6 +27,37 @@ def _endpoint_default_headers(
     return headers or None
 
 
+def _is_local_openai_endpoint(base_url: Optional[str]) -> bool:
+    """Return whether an OpenAI-compatible endpoint is local to this machine."""
+    if not base_url:
+        return False
+    try:
+        hostname = urlparse(str(base_url)).hostname
+    except ValueError:
+        return False
+    return hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+def _append_json_schema_instructions(input_: Any, instructions: str) -> Any:
+    """Add parser instructions without changing the caller's original prompt."""
+    suffix = (
+        "\n\nSTRUCTURED JSON OUTPUT CONTRACT:\n"
+        "This instruction overrides any earlier output-format instruction, "
+        "including requests to append a final transaction proposal. Return "
+        "only one JSON object that follows this schema exactly. Do not return "
+        "Markdown, bullets, aliases, or extra top-level keys.\n"
+        f"{instructions}"
+    )
+    if isinstance(input_, str):
+        return input_ + suffix
+    if isinstance(input_, (list, tuple)):
+        return [*input_, {"role": "system", "content": suffix}]
+    to_messages = getattr(input_, "to_messages", None)
+    if callable(to_messages):
+        return [*to_messages(), {"role": "system", "content": suffix}]
+    return input_
+
+
 class NormalizedChatOpenAI(ChatOpenAI):
     _structured_output_method: Optional[str] = PrivateAttr(default=None)
 
@@ -35,8 +69,26 @@ class NormalizedChatOpenAI(ChatOpenAI):
         return normalize_content(super().invoke(input, config, **kwargs))
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
-        selected_method = method or self._structured_output_method or "function_calling"
-        return super().with_structured_output(schema, method=selected_method, **kwargs)
+        selected_method = method or self._structured_output_method
+        if selected_method is None:
+            selected_method = (
+                "json_mode"
+                if _is_local_openai_endpoint(getattr(self, "openai_api_base", None))
+                else "function_calling"
+            )
+        structured = super().with_structured_output(
+            schema, method=selected_method, **kwargs
+        )
+        if selected_method != "json_mode":
+            return structured
+        if isinstance(schema, type) and issubclass(schema, BaseModel):
+            instructions = PydanticOutputParser(
+                pydantic_object=schema
+            ).get_format_instructions()
+            return RunnableLambda(
+                lambda input_: _append_json_schema_instructions(input_, instructions)
+            ) | structured
+        return structured
 
 
 def _input_to_messages(input_: Any) -> list:

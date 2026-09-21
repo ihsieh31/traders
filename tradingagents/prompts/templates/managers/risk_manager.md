@@ -31,7 +31,21 @@ Use claim IDs to locate the supplied excerpts. Decide whether a claim is support
 Output format (concise):
 - Recommendation: {actions} (with confidence high/medium/low)
 - 4-6 concise bullets explaining risk rationale and required risk controls
-- End exactly with: {final_format}
+- In plain-text mode, end exactly with: {final_format}. In structured JSON
+  mode, omit that prose line and return only the JSON object defined below.
 - Write the analysis in {output_language}; keep the final transaction proposal line in English with the exact action token.
+
+Structured JSON contract (required when structured output is requested): return
+one JSON object only with these exact top-level keys:
+`entry_policy`, `stop_loss_price`, `take_profit_price`, `action`, `confidence`,
+`risk_rationale`, `required_controls`, `advisory_rating`, `entry_guidance`,
+`stop_loss`, `take_profit`, `invalidation`, `max_position_size`,
+`time_horizon`. `entry_policy` must be an object with `status`,
+`minimum_price`, `maximum_price`, `expires_at`, `exit_by`, `risk_fraction`,
+`maximum_notional`, and `confirmation`; use `WAIT` and null price/timestamp
+fields when the evidence is insufficient. Use null for unavailable optional
+values. Do not use aliases such as `recommendation`, `reasoning`,
+`final_decision`, or `final_transaction_proposal`, and do not add extra
+top-level keys.
 
 Keep response under 260 words.

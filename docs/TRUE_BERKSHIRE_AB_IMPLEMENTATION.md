@@ -65,9 +65,13 @@ Shadow safety is explicit: when `auto_trade=False`, the Trader and Risk Manager
 do not query broker account/position state, and the graph exposes decision-only
 context.  This keeps a broker credential outage from changing an analysis A/B
 result and does not alter normal runs that do not set the shadow flag.  For
-OpenAI-compatible gateways that reject function-calling JSON Schema, the
-optional `structured_output_method=json_mode` setting selects JSON mode while
-leaving the default function-calling behavior unchanged.
+OpenAI-compatible gateways that reject function-calling JSON Schema, an
+explicit `structured_output_method=json_mode` setting selects JSON mode.  Local
+endpoints (`localhost`, `127.0.0.1`, and `::1`) select JSON mode automatically
+unless the caller explicitly chooses another method.  JSON mode also injects
+the Pydantic parser's exact schema into the request and overrides prose-only
+format instructions, including a trailing final-transaction-proposal line;
+official/non-local endpoints retain function-calling by default.
 
 ## Verification record
 
@@ -99,18 +103,22 @@ symbol/date: NVDA / 2026-09-21
 pair status: COMPLETED
 backends: traders=HOLD, berkshire=HOLD
 signal agreement: true
-evidence sources: 21; recorded source errors: 0
-evidence SHA-256: 17860ad31ee1f64698c5d5ae288a743606dd9e2728ea75d24d4a23dc0af452ec
+evidence SHA-256: 6c0fade688bc57f52b7039d5116d46e3b54cf2b2a9495b4e954222500bb6169b
 analysis_input_mode: frozen_evidence
 auto_trade: false
 checkpoint_enabled: false
 shared downstream nodes: 9/9 present in both run logs
 broker/order mutation events: 0
+structured-output failures: 0 in both run logs
+primary/fallback model: gemini-3.5-flash-lite / gemini-3.5-flash-lite
 ```
 
 The supplied `agnes-3.0-flash` token was rejected by the local gateway with
 HTTP 403.  The successful smoke used the gateway-authorized
-`gemini-3.5-flash-lite` model and its configured OpenAI-compatible fallback.
+`gemini-3.5-flash-lite` model for both primary and fallback.  A separate smoke
+using `gemini-3.5-flash` as fallback received gateway HTTP 503 because that
+model had no available channel; this is provider availability, not a parser
+failure.
 
 Required commands:
 

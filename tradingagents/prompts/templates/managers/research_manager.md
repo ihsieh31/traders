@@ -30,7 +30,16 @@ Output requirements:
    - Stop/invalidation
    - Target(s)
    - Risk sizing note
-4. End with: {final_format}
+4. In plain-text mode, end with: {final_format}. In structured JSON mode,
+   omit that prose line and return only the JSON object defined below.
 5. Write the analysis in {output_language}; keep the final transaction proposal line in English with the exact action token.
+
+Structured JSON contract (required when structured output is requested): return one JSON object only, with these exact top-level keys:
+`recommendation`, `confidence`, `advisory_rating`, `rationale`, `strategic_actions`.
+Put the 3-5 evidence-backed reasons in `rationale`, and put the entry, stop,
+targets, invalidation, and sizing plan in `strategic_actions`. Use `null` for
+`advisory_rating` when unavailable. Do not use aliases such as `reasons`,
+`key_reasons`, `execution_plan`, `swing_plan`, or
+`final_transaction_proposal`, and do not add extra top-level keys.
 
 Keep it concise and actionable (max 420 words).
