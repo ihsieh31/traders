@@ -141,6 +141,189 @@ def _submit_sides(broker):
     ]
 
 
+def _seed_r13_replay(
+    service,
+    intent,
+    *,
+    decision_id="dec-r13-replay",
+    primary_status="FILLED",
+    child_status="ACCEPTED",
+):
+    """Create a real outbox parent and protective child for replay tests."""
+    from tradingagents.execution.store import client_order_id_for
+
+    parent_client_id = client_order_id_for(
+        decision_id, "AAPL", "buy", role="open", seq=0
+    )
+    _, rows, _ = service.store.create_outbox(
+        decision_id=decision_id,
+        run_id=None,
+        symbol="AAPL",
+        action="BUY",
+        target_position="LONG",
+        payload_json=json.dumps(intent, sort_keys=True),
+        orders=[{
+            "client_order_id": parent_client_id,
+            "symbol": "AAPL",
+            "side": "buy",
+            "quantity": 9,
+            "notional": None,
+        }],
+    )
+    parent = rows[0]
+    for status in ("SUBMITTING", "ACCEPTED"):
+        ok, _ = service.store.transition_order(
+            parent["order_id"], status, broker_order_id="broker-entry"
+        )
+        assert ok
+    if primary_status == "FILLED":
+        ok, _ = service.store.transition_order(
+            parent["order_id"], "FILLED",
+            broker_order_id="broker-entry", filled_qty=9,
+        )
+        assert ok
+    else:
+        assert primary_status == "ACCEPTED"
+
+    child = NS(
+        id="broker-stop",
+        client_order_id="broker-stop-client",
+        broker_order_id="broker-stop",
+        symbol="AAPL",
+        side="sell",
+        qty=9,
+    )
+    service.store.register_protective_child(
+        service.store.get_order(parent["order_id"]), child
+    )
+    child_row = service.store.get_order_by_client(child.client_order_id)
+    assert child_row is not None
+    if child_status == "PARTIAL":
+        ok, _ = service.store.transition_order(
+            child_row["order_id"], "PARTIAL", filled_qty=2
+        )
+        assert ok
+    elif child_status == "FILLED":
+        ok, _ = service.store.transition_order(
+            child_row["order_id"], "FILLED", filled_qty=9
+        )
+        assert ok
+    elif child_status == "UNKNOWN":
+        service.store.sync_order_from_broker(
+            child_row["order_id"], "UNKNOWN",
+            broker_order_id="broker-stop", filled_qty=0,
+        )
+    else:
+        assert child_status == "ACCEPTED"
+    return decision_id
+
+
+# ---------------------------------------------------------------------------
+# R13 — a filled entry replays through live protective children
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("child_status", ["ACCEPTED", "PARTIAL", "FILLED"])
+def test_completed_replay_allows_live_protective_child(env, child_status):
+    service, broker = env
+    intent = opening()
+    decision_id = _seed_r13_replay(
+        service, intent, child_status=child_status
+    )
+    broker.qty = 9
+
+    result = service.execute(
+        trade_intent=intent,
+        decision_id=decision_id,
+        current_position="NEUTRAL",
+        dollar_amount=1000,
+    )
+
+    assert result["success"] is True, result
+    assert result["deduped"] is True, result
+    assert result["broker_attempted"] is False, result
+    assert result["broker_calls"] == 0, result
+    assert broker.submits == []
+
+
+def test_completed_replay_rejects_unknown_protective_child(env):
+    service, broker = env
+    intent = opening()
+    decision_id = _seed_r13_replay(
+        service, intent, child_status="UNKNOWN"
+    )
+    broker.qty = 9
+
+    result = service.execute(
+        trade_intent=intent,
+        decision_id=decision_id,
+        current_position="NEUTRAL",
+        dollar_amount=1000,
+    )
+
+    assert result["success"] is False, result
+    assert result.get("deduped") is not True, result
+    assert broker.submits == []
+
+
+def test_completed_replay_requires_primary_filled(env):
+    service, broker = env
+    intent = opening()
+    decision_id = _seed_r13_replay(
+        service, intent, primary_status="ACCEPTED"
+    )
+
+    result = service.execute(
+        trade_intent=intent,
+        decision_id=decision_id,
+        current_position="NEUTRAL",
+        dollar_amount=1000,
+    )
+
+    assert result["success"] is False, result
+    assert result.get("deduped") is not True, result
+    assert broker.submits == []
+
+
+def test_completed_replay_payload_mismatch_fails_closed(env):
+    service, broker = env
+    durable_intent = opening()
+    decision_id = _seed_r13_replay(service, durable_intent)
+    incoming_intent = dict(durable_intent)
+    incoming_intent["rationale_summary"] = "different durable decision"
+
+    result = service.execute(
+        trade_intent=incoming_intent,
+        decision_id=decision_id,
+        dollar_amount=1000,
+    )
+
+    assert result["success"] is False, result
+    assert result["fail_closed"] is True, result
+    assert result["replay_identity_mismatch"] is True, result
+    assert result["broker_attempted"] is False, result
+    assert result["broker_calls"] == 0, result
+    assert broker.submits == []
+
+
+def test_fresh_decision_still_obeys_stale_position_gate(env):
+    service, broker = env
+    broker.qty = -5
+
+    result = service.execute(
+        trade_intent=opening("BUY", "NEUTRAL"),
+        decision_id="dec-r13-fresh-stale",
+        dollar_amount=1000,
+        allow_shorts=True,
+    )
+
+    assert result["success"] is False, result
+    assert result["stale_position_transition"] is True, result
+    assert result["fail_closed"] is True, result
+    assert result["broker_calls"] == 0, result
+    assert broker.submits == []
+
+
 def _freeze_time_after_commit(monkeypatch, service, future, *, freeze_policy_clock=False):
     """Advance the clock the moment the durable outbox commit completes (R05).
 

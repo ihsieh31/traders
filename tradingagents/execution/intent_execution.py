@@ -28,9 +28,26 @@ def _completed_replay_result(
     if existing is None:
         return None
     orders = self._store.list_orders_for_intent(existing["intent_id"])
-    if not orders or {
-        str(order.get("status") or "").upper() for order in orders
-    } != {"FILLED"}:
+    primary_orders = []
+    protective_children = []
+    for order in orders:
+        if self._store.protective_parent(order["order_id"]) is None:
+            primary_orders.append(order)
+        else:
+            protective_children.append(order)
+
+    # The entry/outbox order proves the decision completed only when at least
+    # one primary exists and every primary is FILLED.  Protective children are
+    # broker-managed coverage rows: ACCEPTED/PARTIAL/FILLED are known live
+    # states, while UNKNOWN and all other states remain fail-closed.
+    if (
+        not primary_orders
+        or any(str(order.get("status") or "").upper() != "FILLED"
+               for order in primary_orders)
+        or any(str(order.get("status") or "").upper()
+               not in {"ACCEPTED", "PARTIAL", "FILLED"}
+               for order in protective_children)
+    ):
         return None
     try:
         stored_payload = json_module.loads(existing.get("payload_json") or "")
