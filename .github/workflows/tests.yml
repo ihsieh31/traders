@@ -42,5 +42,9 @@ jobs:
       - name: Run test suite
         # `python -m pytest` puts the repo root on sys.path (the project is
         # not pip-installable). No API keys are configured on purpose: the
-        # suite must stay runnable offline.
+        # suite must stay runnable offline. The tests use fake broker clients
+        # for authorized Paper-path scenarios, so opt out of the production
+        # read-only default only for this isolated test process.
+        env:
+          TRADINGBUFFETT_ALPACA_READ_ONLY: "false"
         run: python -m pytest tests/ -v --tb=short
