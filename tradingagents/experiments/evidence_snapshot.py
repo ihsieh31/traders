@@ -8,12 +8,13 @@ they never receive a live tool list.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from zoneinfo import ZoneInfo
 
 from tradingagents.agents.utils.agent_utils import Toolkit
 
@@ -23,6 +24,13 @@ class EvidenceIntegrityError(RuntimeError):
 
 
 _SECTIONS = ("market", "fundamentals", "news", "macro", "social")
+_MARKET_TZ = ZoneInfo("America/New_York")
+
+
+def _market_today_iso() -> str:
+    """US-market calendar date, independent of the operator host timezone."""
+
+    return datetime.now(_MARKET_TZ).date().isoformat()
 
 
 def _canonical_without_hash(packet: Mapping[str, Any]) -> str:
@@ -48,6 +56,27 @@ def _invoke(tool: Any, args: Mapping[str, Any]) -> Any:
     if callable(tool):
         return tool(**dict(args))
     raise TypeError(f"evidence source is not callable: {tool!r}")
+
+
+def _usable_source_value(value: Any) -> bool:
+    """Return whether a tool response contains usable evidence.
+
+    Tool adapters sometimes return transport failures as ordinary strings or
+    JSON objects.  Treat those envelopes as unavailable instead of allowing a
+    hash to make an error response look like evidence.
+    """
+    if value is None or value == "" or value == [] or value == {}:
+        return False
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered.startswith(("error:", "exception:", "unavailable:", "timeout:")):
+            return False
+        if lowered in {"error", "unavailable", "timed out", "timeout"}:
+            return False
+    if isinstance(value, Mapping):
+        if "error" in value or value.get("status") in {"error", "unavailable"}:
+            return False
+    return True
 
 
 def _available(toolkit: Any, capability: str | None) -> bool:
@@ -76,7 +105,7 @@ def _capture_source(
     sources: list[dict[str, Any]],
     errors: list[dict[str, Any]],
 ) -> None:
-    historical = trade_date < date.today().isoformat()
+    historical = trade_date < _market_today_iso()
     if live_only and historical:
         section[source_name] = {
             "status": "unavailable",
@@ -126,8 +155,9 @@ def _capture_source(
         return
     try:
         value = _invoke(tool, args)
+        usable = _usable_source_value(value)
         section[source_name] = {
-            "status": "available" if value not in (None, "", []) else "empty",
+            "status": "available" if usable else "error" if value not in (None, "", [], {}) else "empty",
             "as_of": trade_date,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "value": value,
@@ -136,7 +166,7 @@ def _capture_source(
             {
                 "section": section_name,
                 "source": source_name,
-                "status": section[source_name]["status"],
+            "status": section[source_name]["status"],
                 "as_of": trade_date,
             }
         )
@@ -158,7 +188,7 @@ def _capture_source(
 
 
 def _capture_packet(toolkit: Any, symbol: str, trade_date: str) -> dict[str, Any]:
-    if trade_date > date.today().isoformat():
+    if trade_date > _market_today_iso():
         raise EvidenceIntegrityError(
             f"trade_date {trade_date} is in the future; evidence cannot be point-in-time safe"
         )
@@ -270,11 +300,13 @@ def _capture_packet(toolkit: Any, symbol: str, trade_date: str) -> dict[str, Any
 def _validate_packet(packet: Mapping[str, Any], *, symbol: str, trade_date: str) -> dict[str, Any]:
     if not isinstance(packet, Mapping):
         raise EvidenceIntegrityError("evidence packet must be a JSON object")
+    if packet.get("schema_version") != 1:
+        raise EvidenceIntegrityError("unsupported evidence packet schema_version")
     if packet.get("symbol") != symbol or packet.get("trade_date") != trade_date:
         raise EvidenceIntegrityError(
             "evidence identity mismatch: packet must match symbol and trade_date"
         )
-    if trade_date > date.today().isoformat():
+    if trade_date > _market_today_iso():
         raise EvidenceIntegrityError(
             f"trade_date {trade_date} is in the future; evidence cannot be point-in-time safe"
         )
@@ -290,13 +322,47 @@ def _validate_packet(packet: Mapping[str, Any], *, symbol: str, trade_date: str)
     return deepcopy(dict(packet))
 
 
-def load_evidence_packet(path: str | Path, *, symbol: str, trade_date: str) -> dict[str, Any]:
+def validate_evidence_completeness(
+    packet: Mapping[str, Any], *, sections: tuple[str, ...] = _SECTIONS
+) -> None:
+    """Require at least one usable captured source in every requested section."""
+
+    missing: list[str] = []
+    for section_name in sections:
+        section = packet.get(section_name)
+        usable = isinstance(section, Mapping) and any(
+            isinstance(entry, Mapping)
+            and entry.get("status") == "available"
+            and _usable_source_value(entry.get("value"))
+            for entry in section.values()
+        )
+        if not usable:
+            missing.append(section_name)
+    if missing:
+        raise EvidenceIntegrityError(
+            "evidence completeness gate failed; no usable source for: "
+            + ", ".join(missing)
+        )
+
+
+def load_evidence_packet(
+    path: str | Path,
+    *,
+    symbol: str,
+    trade_date: str,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
     packet_path = Path(path)
     try:
         packet = json.loads(packet_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise EvidenceIntegrityError(f"cannot read evidence packet {packet_path}") from exc
-    return _validate_packet(packet, symbol=symbol, trade_date=trade_date)
+    validated = _validate_packet(packet, symbol=symbol, trade_date=trade_date)
+    if expected_sha256 and validated.get("sha256") != expected_sha256:
+        raise EvidenceIntegrityError(
+            "evidence packet does not match the SHA-256 pinned by the run configuration"
+        )
+    return validated
 
 
 def build_or_load_evidence_packet(
@@ -311,9 +377,29 @@ def build_or_load_evidence_packet(
 
     packet_path = Path(path)
     if packet_path.exists():
-        packet = load_evidence_packet(packet_path, symbol=symbol, trade_date=trade_date)
+        packet = load_evidence_packet(
+            packet_path,
+            symbol=symbol,
+            trade_date=trade_date,
+            expected_sha256=(config or {}).get("evidence_packet_sha256"),
+        )
     else:
         packet = _capture_packet(toolkit or Toolkit(config=dict(config or {})), symbol, trade_date)
+        # Do not publish a packet containing tool error/empty envelopes.  A
+        # deliberately unavailable source is still retained for the caller's
+        # completeness gate, but malformed responses must never become a
+        # reusable frozen artifact.
+        has_invalid_response = any(
+            isinstance(section, Mapping)
+            and any(
+                isinstance(entry, Mapping)
+                and entry.get("status") in {"error", "empty"}
+                for entry in section.values()
+            )
+            for section in (packet.get(name) for name in _SECTIONS)
+        )
+        if has_invalid_response:
+            validate_evidence_completeness(packet)
         packet_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = packet_path.with_suffix(packet_path.suffix + ".tmp")
         temporary.write_text(

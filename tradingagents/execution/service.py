@@ -623,6 +623,12 @@ class ExecutionService:
                 current_position=current_position,
                 can_submit=can_submit,
             )
+        replay = self._completed_replay_result(
+            intent_dict=intent_dict,
+            decision_id=decision_id,
+        )
+        if replay is not None:
+            return replay
         is_crypto = "/" in str(intent_dict["symbol"]).upper()
         if str(intent_dict["action"]).upper() == "SHORT" and (is_crypto or not allow_shorts):
             # Reject before maintenance or cancellation; existing outbox rows
@@ -957,6 +963,20 @@ class ExecutionService:
             client_order_id_for=client_order_id_for,
             json=json,
             validate_trade_intent=validate_trade_intent,
+        )
+
+    def _completed_replay_result(
+        self,
+        *,
+        intent_dict: dict[str, Any],
+        decision_id: Optional[str],
+    ) -> dict[str, Any] | None:
+        did = decision_id or canonical_decision_id(intent_dict)
+        return _intent_execution._completed_replay_result(
+            self,
+            decision_id=did,
+            intent_dict=intent_dict,
+            json_module=json,
         )
 
     @staticmethod

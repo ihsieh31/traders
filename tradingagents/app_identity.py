@@ -73,6 +73,8 @@ _PATH_CONFIG_KEYS = (
     "execution_db_path",
     "execution_lock_dir",
     "long_run_dir",
+    "safety_state_path",
+    "safety_kill_switch_path",
 )
 
 

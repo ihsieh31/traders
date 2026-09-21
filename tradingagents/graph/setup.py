@@ -664,7 +664,12 @@ class GraphSetup:
             # unchanged report-context and downstream decision graph.
             berkshire_team_node = self._wrap_node_with_run_logging(
                 "Berkshire Analysis Team",
-                create_berkshire_analysis_team(self.deep_thinking_llm, self.config),
+                # The formal A/B changes research topology, not model class or
+                # reasoning budget. Native analyst nodes use the quick client,
+                # so every Berkshire upstream role and its synthesis use the
+                # same client as well. Downstream deep/decision nodes remain
+                # shared and unchanged.
+                create_berkshire_analysis_team(self.quick_thinking_llm, self.config),
             )
             workflow.add_node("Berkshire Analysis Team", berkshire_team_node)
             workflow.add_edge(START, "Berkshire Analysis Team")

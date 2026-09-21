@@ -644,6 +644,7 @@ class TradingAgentsGraph:
                 evidence_path,
                 symbol=company_name,
                 trade_date=str(trade_date),
+                expected_sha256=self.config.get("evidence_packet_sha256"),
             )
         resume_checkpoint = self._has_checkpoint_for_run(
             company_name, str(trade_date)

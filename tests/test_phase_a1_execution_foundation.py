@@ -129,6 +129,46 @@ class PaperOnlyLockTests(unittest.TestCase):
             client.submit_order(object())
         with self.assertRaises(au.PaperTradingEnforcementError):
             client.cancel_order_by_id("order-1")
+        with self.assertRaises(au.PaperTradingEnforcementError):
+            client.exercise_options_position("position-1")
+
+    def test_ab_account_credentials_are_dedicated_and_paper_only(self):
+        from tradingagents.dataflows import alpaca_utils as au
+
+        captured = []
+
+        class FakeClient:
+            def __init__(self, key, secret, **kwargs):
+                captured.append((key, secret, kwargs))
+                self._retry = 3
+                self._session = SimpleNamespace(request=lambda *a, **kw: None)
+
+        values = {
+            "ALPACA_ACCOUNT_A_API_KEY": "key-a",
+            "ALPACA_ACCOUNT_A_SECRET_KEY": "secret-a",
+            "ALPACA_ACCOUNT_A_BASE_URL": "https://paper-api.alpaca.markets/v2",
+            "ALPACA_ACCOUNT_B_API_KEY": "key-b",
+            "ALPACA_ACCOUNT_B_SECRET_KEY": "secret-b",
+            "ALPACA_ACCOUNT_B_BASE_URL": "https://paper-api.alpaca.markets/v2",
+        }
+        with patch.object(au, "get_env", side_effect=lambda name, default=None: values.get(name, default)):
+            with patch.object(au, "get_alpaca_use_paper", return_value="True"):
+                with patch.object(au, "TradingClient", FakeClient):
+                    au.get_alpaca_trading_client(account="A", read_only=False)
+                    au.get_alpaca_trading_client(account="B", read_only=False)
+        self.assertEqual([item[:2] for item in captured], [("key-a", "secret-a"), ("key-b", "secret-b")])
+        self.assertTrue(all(item[2]["paper"] is True for item in captured))
+        self.assertTrue(
+            all(item[2]["url_override"] == au.PAPER_API_BASE_URL for item in captured)
+        )
+
+    def test_ab_account_never_falls_back_to_default_credentials(self):
+        from tradingagents.dataflows import alpaca_utils as au
+
+        with patch.object(au, "get_env", return_value=None):
+            with patch.object(au, "get_api_key", return_value="default-must-not-be-used"):
+                with self.assertRaisesRegex(ValueError, "account A"):
+                    au.get_alpaca_trading_client(account="A", read_only=False)
 
     def test_full_paper_v2_endpoint_is_normalized_for_alpaca_sdk(self):
         from tradingagents.dataflows import alpaca_utils as au

@@ -12,7 +12,7 @@
 - Bull／Bear 與 Risky／Safe／Neutral 雙層辯論。
 - 結構化 `TradeIntent` 與單一 Paper execution service。
 - 30 日無人值守 Paper observation。
-- Traders × Berkshire 雙 30 日 shadow-decision A/B。
+- Traders × Berkshire 雙 30 日 A/B（shadow 或雙帳戶 Alpaca Paper 執行）。
 - 回測、決策記憶、每日報告、成本與完整 run audit log。
 
 WebUI 已移除。核心不再依賴 Dash、Flask、Plotly、Gradio 或任何 UI state。
@@ -82,13 +82,24 @@ python -m cli.main long-run
 
 ## 雙 30 日 Traders × Berkshire A/B
 
-A/B runner 只改變四個非技術 analyst 的研究 prompt。Market、工具、模型、Report Context、Bull/Bear、Trader、Risk 與所有下游節點完全共用。
+A/B runner 的唯一研究變因是 `analysis_backend`：Traders 使用原生五 analyst，Berkshire 使用 Berkshire Analysis Team；兩邊的 LLM 預算、凍結證據、Report Context、Bull/Bear、Trader、Risk 與所有下游節點相同。
 
 ```bash
 python scripts/run_analysis_ab.py \
   --symbol NVDA \
   --date 2026-09-21 \
   --results-root ~/.tradingbuffett/results/ab
+```
+
+要實際送到兩個隔離的 Alpaca Paper 帳戶，必須另外設定 account A/B keys、令 `TRADINGBUFFETT_ALPACA_READ_ONLY=False`，並明確給定每臂上限：
+
+```bash
+python scripts/run_analysis_ab.py \
+  --symbol NVDA \
+  --date "$(TZ=America/New_York date +%F)" \
+  --results-root ~/.tradingbuffett/results/ab-paper \
+  --execute-paper \
+  --paper-notional-usd 500
 ```
 
 彙總：
@@ -101,14 +112,17 @@ python scripts/summarize_analysis_ab.py \
 A/B 保護條件：
 
 - `memory_retrieval_enabled`、outcome reflection、memory maintenance 強制開啟。
-- Traders 與 Berkshire 各自使用持久且互斥的 memory、cache、audit、DB 與 lock。
+- Traders 與 Berkshire 各自使用持久且互斥的 memory、cache、audit、execution DB、Safety state 與 kill switch；broker lock 固定在同一主機目錄，並以已驗證的不同 account ID 分鍵。
 - 兩邊序列執行；順序依 `symbol + trade_date` 交錯，避免固定先跑同一邊。
-- `AB_CAMPAIGN.json` 固定整段測試的 config 與 analyst set；中途改設定會停止。
+- 每組先建立同一份 frozen EvidencePacket；五個 section 都必須至少有一筆可用資料，且使用 campaign pin 的 SHA-256 驗證。
+- `AB_CAMPAIGN.json` 固定整段測試的 config、完整 analyst set、程式與 prompt fingerprint；中途漂移會停止。
 - 同一 symbol/date 不可覆寫重跑。
-- Checkpoint 與 auto-trade 強制關閉：不借用舊答案，也不從 A/B runner 下單。
+- Checkpoint 強制關閉；未給 `--execute-paper` 時為 shadow，明確開啟時 Traders 固定 account A、Berkshire 固定 account B。
+- Paper 執行要求兩個不同帳戶、第一組開始前持倉與 open orders 為空且 equity 誤差在 0.1%／US$1 內，並要求 Alpaca 當日且 regular session 開市。
+- endpoint 必須是 `paper-api.alpaca.markets` 且 SDK 永遠使用 `paper=True`；live 或未知 endpoint 直接拒絕。
 - `pair_summary.json` 只在兩邊完成後寫入，任一 profile 看不到對方結果。
 
-外部即時來源可能在兩次序列查詢間改變，因此可保證狀態與設定隔離，但不聲稱網路回應逐 byte 相同。嚴格同輸入實驗仍需要 point-in-time record/replay。
+兩臂分析讀取同一份 point-in-time EvidencePacket，不在各自執行時重新查外部資料。
 
 ## 執行安全
 
@@ -167,7 +181,7 @@ python -m compileall -q tradingagents cli scripts
 python -m pytest -q
 ```
 
-2026-09-21 最終基準：`1384 passed, 139 skipped, 284 subtests passed`。Skipped cases 是已移除 WebUI 的歷史回歸斷言。
+2026-09-22 最終基準：`1414 passed, 139 skipped, 294 subtests passed`。Skipped cases 是已移除 WebUI 的歷史回歸斷言。
 
 ## 文件
 

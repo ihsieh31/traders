@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run a controlled, decision-only Traders versus Berkshire analysis pair.
+"""Run a controlled Traders versus Berkshire analysis pair.
 
 The two runs share one frozen EvidencePacket and the complete downstream graph.
 Only ``analysis_backend`` and explicitly isolated learning/run destinations
-differ. Runs are intentionally serial because the application keeps some
-process-global configuration and audit context.
+differ. Shadow decisions are the default; an explicit flag can route each arm
+to its dedicated Alpaca Paper account. Runs are intentionally serial because
+the application keeps some process-global configuration and audit context.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import re
 import sys
 import time
 from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 # Make ``python scripts/run_analysis_ab.py`` work from a source checkout.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,7 @@ from tradingagents.analysis_backends import resolve_analysis_backend
 from tradingagents.experiments.evidence_snapshot import (
     EvidenceIntegrityError,
     build_or_load_evidence_packet,
+    validate_evidence_completeness,
 )
 from tradingagents.app_identity import default_results_dir, validate_app_path
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -56,6 +59,8 @@ def safe_ticker_component(value: str, *, max_len: int = 64) -> str:
 
 BACKEND_ORDER = ("traders", "berkshire")
 PROFILE_ORDER = BACKEND_ORDER  # Compatibility alias for summary consumers.
+FORMAL_ANALYSTS = ("market", "social", "news", "fundamentals", "macro")
+BACKEND_ACCOUNT = {"traders": "A", "berkshire": "B"}
 AB_ALLOWED_DIFFERENCES = frozenset(
     {
         "analysis_backend",
@@ -66,9 +71,17 @@ AB_ALLOWED_DIFFERENCES = frozenset(
         "data_cache_dir",
         "screening_selection_cache_path",
         "execution_db_path",
-        "execution_lock_dir",
         "long_run_dir",
+        "safety_state_path",
+        "safety_kill_switch_path",
+        "_alpaca_account_profile",
     }
+)
+
+# These identify one observation within a campaign.  They must be identical
+# between arms, but must not make the campaign fingerprint change every day.
+_CAMPAIGN_DYNAMIC_KEYS = frozenset(
+    {"evidence_packet_path", "evidence_packet_sha256"}
 )
 
 _ISOLATED_PATH_KEYS = (
@@ -78,8 +91,9 @@ _ISOLATED_PATH_KEYS = (
     "data_cache_dir",
     "screening_selection_cache_path",
     "execution_db_path",
-    "execution_lock_dir",
     "long_run_dir",
+    "safety_state_path",
+    "safety_kill_switch_path",
 )
 
 _REQUIRED_MEMORY_FLAGS = (
@@ -93,7 +107,12 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)
 
 
-def assert_ab_invariants(config_a: Mapping[str, Any], config_b: Mapping[str, Any]) -> None:
+def assert_ab_invariants(
+    config_a: Mapping[str, Any],
+    config_b: Mapping[str, Any],
+    *,
+    execute_paper: bool | None = None,
+) -> None:
     """Fail closed if the pair differs outside the approved isolation keys."""
 
     differing = []
@@ -111,8 +130,14 @@ def assert_ab_invariants(config_a: Mapping[str, Any], config_b: Mapping[str, Any
     for key in _REQUIRED_MEMORY_FLAGS:
         if config_a.get(key) is not True or config_b.get(key) is not True:
             raise RuntimeError(f"A/B invariant violation: {key} must be enabled for both profiles")
-    if config_a.get("auto_trade") is not False or config_b.get("auto_trade") is not False:
-        raise RuntimeError("A/B invariant violation: auto_trade must be disabled")
+    expected_auto_trade = bool(execute_paper) if execute_paper is not None else False
+    if (
+        config_a.get("auto_trade") is not expected_auto_trade
+        or config_b.get("auto_trade") is not expected_auto_trade
+    ):
+        raise RuntimeError(
+            f"A/B invariant violation: auto_trade must be {expected_auto_trade}"
+        )
     if config_a.get("analysis_profile") != config_b.get("analysis_profile"):
         raise RuntimeError("A/B invariant violation: analysis_profile must be identical")
     if config_a.get("analysis_input_mode") != "frozen_evidence" or config_b.get("analysis_input_mode") != "frozen_evidence":
@@ -123,6 +148,11 @@ def assert_ab_invariants(config_a: Mapping[str, Any], config_b: Mapping[str, Any
         raise RuntimeError("A/B invariant violation: evidence_packet_sha256 must be shared")
     if config_a.get("checkpoint_enabled") is not False or config_b.get("checkpoint_enabled") is not False:
         raise RuntimeError("A/B invariant violation: checkpoint_enabled must be false")
+    if expected_auto_trade:
+        if config_a.get("_alpaca_account_profile") != "A":
+            raise RuntimeError("A/B invariant violation: Traders must use Paper account A")
+        if config_b.get("_alpaca_account_profile") != "B":
+            raise RuntimeError("A/B invariant violation: Berkshire must use Paper account B")
 
     for key in _ISOLATED_PATH_KEYS:
         left = Path(str(config_a.get(key, ""))).resolve(strict=False)
@@ -154,6 +184,21 @@ def _experiment_lock(root: Path):
             handle.close()
 
 
+@contextmanager
+def _preserve_runtime_config():
+    """Restore process-global graph and Safety configuration on every exit."""
+
+    from tradingagents.dataflows.config import get_config, replace_config
+    from tradingagents.safety import reset_safety_guard
+
+    previous = get_config()
+    try:
+        yield
+    finally:
+        replace_config(previous)
+        reset_safety_guard()
+
+
 def _execution_order(symbol: str, trade_date: str) -> list[str]:
     digest = hashlib.sha256(f"{symbol}|{trade_date}".encode("utf-8")).digest()
     if int.from_bytes(digest[:8], "big") % 2:
@@ -170,6 +215,8 @@ def build_ab_configs(
     experiment_root: str | Path | None = None,
     evidence_packet_path: str | Path | None = None,
     evidence_packet_sha256: str | None = None,
+    execute_paper: bool = False,
+    paper_notional_usd: float | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build isolated profile configs while keeping all experiment inputs equal."""
 
@@ -187,9 +234,11 @@ def build_ab_configs(
             "reflection_on_outcome_enabled": True,
             "memory_maintenance_enabled": True,
             "checkpoint_enabled": False,
-            "auto_trade": False,
+            "auto_trade": bool(execute_paper),
         }
     )
+    if paper_notional_usd is not None:
+        shared["paper_notional_usd"] = float(paper_notional_usd)
 
     configs: dict[str, dict[str, Any]] = {}
     packet_path = Path(evidence_packet_path or (campaign_path / "evidence" / str(trade_date) / safe_ticker_component(symbol) / "evidence_packet.json"))
@@ -214,14 +263,18 @@ def build_ab_configs(
                     profile_dir / "screening_selection.json"
                 ),
                 "execution_db_path": str(profile_dir / "execution.sqlite3"),
-                "execution_lock_dir": str(profile_dir / "execution-locks"),
                 "long_run_dir": str(profile_dir / "long_run"),
+                "safety_state_path": str(profile_dir / "safety" / "state.json"),
+                "safety_kill_switch_path": str(profile_dir / "safety" / "KILL_SWITCH"),
+                "_alpaca_account_profile": BACKEND_ACCOUNT[backend],
             }
         )
         resolve_analysis_backend(config)
         configs[backend] = config
 
-    assert_ab_invariants(configs["traders"], configs["berkshire"])
+    assert_ab_invariants(
+        configs["traders"], configs["berkshire"], execute_paper=execute_paper
+    )
     return configs
 
 
@@ -246,26 +299,75 @@ def _latest_run_log(
 
 
 def _campaign_fingerprint(
-    config: Mapping[str, Any], selected_analysts: Sequence[str]
+    config: Mapping[str, Any],
+    selected_analysts: Sequence[str],
+    implementation_fingerprint: str,
 ) -> str:
     shared = {
         key: value
         for key, value in config.items()
-        if key not in AB_ALLOWED_DIFFERENCES
+        if key not in AB_ALLOWED_DIFFERENCES and key not in _CAMPAIGN_DYNAMIC_KEYS
     }
-    payload = {"shared_config": shared, "selected_analysts": list(selected_analysts)}
+    payload = {
+        "shared_config": shared,
+        "selected_analysts": list(selected_analysts),
+        "implementation_fingerprint": implementation_fingerprint,
+    }
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
+
+
+def _implementation_fingerprint() -> str:
+    """Hash effective experiment code and prompt bytes, including overrides."""
+
+    digest = hashlib.sha256()
+    roots_and_patterns = (
+        (_REPO_ROOT / "tradingagents", "*.py"),
+        (_REPO_ROOT / "tradingagents" / "prompts" / "templates", "*.md"),
+        (_REPO_ROOT / "scripts", "*.py"),
+    )
+    files: dict[str, Path] = {}
+    for root, pattern in roots_and_patterns:
+        if root.exists():
+            for path in root.rglob(pattern):
+                files[f"repo:{path.relative_to(_REPO_ROOT).as_posix()}"] = path
+    prompt_override = os.getenv("TRADINGBUFFETT_PROMPT_DIR")
+    if prompt_override:
+        override_root = validate_app_path(prompt_override, field="prompt_dir")
+        if override_root.exists():
+            for path in override_root.rglob("*.md"):
+                files[f"override:{path.relative_to(override_root).as_posix()}"] = path
+    for label in sorted(files):
+        digest.update(label.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(files[label].read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _ensure_campaign_manifest(
     root: Path,
     config: Mapping[str, Any],
     selected_analysts: Sequence[str],
+    *,
+    account_preflight: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> str:
     """Pin experimental conditions across the full multi-day campaign."""
 
-    fingerprint = _campaign_fingerprint(config, selected_analysts)
+    implementation_fingerprint = _implementation_fingerprint()
+    fingerprint = _campaign_fingerprint(
+        config, selected_analysts, implementation_fingerprint
+    )
     manifest_path = root / "AB_CAMPAIGN.json"
+    account_refs = (
+        {
+            backend: str((account_preflight or {}).get(backend, {}).get("account_ref") or "")
+            for backend in BACKEND_ORDER
+        }
+        if config.get("auto_trade")
+        else None
+    )
+    if account_refs is not None and any(not value for value in account_refs.values()):
+        raise RuntimeError("A/B Paper account preflight did not return pinned identities")
     if manifest_path.exists():
         try:
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -276,7 +378,10 @@ def _ensure_campaign_manifest(
             or existing.get("experiment") != "traders-vs-ai-berkshire-analysis-backend"
             or existing.get("backends") != list(BACKEND_ORDER)
             or existing.get("analysis_input_mode") != "frozen_evidence"
+            or existing.get("implementation_fingerprint")
+            != implementation_fingerprint
             or existing.get("config_fingerprint") != fingerprint
+            or existing.get("account_refs") != account_refs
         ):
             raise RuntimeError(
                 "A/B campaign invariant violation: configuration or analyst set changed"
@@ -289,12 +394,21 @@ def _ensure_campaign_manifest(
         "backends": list(BACKEND_ORDER),
         "analysis_input_mode": "frozen_evidence",
         "downstream_shared": True,
-        "auto_trade": False,
+        "auto_trade": bool(config.get("auto_trade")),
         "max_arm_attempts": 3,
         "selected_analysts": list(selected_analysts),
+        "implementation_fingerprint": implementation_fingerprint,
         "config_fingerprint": fingerprint,
         "memory_policy": "enabled and isolated per profile",
-        "execution_policy": "serial, order-counterbalanced, shadow decisions only",
+        "execution_policy": (
+            "serial, order-counterbalanced, isolated Alpaca Paper accounts A/B"
+            if config.get("auto_trade")
+            else "serial, order-counterbalanced, shadow decisions only"
+        ),
+        "account_assignment": (
+            dict(BACKEND_ACCOUNT) if config.get("auto_trade") else None
+        ),
+        "account_refs": account_refs,
         "berkshire_reference": {
             "repo": "xbtlin/ai-berkshire",
             "commit": "1cc1e362378cd3fea99a4f4c3b50676bce9aa4c6",
@@ -322,6 +436,17 @@ def _signal_text(signal: Any) -> str:
     return str(signal).strip()
 
 
+def _jsonable_intent(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        value = dump(mode="json")
+    if not isinstance(value, Mapping):
+        return None
+    return json.loads(json.dumps(dict(value), default=str))
+
+
 def _run_one(
     backend: str,
     config: Mapping[str, Any],
@@ -334,7 +459,39 @@ def _run_one(
 ) -> dict[str, Any]:
     started = time.monotonic()
     existing_logs = _run_logs(config, symbol)
+    # The safety guard is a process singleton.  Install the arm config before
+    # the first guard lookup and clear it after the arm so A/B order cannot
+    # decide which profile owns the runtime state.
+    from tradingagents.dataflows.config import set_config
+    from tradingagents.safety import get_safety_guard, reset_safety_guard
+
+    set_config(dict(config))
+    reset_safety_guard()
     try:
+        try:
+            budget = get_safety_guard().check_llm_budget()
+        except Exception as exc:
+            return {
+                "status": "failed_terminal",
+                "analysis_backend": backend,
+                "signal": "",
+                "elapsed_seconds": round(time.monotonic() - started, 4),
+                "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
+                "error_type": type(exc).__name__,
+                "error": f"LLM budget gate unavailable: {exc}",
+                "decision_valid": False,
+            }
+        if not budget.allowed:
+            return {
+                "status": "failed_terminal",
+                "analysis_backend": backend,
+                "signal": "",
+                "elapsed_seconds": round(time.monotonic() - started, 4),
+                "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
+                "error_type": "LLMBudgetExhausted",
+                "error": "; ".join(budget.reasons),
+                "decision_valid": False,
+            }
         if graph_cls is None:
             from tradingagents.graph.trading_graph import TradingAgentsGraph
 
@@ -345,6 +502,21 @@ def _run_one(
             config=dict(config),
         )
         state, signal = graph.propagate(symbol, trade_date)
+        if isinstance(state, Mapping) and state.get("risk_invalid_reason"):
+            reason = str(state["risk_invalid_reason"])
+            return {
+                "status": "failed_terminal",
+                "analysis_backend": backend,
+                "signal": _signal_text(signal),
+                "elapsed_seconds": round(time.monotonic() - started, 4),
+                "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
+                "final_state_keys": sorted(state),
+                "trade_intent": None,
+                "decision_valid": False,
+                "risk_invalid_reason": reason,
+                "error_type": "InvalidRiskDecision",
+                "error": f"invalid risk decision: {reason}",
+            }
         return {
             "status": "completed",
             "analysis_backend": backend,
@@ -352,9 +524,13 @@ def _run_one(
             "elapsed_seconds": round(time.monotonic() - started, 4),
             "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
             "final_state_keys": sorted(state) if isinstance(state, Mapping) else [],
+            "trade_intent": _jsonable_intent(
+                state.get("final_trade_intent") if isinstance(state, Mapping) else None
+            ),
+            "decision_valid": True,
         }
     except Exception as exc:  # Pair state preserves partial evidence.
-        retryable = type(exc).__name__ in {
+        retryable = bool(getattr(exc, "retryable", False)) or type(exc).__name__ in {
             "ProviderFailure",
             "TimeoutError",
             "ConnectionError",
@@ -372,17 +548,219 @@ def _run_one(
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
+    finally:
+        reset_safety_guard()
 
 
 MAX_ARM_ATTEMPTS = 3
 
 
-def _new_pair_state(pair_id: str, campaign_fingerprint: str, evidence_sha256: str) -> dict[str, Any]:
+def _paper_account_preflight(
+    *,
+    trade_date: str,
+    require_matched_flat_start: bool,
+) -> dict[str, dict[str, Any]]:
+    """Prove two distinct, mutation-enabled Alpaca Paper accounts are usable."""
+
+    from tradingagents.dataflows.alpaca_utils import (
+        alpaca_read_only_enabled,
+        get_alpaca_trading_client,
+    )
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+
+    if alpaca_read_only_enabled():
+        raise RuntimeError(
+            "Paper execution requested but TRADINGBUFFETT_ALPACA_READ_ONLY is enabled"
+        )
+    snapshots: dict[str, dict[str, Any]] = {}
+    for backend, account in BACKEND_ACCOUNT.items():
+        client = get_alpaca_trading_client(account=account, read_only=False)
+        raw_account = client.get_account()
+        account_id = str(getattr(raw_account, "id", "") or "")
+        equity = float(getattr(raw_account, "equity", 0) or 0)
+        positions = list(client.get_all_positions() or [])
+        orders = list(
+            client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN)) or []
+        )
+        clock = client.get_clock()
+        clock_timestamp = getattr(clock, "timestamp", None)
+        if clock_timestamp is None or not hasattr(clock_timestamp, "date"):
+            raise RuntimeError(f"Paper account {account} returned an invalid market clock")
+        if getattr(clock_timestamp, "tzinfo", None) is None:
+            raise RuntimeError(f"Paper account {account} returned a timezone-naive market clock")
+        clock_date = clock_timestamp.astimezone(
+            ZoneInfo("America/New_York")
+        ).date().isoformat()
+        if clock_date != trade_date:
+            raise RuntimeError(
+                f"Paper execution date {trade_date} does not match Alpaca market date {clock_date}"
+            )
+        if getattr(clock, "is_open", None) is not True:
+            raise RuntimeError("Alpaca Paper market is closed; refusing to start an execution pair")
+        if not account_id or equity <= 0:
+            raise RuntimeError(f"Paper account {account} has no usable identity/equity")
+        if require_matched_flat_start and (positions or orders):
+            raise RuntimeError(
+                f"Paper account {account} must start flat with no open orders "
+                f"(positions={len(positions)}, orders={len(orders)})"
+            )
+        snapshots[backend] = {
+            "account": account,
+            "account_ref": hashlib.sha256(account_id.encode()).hexdigest()[:16],
+            "account_id": account_id,
+            "equity": equity,
+            "market_date": clock_date,
+        }
+    if snapshots["traders"]["account_id"] == snapshots["berkshire"]["account_id"]:
+        raise RuntimeError("A/B Paper accounts A and B resolve to the same account")
+    left = snapshots["traders"]["equity"]
+    right = snapshots["berkshire"]["equity"]
+    if require_matched_flat_start and abs(left - right) > max(1.0, min(left, right) * 0.001):
+        raise RuntimeError(
+            "A/B Paper starting equity mismatch exceeds 0.1%/$1 tolerance"
+        )
+    for snapshot in snapshots.values():
+        snapshot.pop("account_id", None)
+    return snapshots
+
+
+def _execute_paper_arm_inner(
+    backend: str,
+    config: Mapping[str, Any],
+    result: Mapping[str, Any],
+    *,
+    symbol: str,
+    trade_date: str,
+    pair_id: str,
+    paper_notional_usd: float,
+) -> dict[str, Any]:
+    from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+    from tradingagents.dataflows.config import set_config
+    from tradingagents.execution import ExecutionService
+    from tradingagents.execution.auto_trade import execute_auto_trade
+    from tradingagents.safety import reset_safety_guard
+
+    intent = result.get("trade_intent")
+    if not isinstance(intent, Mapping):
+        return {
+            "success": False,
+            "broker_attempted": False,
+            "broker_calls": 0,
+            "error": "completed analysis produced no schema-valid TradeIntent",
+        }
+    account = BACKEND_ACCOUNT[backend]
+    set_config(dict(config))
+    reset_safety_guard()
+    broker_factory = lambda: get_alpaca_trading_client(
+        account=account, read_only=False
+    )
+    service = ExecutionService(
+        db_path=config["execution_db_path"], broker_factory=broker_factory
+    )
+    recovery = service.startup_recover()
+    if not recovery.get("success"):
+        return {
+            "success": False,
+            "paused": True,
+            "broker_attempted": False,
+            "broker_calls": int(recovery.get("broker_calls") or 0),
+            "error": "Paper account recovery is not CLEAN: "
+            + str(recovery.get("reconciliation_reasons") or recovery.get("error")),
+        }
+    execution = execute_auto_trade(
+        ticker=symbol,
+        trade_intent=dict(intent),
+        base_trade_notional_usd=float(paper_notional_usd),
+        allow_shorts=bool(config.get("allow_shorts", False)),
+        config=dict(config),
+        execution_service=service,
+        decision_id=f"ab-{pair_id}-{backend}-{trade_date}-{symbol}",
+        run_id=f"ab-{pair_id}-{backend}",
+        can_submit=lambda: True,
+    )
+    return {
+        "success": bool(execution.get("success")),
+        "broker_attempted": bool(execution.get("broker_attempted")),
+        "broker_calls": int(execution.get("broker_calls") or 0),
+        "hold": bool(execution.get("hold")),
+        "deduped": bool(execution.get("deduped")),
+        "paused": bool(execution.get("paused")),
+        "has_unknown": bool(execution.get("has_unknown")),
+        "error": str(execution.get("error") or "")[:500],
+        "account": account,
+        "orders": [
+            {
+                "client_order_id": order.get("client_order_id"),
+                "status": order.get("status"),
+            }
+            for order in (execution.get("orders") or [])
+            if isinstance(order, Mapping)
+        ],
+    }
+
+
+def _execute_paper_arm(
+    backend: str,
+    config: Mapping[str, Any],
+    result: Mapping[str, Any],
+    *,
+    symbol: str,
+    trade_date: str,
+    pair_id: str,
+    paper_notional_usd: float,
+) -> dict[str, Any]:
+    """Execute one Paper arm and always return a persistable terminal result."""
+
+    try:
+        return _execute_paper_arm_inner(
+            backend,
+            config,
+            result,
+            symbol=symbol,
+            trade_date=trade_date,
+            pair_id=pair_id,
+            paper_notional_usd=paper_notional_usd,
+        )
+    except Exception as exc:
+        return {
+            "success": False,
+            "paused": True,
+            "broker_attempted": None,
+            "broker_calls": 0,
+            "has_unknown": True,
+            "error": f"Paper execution raised {type(exc).__name__}",
+        }
+
+
+def _paper_execution_hard_stop(result: Mapping[str, Any]) -> str | None:
+    """Classify execution states that cannot count as a completed arm."""
+    if result.get("paused"):
+        return "execution_paused"
+    if result.get("has_unknown") or str(result.get("status") or "").upper() == "UNKNOWN":
+        return "execution_unknown"
+    return None
+
+
+def _new_pair_state(
+    pair_id: str,
+    campaign_fingerprint: str,
+    evidence_sha256: str,
+    *,
+    symbol: str,
+    trade_date: str,
+    evidence_packet_path: str,
+    paper_notional_usd: float | None,
+) -> dict[str, Any]:
     return {
         "schema_version": 2,
         "pair_id": pair_id,
         "campaign_fingerprint": campaign_fingerprint,
         "evidence_sha256": evidence_sha256,
+        "symbol": symbol,
+        "trade_date": trade_date,
+        "evidence_packet_path": evidence_packet_path,
+        "paper_notional_usd": paper_notional_usd,
         "status": "NEW",
         "arms": {
             backend: {"status": "pending", "attempts": 0, "attempt_history": []}
@@ -410,9 +788,70 @@ def _load_pair_state(path: Path) -> dict[str, Any] | None:
     return value
 
 
-def _recover_interrupted_arms(state: dict[str, Any]) -> None:
-    for arm in state.get("arms", {}).values():
+def _recover_completed_analysis(
+    config: Mapping[str, Any],
+    *,
+    backend: str,
+    symbol: str,
+    trade_date: str,
+    evidence_sha256: str,
+) -> dict[str, Any] | None:
+    candidates = sorted(
+        _run_logs(config, symbol), key=lambda path: path.stat().st_mtime_ns, reverse=True
+    )
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        metadata = payload.get("metadata") or {}
+        if (
+            payload.get("status") != "completed"
+            or str(payload.get("trade_date")) != trade_date
+            or metadata.get("analysis_backend") != backend
+            or metadata.get("analysis_source") != f"ab_{backend}"
+            or metadata.get("evidence_packet_sha256") != evidence_sha256
+        ):
+            continue
+        final_state = (payload.get("snapshots") or {}).get("final_state")
+        if not isinstance(final_state, Mapping):
+            continue
+        return {
+            "status": "completed",
+            "analysis_backend": backend,
+            "signal": _signal_text((payload.get("summary") or {}).get("final_signal")),
+            "elapsed_seconds": 0.0,
+            "run_log": str(path),
+            "final_state_keys": sorted(final_state),
+            "trade_intent": _jsonable_intent(final_state.get("final_trade_intent")),
+            "recovered_from_completed_run_log": True,
+        }
+    return None
+
+
+def _recover_interrupted_arms(
+    state: dict[str, Any],
+    *,
+    configs: Mapping[str, Mapping[str, Any]],
+    symbol: str,
+    trade_date: str,
+    evidence_sha256: str,
+    execute_paper: bool,
+) -> None:
+    for backend, arm in state.get("arms", {}).items():
         if arm.get("status") == "in_progress":
+            recovered = _recover_completed_analysis(
+                configs[backend],
+                backend=backend,
+                symbol=symbol,
+                trade_date=trade_date,
+                evidence_sha256=evidence_sha256,
+            )
+            if recovered is not None:
+                arm["result"] = recovered
+                arm.setdefault("attempt_history", []).append(recovered)
+                arm["status"] = "analysis_completed" if execute_paper else "completed"
+                continue
             arm["status"] = "failed_retryable"
             arm.setdefault("attempt_history", []).append(
                 {
@@ -421,17 +860,62 @@ def _recover_interrupted_arms(state: dict[str, Any]) -> None:
                     "error": "previous process exited during arm",
                 }
             )
-    if any(arm.get("status") == "failed_retryable" for arm in state.get("arms", {}).values()):
+    if any(
+        arm.get("status") in {"failed_retryable", "analysis_completed"}
+        for arm in state.get("arms", {}).values()
+    ):
         state["status"] = "PARTIAL"
 
 
 def _validate_pair_state(state: Mapping[str, Any], *, pair_id: str, fingerprint: str, evidence_sha256: str) -> None:
+    legal_pair_states = {"NEW", "IN_PROGRESS", "PARTIAL", "COMPLETED", "FAILED_TERMINAL"}
+    legal_arm_states = {
+        "pending",
+        "in_progress",
+        "analysis_completed",
+        "completed",
+        "failed_retryable",
+        "failed_terminal",
+    }
     if state.get("pair_id") != pair_id:
         raise RuntimeError("pair state identity mismatch")
     if state.get("campaign_fingerprint") != fingerprint:
         raise RuntimeError("A/B campaign invariant violation: pair fingerprint changed")
     if state.get("evidence_sha256") != evidence_sha256:
         raise RuntimeError("A/B evidence invariant violation: evidence hash changed")
+    if state.get("status") not in legal_pair_states:
+        raise RuntimeError("pair state contains an invalid status")
+    arms = state.get("arms")
+    if not isinstance(arms, Mapping) or set(arms) != set(BACKEND_ORDER):
+        raise RuntimeError("pair state must contain exactly the two A/B arms")
+    for backend in BACKEND_ORDER:
+        arm = arms[backend]
+        if not isinstance(arm, Mapping) or arm.get("status") not in legal_arm_states:
+            raise RuntimeError(f"pair state contains an invalid {backend} arm")
+        attempts = arm.get("attempts")
+        if isinstance(attempts, bool) or not isinstance(attempts, int) or not 0 <= attempts <= MAX_ARM_ATTEMPTS:
+            raise RuntimeError(f"pair state contains invalid {backend} attempts")
+        history = arm.get("attempt_history")
+        if not isinstance(history, list):
+            raise RuntimeError(f"pair state contains invalid {backend} attempt history")
+        arm_status = arm.get("status")
+        if arm_status == "pending" and attempts != 0:
+            raise RuntimeError(f"pair state pending {backend} arm has attempts")
+        if arm_status != "pending" and attempts < 1:
+            raise RuntimeError(f"pair state active {backend} arm has no attempt")
+        if arm_status in {"analysis_completed", "completed"}:
+            result = arm.get("result")
+            if (
+                not isinstance(result, Mapping)
+                or result.get("status") != "completed"
+                or result.get("analysis_backend") != backend
+            ):
+                raise RuntimeError(f"pair state contains invalid completed {backend} result")
+    statuses = {arms[backend].get("status") for backend in BACKEND_ORDER}
+    if state.get("status") == "COMPLETED" and statuses != {"completed"}:
+        raise RuntimeError("completed pair state contains unfinished arms")
+    if "failed_terminal" in statuses and state.get("status") != "FAILED_TERMINAL":
+        raise RuntimeError("terminal arm is inconsistent with pair state")
 
 
 def run_analysis_ab(
@@ -443,30 +927,59 @@ def run_analysis_ab(
     selected_analysts: Sequence[str] = ("market", "social", "news", "fundamentals", "macro"),
     debug: bool = False,
     graph_cls=None,
+    execute_paper: bool = False,
+    paper_notional_usd: float | None = None,
 ) -> dict[str, Any]:
     """Run or resume one crash-safe, frozen-evidence A/B pair."""
 
     if not symbol.strip():
         raise ValueError("symbol must not be empty")
+    symbol = symbol.strip().upper()
     try:
         date.fromisoformat(str(trade_date))
     except ValueError as exc:
         raise ValueError(f"trade_date must be ISO YYYY-MM-DD: {trade_date!r}") from exc
 
+    analysts = tuple(str(item).strip().lower() for item in selected_analysts)
+    if analysts != FORMAL_ANALYSTS:
+        raise RuntimeError(
+            "formal A/B requires exactly these analysts in this order: "
+            + ",".join(FORMAL_ANALYSTS)
+        )
+    selected_analysts = analysts
+    if execute_paper:
+        try:
+            notional = float(paper_notional_usd)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("paper_notional_usd is required for Paper execution") from exc
+        if notional <= 0 or notional != notional or notional == float("inf"):
+            raise ValueError("paper_notional_usd must be a positive finite number")
+        paper_notional_usd = notional
+    elif paper_notional_usd is not None:
+        raise ValueError("paper_notional_usd requires execute_paper=True")
+
     base = deepcopy(dict(DEFAULT_CONFIG if base_config is None else base_config))
-    if base.get("auto_trade") is True:
-        raise RuntimeError("A/B runner refuses auto_trade=True")
     root = validate_app_path(results_root or (default_results_dir() / "ab"), field="results_dir")
     pair_id = hashlib.sha256(f"{symbol}|{trade_date}".encode("utf-8")).hexdigest()[:16]
     pair_dir = root / str(trade_date) / safe_ticker_component(symbol)
     execution_order = _execution_order(symbol, str(trade_date))
     summary_path = pair_dir / "pair_summary.json"
     state_path = pair_dir / "pair_state.json"
-    with _experiment_lock(root):
+    with _experiment_lock(root), _preserve_runtime_config():
         if summary_path.exists():
             raise RuntimeError(
                 f"A/B pair already completed; refusing to overwrite: {summary_path}"
             )
+
+        new_campaign = not (root / "AB_CAMPAIGN.json").exists()
+        account_preflight = (
+            _paper_account_preflight(
+                trade_date=str(trade_date),
+                require_matched_flat_start=new_campaign,
+            )
+            if execute_paper
+            else {}
+        )
 
         packet_path = root / "evidence" / str(trade_date) / safe_ticker_component(symbol) / "evidence_packet.json"
         capture_config = deepcopy(base)
@@ -480,6 +993,10 @@ def run_analysis_ab(
             )
         except EvidenceIntegrityError as exc:
             raise RuntimeError(f"frozen evidence unavailable: {exc}") from exc
+        try:
+            validate_evidence_completeness(evidence)
+        except EvidenceIntegrityError as exc:
+            raise RuntimeError(f"frozen evidence unavailable: {exc}") from exc
 
         configs = build_ab_configs(
             base,
@@ -489,16 +1006,34 @@ def run_analysis_ab(
             experiment_root=root,
             evidence_packet_path=packet_path,
             evidence_packet_sha256=evidence["sha256"],
+            execute_paper=execute_paper,
+            paper_notional_usd=paper_notional_usd,
         )
-        assert_ab_invariants(configs["traders"], configs["berkshire"])
+        assert_ab_invariants(
+            configs["traders"], configs["berkshire"], execute_paper=execute_paper
+        )
         campaign_fingerprint = _ensure_campaign_manifest(
-            root, configs["traders"], selected_analysts
+            root,
+            configs["traders"],
+            selected_analysts,
+            account_preflight=account_preflight,
         )
         pair_dir.mkdir(parents=True, exist_ok=True)
+        # Evidence collection is a shared phase, never an A/B arm.
+        from tradingagents.safety import reset_safety_guard
+        reset_safety_guard()
 
         state = _load_pair_state(state_path)
         if state is None:
-            state = _new_pair_state(pair_id, campaign_fingerprint, evidence["sha256"])
+            state = _new_pair_state(
+                pair_id,
+                campaign_fingerprint,
+                evidence["sha256"],
+                symbol=symbol,
+                trade_date=str(trade_date),
+                evidence_packet_path=str(packet_path),
+                paper_notional_usd=paper_notional_usd,
+            )
         else:
             _validate_pair_state(
                 state,
@@ -506,9 +1041,20 @@ def run_analysis_ab(
                 fingerprint=campaign_fingerprint,
                 evidence_sha256=evidence["sha256"],
             )
+            if state.get("paper_notional_usd") != paper_notional_usd:
+                raise RuntimeError(
+                    "A/B pair invariant violation: paper_notional_usd changed"
+                )
             if state.get("status") == "FAILED_TERMINAL":
                 raise RuntimeError("A/B pair reached FAILED_TERMINAL; use a new results-root")
-            _recover_interrupted_arms(state)
+            _recover_interrupted_arms(
+                state,
+                configs=configs,
+                symbol=symbol,
+                trade_date=str(trade_date),
+                evidence_sha256=evidence["sha256"],
+                execute_paper=execute_paper,
+            )
         state["status"] = "IN_PROGRESS"
         _write_json_atomic(state_path, state)
 
@@ -516,25 +1062,54 @@ def run_analysis_ab(
             arm = state["arms"][profile]
             if arm.get("status") == "completed":
                 continue
-            if int(arm.get("attempts", 0) or 0) >= MAX_ARM_ATTEMPTS:
-                arm["status"] = "failed_terminal"
-                state["status"] = "FAILED_TERMINAL"
+            if arm.get("status") == "analysis_completed":
+                result = dict(arm.get("result") or {})
+            else:
+                if int(arm.get("attempts", 0) or 0) >= MAX_ARM_ATTEMPTS:
+                    arm["status"] = "failed_terminal"
+                    state["status"] = "FAILED_TERMINAL"
+                    _write_json_atomic(state_path, state)
+                    return state
+                arm["attempts"] = int(arm.get("attempts", 0) or 0) + 1
+                arm["status"] = "in_progress"
                 _write_json_atomic(state_path, state)
-                return state
-
-            arm["attempts"] = int(arm.get("attempts", 0) or 0) + 1
-            arm["status"] = "in_progress"
-            _write_json_atomic(state_path, state)
-            print(f"[AB] Running {profile} analysis backend for {symbol} as of {trade_date}")
-            result = _run_one(
-                profile,
-                configs[profile],
-                symbol=symbol,
-                trade_date=str(trade_date),
-                selected_analysts=selected_analysts,
-                debug=debug,
-                graph_cls=graph_cls,
-            )
+                print(f"[AB] Running {profile} analysis backend for {symbol} as of {trade_date}")
+                result = _run_one(
+                    profile,
+                    configs[profile],
+                    symbol=symbol,
+                    trade_date=str(trade_date),
+                    selected_analysts=selected_analysts,
+                    debug=debug,
+                    graph_cls=graph_cls,
+                )
+            if result["status"] == "completed" and execute_paper:
+                # Persist the completed analysis before broker work. If the
+                # process dies after a POST, resume starts from this exact
+                # TradeIntent and the durable decision ID deduplicates it.
+                arm["status"] = "analysis_completed"
+                arm["result"] = result
+                _write_json_atomic(state_path, state)
+                execution = _execute_paper_arm(
+                    profile,
+                    configs[profile],
+                    result,
+                    symbol=symbol,
+                    trade_date=str(trade_date),
+                    pair_id=pair_id,
+                    paper_notional_usd=float(paper_notional_usd),
+                )
+                result["paper_execution"] = execution
+                hard_stop = _paper_execution_hard_stop(execution)
+                if hard_stop or not execution.get("success"):
+                    result["status"] = "failed_terminal"
+                    result["error_type"] = "PaperExecutionFailed"
+                    result["error"] = (
+                        execution.get("error")
+                        or hard_stop
+                        or "Paper execution failed"
+                    )
+                    result["decision_valid"] = True
             arm["status"] = result["status"]
             arm["result"] = result
             arm.setdefault("attempt_history", []).append(result)
@@ -575,31 +1150,34 @@ def run_analysis_ab(
             "memory_maintenance_enabled": True,
             "memory_isolation": "per-backend persistent stores",
             "checkpoint_enabled": False,
-            "auto_trade": False,
-            "execution_mode": "serial, order-counterbalanced, shadow-decision-only",
+            "auto_trade": bool(execute_paper),
+            "execution_mode": (
+                "serial, order-counterbalanced, isolated Alpaca Paper accounts"
+                if execute_paper
+                else "serial, order-counterbalanced, shadow-decision-only"
+            ),
+            "paper_notional_usd": paper_notional_usd,
+            "paper_account_preflight": account_preflight,
         }
-    summary = {
-        "schema_version": 2,
-        "pair_id": pair_id,
-        "campaign_fingerprint": campaign_fingerprint,
-        "symbol": symbol,
-        "trade_date": str(trade_date),
-        "evidence_sha256": evidence["sha256"],
-        "execution_order": execution_order,
-        "shared": shared,
-        "traders": results["traders"],
-        "berkshire": results["berkshire"],
-        "signal_agreement": bool(
-            traders_signal and berkshire_signal and traders_signal == berkshire_signal
-        ),
-    }
-    temp_summary_path = summary_path.with_suffix(".tmp")
-    temp_summary_path.write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    os.replace(temp_summary_path, summary_path)
-    print(f"[AB] Pair summary: {summary_path}")
-    return summary
+        summary = {
+            "schema_version": 2,
+            "status": "COMPLETED",
+            "pair_id": pair_id,
+            "campaign_fingerprint": campaign_fingerprint,
+            "symbol": symbol,
+            "trade_date": str(trade_date),
+            "evidence_sha256": evidence["sha256"],
+            "execution_order": execution_order,
+            "shared": shared,
+            "traders": results["traders"],
+            "berkshire": results["berkshire"],
+            "signal_agreement": bool(
+                traders_signal and berkshire_signal and traders_signal == berkshire_signal
+            ),
+        }
+        _write_json_atomic(summary_path, summary)
+        print(f"[AB] Pair summary: {summary_path}")
+        return summary
 
 
 def _load_config(path: str | None) -> dict[str, Any]:
@@ -627,6 +1205,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--results-root", default=str(default_results_dir() / "ab"))
     parser.add_argument("--analysts", default="market,social,news,fundamentals,macro")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--execute-paper",
+        action="store_true",
+        help="Execute each arm on its isolated Alpaca Paper account (A/B)",
+    )
+    parser.add_argument(
+        "--paper-notional-usd",
+        type=float,
+        help="Maximum notional per arm; required with --execute-paper",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -639,12 +1227,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 analyst.strip() for analyst in args.analysts.split(",") if analyst.strip()
             ),
             debug=args.debug,
+            execute_paper=args.execute_paper,
+            paper_notional_usd=args.paper_notional_usd,
         )
     except (RuntimeError, ValueError) as exc:
         print(f"[AB] ERROR: {exc}", file=sys.stderr)
         return 2
 
-    if summary.get("status") == "COMPLETED":
+    if summary.get("status") in {"COMPLETED", "completed"}:
+        return 0
+    if not summary.get("arms") and all(
+        (summary.get(backend) or {}).get("status") == "completed"
+        for backend in BACKEND_ORDER
+    ):
         return 0
     statuses = [
         (summary.get("arms", {}).get(backend) or {}).get("status")

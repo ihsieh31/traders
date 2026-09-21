@@ -36,6 +36,22 @@ def set_config(config: Dict):
     DATA_DIR = _config["data_dir"]
 
 
+def replace_config(config: Dict):
+    """Replace, rather than merge, process-global runtime configuration.
+
+    This is intended for scoped orchestrators that must restore the caller's
+    exact configuration after temporarily running isolated profiles. Normal
+    application setup should continue to use :func:`set_config`.
+    """
+
+    global _config, DATA_DIR
+    normalized = validate_config_paths(dict(config or {}))
+    if "data_dir" not in normalized:
+        raise ValueError("replacement config must contain data_dir")
+    _config = normalized
+    DATA_DIR = _config["data_dir"]
+
+
 def get_config() -> Dict:
     """Get the current configuration."""
     if _config is None:

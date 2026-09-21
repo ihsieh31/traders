@@ -41,7 +41,12 @@ def create_frozen_analyst(llm: Any, toolkit: Any, analyst: str, report_key: str)
             path = toolkit.config.get("evidence_packet_path")
             if not path:
                 raise EvidenceIntegrityError("frozen analysis requires evidence_packet_path")
-            packet = load_evidence_packet(path, symbol=symbol, trade_date=trade_date)
+            packet = load_evidence_packet(
+                path,
+                symbol=symbol,
+                trade_date=trade_date,
+                expected_sha256=toolkit.config.get("evidence_packet_sha256"),
+            )
 
         section = packet[{"market": "market", "social": "social", "news": "news", "fundamentals": "fundamentals", "macro": "macro"}[analyst]]
         system = (

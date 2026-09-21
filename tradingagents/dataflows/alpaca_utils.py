@@ -294,6 +294,7 @@ _READ_ONLY_MUTATION_METHODS = frozenset(
         "close_position",
         "close_all_positions",
         "delete_order_by_id",
+        "exercise_options_position",
     }
 )
 
@@ -319,17 +320,46 @@ class ReadOnlyTradingClient:
         return getattr(self._client, name)
 
 
-def _alpaca_read_only_enabled() -> bool:
+def alpaca_read_only_enabled() -> bool:
+    """Return the explicit process-level broker mutation gate.
+
+    Read-only remains the safe default.  Authorized Paper runners must opt out
+    explicitly and preflight verifies that choice before starting a window.
+    """
+
     raw = get_env("ALPACA_READ_ONLY", "true")
     if isinstance(raw, bool):
         return raw
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _resolve_paper_base_url(explicit_base_url: Optional[str] = None) -> Optional[str]:
+def _alpaca_read_only_enabled() -> bool:
+    """Compatibility wrapper for callers/tests using the former private name."""
+
+    return alpaca_read_only_enabled()
+
+
+def _normalize_account_name(account: Optional[str]) -> Optional[str]:
+    if account is None or str(account).strip() == "":
+        return None
+    normalized = str(account).strip().upper()
+    if normalized not in {"A", "B"}:
+        raise ValueError("Alpaca account profile must be 'A' or 'B'")
+    return normalized
+
+
+def _resolve_paper_base_url(
+    explicit_base_url: Optional[str] = None,
+    *,
+    account: Optional[str] = None,
+) -> Optional[str]:
     candidate = explicit_base_url
     if candidate is None:
-        candidate = get_env("ALPACA_BASE_URL") or get_env("ALPACA_PAPER_BASE_URL")
+        account_name = _normalize_account_name(account)
+        if account_name:
+            candidate = get_env(f"ALPACA_ACCOUNT_{account_name}_BASE_URL")
+        if candidate is None:
+            candidate = get_env("ALPACA_BASE_URL") or get_env("ALPACA_PAPER_BASE_URL")
     if candidate is None:
         return None
     normalized = str(candidate).strip().rstrip("/")
@@ -360,7 +390,12 @@ def validate_paper_endpoint(base_url: Optional[str]) -> None:
     )
 
 
-def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
+def get_alpaca_trading_client(
+    base_url: Optional[str] = None,
+    *,
+    account: Optional[str] = None,
+    read_only: Optional[bool] = None,
+) -> TradingClient:
     """Paper-only trading/account/order client factory (sole production factory).
 
     Always constructs TradingClient(..., paper=True). ALPACA_USE_PAPER no
@@ -368,10 +403,20 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
     instead of opening a live path. Unknown/live base URLs fail closed.
     Market-data clients are intentionally untouched by this gate.
     """
-    api_key = get_api_key("alpaca_api_key", "ALPACA_API_KEY")
-    api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")
+    if account is None:
+        account = (get_config() or {}).get("_alpaca_account_profile")
+    account_name = _normalize_account_name(account)
+    if account_name:
+        # Dedicated A/B credentials never fall back to the default account: a
+        # missing arm credential must fail closed instead of cross-trading.
+        api_key = get_env(f"ALPACA_ACCOUNT_{account_name}_API_KEY")
+        api_secret = get_env(f"ALPACA_ACCOUNT_{account_name}_SECRET_KEY")
+    else:
+        api_key = get_api_key("alpaca_api_key", "ALPACA_API_KEY")
+        api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")
     if not api_key or not api_secret:
-        raise ValueError("Alpaca API key or secret not found. Please set TRADINGBUFFETT_ALPACA_API_KEY and TRADINGBUFFETT_ALPACA_SECRET_KEY.")
+        label = f" account {account_name}" if account_name else ""
+        raise ValueError(f"Alpaca{label} API key or secret not found")
     raw_paper_flag = get_alpaca_use_paper()
     if isinstance(raw_paper_flag, bool):
         flag_text = "true" if raw_paper_flag else "false"
@@ -382,7 +427,7 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
             "ALPACA_USE_PAPER=False is not supported: this build is paper-only. "
             "Remove the live setting (use paper keys) instead of switching endpoints."
         )
-    resolved_base = _resolve_paper_base_url(base_url)
+    resolved_base = _resolve_paper_base_url(base_url, account=account_name)
     validate_paper_endpoint(resolved_base)
     kwargs: Dict[str, Any] = {"paper": True}
     # Only forward an explicit, validated paper override; otherwise rely on
@@ -412,7 +457,8 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
         )
     client._retry = 0
     session.request = partial(request, timeout=(3.05, 10.0))
-    if _alpaca_read_only_enabled():
+    effective_read_only = alpaca_read_only_enabled() if read_only is None else bool(read_only)
+    if effective_read_only:
         return ReadOnlyTradingClient(client)
     return client
 

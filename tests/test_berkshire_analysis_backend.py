@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
 
@@ -102,6 +103,37 @@ class BerkshireAnalysisBackendTests(unittest.TestCase):
         }
         self.assertTrue(downstream <= node_sets["traders"])
         self.assertTrue(downstream <= node_sets["berkshire"])
+
+    def test_berkshire_backend_uses_same_quick_llm_budget_as_native_analysts(self):
+        quick = object()
+        deep = object()
+        config = {
+            "analysis_backend": "berkshire",
+            "analysis_profile": "traders",
+            "parallel_analysts": True,
+            "parallel_risk_first_round": True,
+        }
+        toolkit = type("ToolkitFixture", (), {"config": config})()
+        selected = ["market", "social", "news", "fundamentals", "macro"]
+        with patch(
+            "tradingagents.graph.setup.create_berkshire_analysis_team",
+            return_value=lambda state: state,
+        ) as factory:
+            setup = GraphSetup(
+                quick,
+                deep,
+                toolkit,
+                {name: object() for name in selected},
+                None,
+                None,
+                None,
+                None,
+                None,
+                ConditionalLogic(),
+                config,
+            )
+            setup.setup_graph(selected)
+        factory.assert_called_once_with(quick, config)
 
     def test_four_roles_and_team_lead_produce_canonical_bundle(self):
         llm = FakeRoleLLM()

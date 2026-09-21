@@ -24,7 +24,9 @@ Berkshire:
 START -> Berkshire Analysis Team -> Build Report Context -> Bull/Bear
 ```
 
-The downstream nodes are the same in both compiled graphs:
+Both research backends use the same quick-thinking LLM, so the treatment is
+the backend architecture rather than a quick-vs-deep model confound. The
+downstream nodes are the same in both compiled graphs:
 `Build Report Context`, `Bull Researcher`, `Bear Researcher`, `Research
 Manager`, `Trader`, `Risky Analyst`, `Safe Analyst`, `Neutral Analyst`, and
 `Risk Judge`.  No Berkshire role can emit `TradeIntent`; the shared downstream
@@ -42,17 +44,21 @@ creates or loads exactly one packet at:
 The packet contains `market`, `fundamentals`, `news`, `macro`, and `social`
 sections, source/error metadata, identity (`symbol`, `trade_date`), capture
 time, and a canonical SHA-256 over the packet without its `sha256` field.  Both
-arms receive the same path and hash.  In `frozen_evidence` mode the five native
+arms receive the same path and campaign-pinned hash. Every section must contain
+at least one usable captured source before either arm starts. In
+`frozen_evidence` mode the five native
 analysts and all Berkshire roles receive no analysis tools and can read only
 that packet.  Live-only sources are marked unavailable for historical as-of
 dates rather than being substituted with present-day data.
 
 ## Isolation and recovery
 
-Memory, Chroma, results, data cache, execution state, and long-run state remain
-backend-isolated.  The evidence packet and campaign manifest are deliberately
-shared.  `auto_trade=False` and `checkpoint_enabled=False` are enforced for
-the pair.
+Memory, Chroma, results, data cache, execution DB, Safety state/kill switch,
+and long-run state remain backend-isolated. Broker locks share the mandatory
+same-host lock root but are keyed by the two verified account IDs. The evidence packet and
+campaign manifest are deliberately shared. `checkpoint_enabled=False` is
+always enforced. `auto_trade=False` is the default shadow mode; explicit Paper
+mode sets it true for both arms.
 
 Each pair has a durable `pair_state.json` with `NEW`, `IN_PROGRESS`, `PARTIAL`,
 `COMPLETED`, and `FAILED_TERMINAL` states.  A completed arm is reused on resume;
@@ -60,6 +66,32 @@ only retryable infrastructure failures (`ProviderFailure`, timeout, connection
 failure, or process interruption) can consume one of three attempts.  A
 `pair_summary.json` is written only after both arms are completed.  Configuration
 fingerprint or evidence-hash drift fails closed.
+
+The campaign fingerprint excludes only per-pair evidence path/hash, so a
+second day or symbol can join the same 30-day campaign. It includes the shared
+config, exact five-analyst sequence, repository Python/prompt bytes, and any
+prompt override bytes. The summary reader validates manifest, pair schema,
+uniqueness, completion, evidence identity, and the pinned evidence hash rather
+than silently skipping malformed observations.
+
+## Alpaca Paper execution mode
+
+`--execute-paper --paper-notional-usd <amount>` maps Traders to Alpaca Paper
+account A and Berkshire to Paper account B. Dedicated credentials are
+mandatory and never fall back to the default account. Both clients are always
+constructed with `paper=True`; only the exact Alpaca Paper endpoint is
+accepted. Before the first pair, the accounts must be distinct, flat, free of
+open orders, and matched within 0.1% or US$1 starting equity. Every pair also
+requires the requested date to equal the New York date reported by Alpaca and
+the regular market session to be open. Hashed account identities are pinned in
+the campaign manifest, so changing either credential to a different account
+mid-campaign fails closed.
+
+Each arm executes through its own durable `ExecutionService`, deterministic
+decision ID, account-scoped lock, reconciliation gate, and isolated Safety
+state. A completed analysis recovered after a crash is reused; the durable
+execution ledger makes an execution resume idempotent. A Paper execution
+failure makes the pair terminal rather than silently degrading to shadow.
 
 Shadow safety is explicit: when `auto_trade=False`, the Trader and Risk Manager
 do not query broker account/position state, and the graph exposes decision-only
@@ -91,8 +123,8 @@ Recorded local results:
 
 ```text
 compileall: PASS
-focused backend/evidence/recovery tests: 18 passed, 2 warnings
-full suite: 1400 passed, 139 skipped, 2 warnings, 294 subtests
+focused A/B, evidence, Paper, long-run, and path tests: 100 passed, 4 skipped, 9 subtests
+full suite: 1414 passed, 139 skipped, 2 warnings, 294 subtests
 git diff --check: PASS
 ```
 

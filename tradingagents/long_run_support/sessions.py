@@ -34,7 +34,7 @@ def effective_target_for_session(
         session_day, client=calendar_client, calendar_rows=calendar_rows
     )
     configured = datetime.combine(session_day, target)
-    if target > close:
+    if target >= close:
         close_dt = datetime.combine(session_day, close)
         effective = close_dt - timedelta(minutes=30)
         adjustment = "EARLY_CLOSE"

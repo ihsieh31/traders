@@ -1,0 +1,30 @@
+........................................................................ [  4%]
+......................................................sssss.......... [  9%]
+............................................................ss.......... [ 13%]
+......ssss................sss....................sssss......ss.................................................................... [ 22%]
+............................ssssssss.....................................................sss. [ 28%]
+........................................................................ [ 32%]
+sssssssssssss...................................ss..ssssssssss....ssssss [ 37%]
+sssssssssss..................sssssssss.................................. [ 41%]
+..................ss....................................................................................ss [ 48%]
+.......................................ssss...................ssss...... [ 53%]
+......................................................................................ssssssss..................ssss. [ 60%]
+.sss.......sssssssssss.................................................. [ 65%]
+............................ssss........................................ [ 70%]
+............................................................... [ 74%]
+................................................................................................ [ 80%]
+............................................................................................................ssss............... [ 88%]
+............................................................. [ 92%]
+.................................................................... [ 96%]
+................................ssssssssss.....                          [100%]
+=============================== warnings summary ===============================
+.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6
+  /Users/zongen/Downloads/codex/tradingBuffett/.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+.venv-p2/lib/python3.12/site-packages/langgraph/cache/base/__init__.py:8
+  /Users/zongen/Downloads/codex/tradingBuffett/.venv-p2/lib/python3.12/site-packages/langgraph/cache/base/__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1414 passed, 139 skipped, 2 warnings, 294 subtests passed in 43.85s

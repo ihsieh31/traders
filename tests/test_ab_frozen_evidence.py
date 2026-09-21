@@ -10,6 +10,8 @@ from tradingagents.experiments.evidence_snapshot import (
     EvidenceIntegrityError,
     build_or_load_evidence_packet,
     evidence_packet_sha256,
+    load_evidence_packet,
+    validate_evidence_completeness,
 )
 
 
@@ -88,6 +90,27 @@ class FrozenEvidenceTests(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(EvidenceIntegrityError):
                 build_or_load_evidence_packet(path, symbol="NVDA", trade_date="2026-09-21")
+
+    def test_pinned_hash_rejects_tamper_even_when_attacker_recomputes_self_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "evidence_packet.json"
+            packet = _valid_packet()
+            pinned = packet["sha256"]
+            packet["market"]["ohlcv"]["value"] = "tampered"
+            packet["sha256"] = evidence_packet_sha256(packet)
+            path.write_text(json.dumps(packet), encoding="utf-8")
+            with self.assertRaisesRegex(EvidenceIntegrityError, "pinned"):
+                load_evidence_packet(
+                    path,
+                    symbol="NVDA",
+                    trade_date="2026-09-21",
+                    expected_sha256=pinned,
+                )
+
+    def test_completeness_requires_a_usable_source_in_every_section(self):
+        packet = _valid_packet()
+        with self.assertRaisesRegex(EvidenceIntegrityError, "fundamentals"):
+            validate_evidence_completeness(packet)
 
     def test_frozen_analyst_never_accesses_toolkit(self):
         with tempfile.TemporaryDirectory() as tmp:

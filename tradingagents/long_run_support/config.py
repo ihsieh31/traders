@@ -234,11 +234,16 @@ def validate_long_run_config(
             errors.append(f"screening config invalid: {exc}")
         try:
             from tradingagents.dataflows.config import get_alpaca_use_paper
+            from tradingagents.dataflows.alpaca_utils import alpaca_read_only_enabled
 
             flag = get_alpaca_use_paper()
             text = str(flag if flag is not None else "True").strip().lower()
             if text in ("false", "0", "no", "off", "live"):
                 errors.append("ALPACA_USE_PAPER=False is not supported (paper-only)")
+            if alpaca_read_only_enabled():
+                errors.append(
+                    "ALPACA_READ_ONLY must be False for an authorized trading observation"
+                )
         except Exception as exc:
             errors.append(f"paper flag unreadable: {exc}")
     return errors
@@ -417,6 +422,7 @@ def _validate_long_run_execution_config(
         raise LongRunStop("SAFETY_DISABLED", error)
     try:
         from tradingagents.dataflows.config import get_alpaca_use_paper
+        from tradingagents.dataflows.alpaca_utils import alpaca_read_only_enabled
 
         flag = get_alpaca_use_paper()
         text = str(flag if flag is not None else "True").strip().lower()
@@ -425,6 +431,12 @@ def _validate_long_run_execution_config(
                 "SAFETY_DISABLED",
                 "unattended long-run requires paper mode "
                 "(ALPACA_USE_PAPER=False is not supported)",
+            )
+        if alpaca_read_only_enabled():
+            raise LongRunStop(
+                "SAFETY_DISABLED",
+                "authorized trading requires ALPACA_READ_ONLY=False; "
+                "the Paper-only endpoint and paper=True enforcement remain active",
             )
     except LongRunStop:
         raise

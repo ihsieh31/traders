@@ -597,7 +597,13 @@ def get_safety_guard() -> SafetyGuard:
                 config = dict(get_config() or {})
             except Exception:
                 config = {}
-            _GUARD = SafetyGuard(config=config)
+            state_path = config.get("safety_state_path")
+            kill_switch_path = config.get("safety_kill_switch_path")
+            _GUARD = SafetyGuard(
+                config=config,
+                state_path=Path(state_path) if state_path else None,
+                kill_switch_path=Path(kill_switch_path) if kill_switch_path else None,
+            )
         return _GUARD
 
 

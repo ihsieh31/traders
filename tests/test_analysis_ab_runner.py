@@ -1,11 +1,16 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from tradingagents.default_config import DEFAULT_CONFIG
 from scripts.run_analysis_ab import (
+    FORMAL_ANALYSTS,
+    _paper_account_preflight,
     assert_ab_invariants,
     build_ab_configs,
     run_analysis_ab,
@@ -32,10 +37,15 @@ class FakeGraph:
 
 
 def fake_evidence(path, *, symbol, trade_date, **_kwargs):
+    available = lambda value: {"source": {"status": "available", "value": value}}
     packet = {
         "schema_version": 1, "symbol": symbol, "trade_date": trade_date,
         "captured_at": "2026-09-21T00:00:00+00:00",
-        "market": {}, "fundamentals": {}, "news": {}, "macro": {}, "social": {},
+        "market": available("market"),
+        "fundamentals": available("fundamentals"),
+        "news": available("news"),
+        "macro": available("macro"),
+        "social": available("social"),
         "sources": [], "errors": [],
     }
     packet["sha256"] = evidence_packet_sha256(packet)
@@ -104,7 +114,7 @@ class AnalysisABRunnerTests(unittest.TestCase):
             with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
                 summary = run_analysis_ab(
                     symbol="NVDA", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
-                    results_root=Path(tmp) / "ab", selected_analysts=("market", "news"), graph_cls=FakeGraph,
+                    results_root=Path(tmp) / "ab", selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
                 )
             self.assertEqual(summary["traders"]["status"], "completed")
             self.assertEqual(summary["berkshire"]["status"], "completed")
@@ -121,26 +131,60 @@ class AnalysisABRunnerTests(unittest.TestCase):
             self.assertEqual(persisted["shared"]["auto_trade"], False)
             self.assertEqual(len(persisted["campaign_fingerprint"]), 64)
 
+    def test_runner_restores_process_global_config_after_profiles(self):
+        from tradingagents.dataflows.config import get_config, replace_config, set_config
+
+        class MutatingGraph(FakeGraph):
+            def __init__(self, selected_analysts, debug, config):
+                super().__init__(selected_analysts, debug, config)
+                set_config(config)
+
+        before = get_config()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with patch(
+                    "scripts.run_analysis_ab.build_or_load_evidence_packet",
+                    side_effect=fake_evidence,
+                ):
+                    run_analysis_ab(
+                        symbol="NVDA",
+                        trade_date="2026-09-21",
+                        base_config=DEFAULT_CONFIG,
+                        results_root=Path(tmp) / "ab",
+                        selected_analysts=FORMAL_ANALYSTS,
+                        graph_cls=MutatingGraph,
+                    )
+            self.assertEqual(get_config(), before)
+        finally:
+            replace_config(before)
+
     def test_campaign_rejects_midstream_config_drift_and_pair_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "ab"
             with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
                 run_analysis_ab(
                     symbol="NVDA", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
-                    results_root=root, selected_analysts=("market", "news"), graph_cls=FakeGraph,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
                 )
             with self.assertRaisesRegex(RuntimeError, "refusing to overwrite"):
                 with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
                     run_analysis_ab(
                         symbol="NVDA", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
-                        results_root=root, selected_analysts=("market", "news"), graph_cls=FakeGraph,
+                        results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
                     )
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
+                second_pair = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-22", base_config=DEFAULT_CONFIG,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
+                )
+            self.assertEqual(second_pair["traders"]["status"], "completed")
+            self.assertEqual(second_pair["berkshire"]["status"], "completed")
             changed = dict(DEFAULT_CONFIG, quick_think_llm="different-model")
             with self.assertRaisesRegex(RuntimeError, "campaign invariant violation"):
                 with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
                     run_analysis_ab(
-                        symbol="AAPL", trade_date="2026-09-22", base_config=changed,
-                        results_root=root, selected_analysts=("market", "news"), graph_cls=FakeGraph,
+                        symbol="MSFT", trade_date="2026-09-23", base_config=changed,
+                        results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
                     )
 
     def test_partial_pair_reuses_completed_arm_and_writes_summary_only_after_resume(self):
@@ -160,27 +204,132 @@ class AnalysisABRunnerTests(unittest.TestCase):
             with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
                 first = run_analysis_ab(
                     symbol="NVDA", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
-                    results_root=root, selected_analysts=("market", "news"), graph_cls=FlakyGraph,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FlakyGraph,
                 )
                 self.assertEqual(first["status"], "PARTIAL")
                 self.assertFalse((root / "2026-09-21" / "NVDA" / "pair_summary.json").exists())
                 second = run_analysis_ab(
                     symbol="NVDA", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
-                    results_root=root, selected_analysts=("market", "news"), graph_cls=FlakyGraph,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FlakyGraph,
                 )
             self.assertEqual(second["schema_version"], 2)
             self.assertEqual(FlakyGraph.attempts["traders"], 1)
             self.assertEqual(FlakyGraph.attempts["berkshire"], 2)
             self.assertTrue((root / "2026-09-21" / "NVDA" / "pair_summary.json").exists())
+
+    def test_paper_mode_routes_both_arms_through_isolated_accounts(self):
+        class PaperGraph(FakeGraph):
+            def propagate(self, symbol, trade_date):
+                state, signal = super().propagate(symbol, trade_date)
+                state["final_trade_intent"] = {
+                    "symbol": symbol,
+                    "action": signal,
+                    "target_position": "LONG" if signal == "BUY" else "FLAT",
+                }
+                return state, signal
+
+        executed = []
+
+        def fake_execute(backend, config, result, **kwargs):
+            executed.append((backend, config["_alpaca_account_profile"], kwargs["paper_notional_usd"]))
+            return {
+                "success": True,
+                "broker_attempted": backend == "traders",
+                "broker_calls": int(backend == "traders"),
+                "hold": backend == "berkshire",
+                "orders": [],
+                "account": config["_alpaca_account_profile"],
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence), patch(
+                "scripts.run_analysis_ab._paper_account_preflight",
+                return_value={
+                    "traders": {"account": "A", "account_ref": "ref-a"},
+                    "berkshire": {"account": "B", "account_ref": "ref-b"},
+                },
+            ), patch("scripts.run_analysis_ab._execute_paper_arm", side_effect=fake_execute):
+                summary = run_analysis_ab(
+                    symbol="NVDA",
+                    trade_date="2026-09-21",
+                    base_config=DEFAULT_CONFIG,
+                    results_root=Path(tmp) / "ab",
+                    selected_analysts=FORMAL_ANALYSTS,
+                    graph_cls=PaperGraph,
+                    execute_paper=True,
+                    paper_notional_usd=500.0,
+                )
+        self.assertEqual(set(executed), {("traders", "A", 500.0), ("berkshire", "B", 500.0)})
+        self.assertTrue(summary["shared"]["auto_trade"])
+        self.assertEqual(summary["traders"]["paper_execution"]["account"], "A")
+        self.assertEqual(summary["berkshire"]["paper_execution"]["account"], "B")
+
+    def test_paper_preflight_proves_distinct_flat_open_accounts(self):
+        class Client:
+            def __init__(self, account_id):
+                self.account_id = account_id
+
+            def get_account(self):
+                return SimpleNamespace(id=self.account_id, equity="100000")
+
+            def get_all_positions(self):
+                return []
+
+            def get_orders(self, _request):
+                return []
+
+            def get_clock(self):
+                return SimpleNamespace(
+                    is_open=True,
+                    timestamp=datetime(
+                        2026, 9, 21, 11, 0, tzinfo=ZoneInfo("America/New_York")
+                    ),
+                )
+
+        clients = {"A": Client("account-a"), "B": Client("account-b")}
+        with patch(
+            "tradingagents.dataflows.alpaca_utils.alpaca_read_only_enabled",
+            return_value=False,
+        ), patch(
+            "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
+            side_effect=lambda *, account, read_only: clients[account],
+        ):
+            snapshot = _paper_account_preflight(
+                trade_date="2026-09-21", require_matched_flat_start=True
+            )
+        self.assertEqual(snapshot["traders"]["account"], "A")
+        self.assertEqual(snapshot["berkshire"]["account"], "B")
+        self.assertNotEqual(
+            snapshot["traders"]["account_ref"], snapshot["berkshire"]["account_ref"]
+        )
+
     def test_summary_aggregates_pair_signals_without_report_duplication(self):
         with tempfile.TemporaryDirectory() as tmp:
-            pair_dir = Path(tmp) / "2026-09-21" / "AAPL"
+            root = Path(tmp)
+            fingerprint = "f" * 64
+            (root / "AB_CAMPAIGN.json").write_text(
+                json.dumps({"schema_version": 2, "config_fingerprint": fingerprint}),
+                encoding="utf-8",
+            )
+            evidence_path = root / "evidence" / "2026-09-21" / "AAPL" / "evidence_packet.json"
+            evidence = fake_evidence(
+                evidence_path, symbol="AAPL", trade_date="2026-09-21"
+            )
+            pair_dir = root / "2026-09-21" / "AAPL"
             pair_dir.mkdir(parents=True)
             (pair_dir / "pair_summary.json").write_text(
                 json.dumps(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "pair_id": "pair-1",
+                        "campaign_fingerprint": fingerprint,
+                        "symbol": "AAPL",
+                        "trade_date": "2026-09-21",
+                        "evidence_sha256": evidence["sha256"],
+                        "shared": {
+                            "evidence_packet_path": str(evidence_path),
+                            "evidence_packet_sha256": evidence["sha256"],
+                        },
                         "signal_agreement": True,
                         "traders": {
                             "status": "completed",
@@ -196,7 +345,7 @@ class AnalysisABRunnerTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            result = summarize(tmp)
+            result = summarize(root)
             self.assertEqual(result["pair_count"], 1)
             self.assertEqual(result["signal_agreement_pairs"], 1)
             self.assertEqual(result["profiles"]["traders"]["signals"], {"BUY": 1})

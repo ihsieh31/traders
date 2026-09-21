@@ -11,6 +11,61 @@ from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
 
 
+def _completed_replay_result(
+    self,
+    *,
+    decision_id: str,
+    intent_dict: dict[str, Any],
+    json_module: Any,
+) -> dict[str, Any] | None:
+    """Return success only for a proven, identity-matching FILLED replay.
+
+    This narrow read-only path must run before fresh-position and entry-policy
+    gates.  It does not infer success from the broker position and never
+    treats non-terminal or uncertain order states as completed.
+    """
+    existing = self._store.get_intent_by_decision(decision_id)
+    if existing is None:
+        return None
+    orders = self._store.list_orders_for_intent(existing["intent_id"])
+    if not orders or {
+        str(order.get("status") or "").upper() for order in orders
+    } != {"FILLED"}:
+        return None
+    try:
+        stored_payload = json_module.loads(existing.get("payload_json") or "")
+    except (TypeError, ValueError):
+        return {
+            "success": False,
+            "fail_closed": True,
+            "broker_attempted": False,
+            "broker_calls": 0,
+            "replay_identity_mismatch": True,
+            "decision_id": decision_id,
+            "error": "completed replay payload is unreadable",
+        }
+    if stored_payload != intent_dict:
+        return {
+            "success": False,
+            "fail_closed": True,
+            "broker_attempted": False,
+            "broker_calls": 0,
+            "replay_identity_mismatch": True,
+            "decision_id": decision_id,
+            "error": "completed replay payload does not match decision identity",
+        }
+    return {
+        "success": True,
+        "deduped": True,
+        "broker_attempted": False,
+        "broker_calls": 0,
+        "intent_id": existing["intent_id"],
+        "decision_id": decision_id,
+        "trade_intent": intent_dict,
+        "orders": orders,
+    }
+
+
 def _execute_core(
     self,
     *,
@@ -112,6 +167,14 @@ def _execute_core(
             "decision_id": did,
         }
     did = decision_id or canonical_decision_id(intent_dict)
+    replay = _completed_replay_result(
+        self,
+        decision_id=did,
+        intent_dict=intent_dict,
+        json_module=json,
+    )
+    if replay is not None:
+        return replay
     signal = str(action or "").upper()
     warnings: list[str] = []
     risk_sizing_info: Optional[dict] = None
