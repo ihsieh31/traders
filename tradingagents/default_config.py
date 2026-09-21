@@ -99,6 +99,11 @@ DEFAULT_CONFIG = {
     "decision_provider": None,
     "decision_model": None,
     "decision_backend_url": None,
+    # Some OpenAI-compatible gateways reject function-calling schemas with
+    # JSON-Schema keywords such as ``exclusiveMinimum``.  ``None`` preserves
+    # the existing function-calling default; controlled local endpoints may
+    # opt into ``json_mode`` without changing official OpenAI behavior.
+    "structured_output_method": None,
     # Phase B LLM retry policy: first try + at most N retries = at most N+1
     # actual requests per logical LLM invocation. Integer 0-3 only; anything
     # else fails at startup. 0 disables retries entirely.

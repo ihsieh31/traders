@@ -38,7 +38,13 @@ def role_messages(role: str, evidence: Mapping[str, Any], calculations: Mapping[
         f"{json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)}\n\n"
         f"Role focus: {_ROLE_BRIEFS[role]}\n"
         f"Deterministic calculations available: {json.dumps(calculations or {}, ensure_ascii=False, default=str)}\n\n"
-        "Return JSON only with keys: role, thesis, key_facts, uncertainties, risks, valuation_notes, evidence_refs."
+        "Return JSON only with exactly these keys: role, thesis, key_facts, "
+        "uncertainties, risks, valuation_notes, evidence_refs. The values for "
+        "key_facts, uncertainties, risks, valuation_notes, and evidence_refs "
+        "MUST each be a flat JSON array of non-empty plain strings; never use "
+        "objects, nested arrays, or nulls. Do not quote or mention any of the "
+        "forbidden decision words from the system message, even when negating "
+        "or describing a source. Use neutral research language instead."
     )
     return [SystemMessage(content=system), HumanMessage(content=human)]
 
@@ -56,6 +62,9 @@ def team_lead_messages(role_reports: Mapping[str, Any], evidence: Mapping[str, A
         "FOUR COMPLETE ROLE REPORTS:\n"
         f"{json.dumps(role_reports, ensure_ascii=False, sort_keys=True, default=str)}\n\n"
         "Return JSON only with exactly these non-empty string keys: "
-        "market_report, sentiment_report, news_report, fundamentals_report, macro_report."
+        "market_report, sentiment_report, news_report, fundamentals_report, macro_report. "
+        "Do not quote or mention any forbidden decision words from the system "
+        "message, including inside evidence summaries; use neutral research "
+        "language instead."
     )
     return [SystemMessage(content=system), HumanMessage(content=human)]

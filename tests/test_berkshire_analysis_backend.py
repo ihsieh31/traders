@@ -9,6 +9,7 @@ from tradingagents.analysis_backends.berkshire.coordinator import (
     BerkshireAnalysisError,
     create_berkshire_analysis_team,
 )
+from tradingagents.analysis_backends.berkshire.schemas import assert_analysis_only
 from tradingagents.experiments.evidence_snapshot import evidence_packet_sha256
 from tradingagents.graph.conditional_logic import ConditionalLogic
 from tradingagents.graph.setup import GraphSetup
@@ -60,6 +61,16 @@ class FakeRoleLLM:
 
 
 class BerkshireAnalysisBackendTests(unittest.TestCase):
+    def test_analysis_only_validator_allows_factual_word_use_but_rejects_commands(self):
+        assert_analysis_only(
+            {"thesis": "The company expects to sell twice as many chips and has long-term demand."},
+            label="business_analyst",
+        )
+        with self.assertRaisesRegex(ValueError, "forbidden executable"):
+            assert_analysis_only({"recommendation": "SELL"}, label="business_analyst")
+        with self.assertRaisesRegex(ValueError, "forbidden executable"):
+            assert_analysis_only({"thesis": "Go long the stock."}, label="business_analyst")
+
     def test_backend_switch_changes_only_upstream_topology(self):
         class LLM:
             pass
@@ -102,6 +113,10 @@ class BerkshireAnalysisBackendTests(unittest.TestCase):
 
         self.assertEqual(len(llm.calls), 5)
         self.assertEqual(result["analysis_backend"], "berkshire")
+        self.assertEqual(
+            {result["analysis_status"][name] for name in ("market", "social", "news", "fundamentals", "macro")},
+            {"completed"},
+        )
         self.assertTrue(all(result[key] for key in (
             "market_report", "sentiment_report", "news_report",
             "fundamentals_report", "macro_report",

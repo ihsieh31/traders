@@ -61,6 +61,14 @@ failure, or process interruption) can consume one of three attempts.  A
 `pair_summary.json` is written only after both arms are completed.  Configuration
 fingerprint or evidence-hash drift fails closed.
 
+Shadow safety is explicit: when `auto_trade=False`, the Trader and Risk Manager
+do not query broker account/position state, and the graph exposes decision-only
+context.  This keeps a broker credential outage from changing an analysis A/B
+result and does not alter normal runs that do not set the shadow flag.  For
+OpenAI-compatible gateways that reject function-calling JSON Schema, the
+optional `structured_output_method=json_mode` setting selects JSON mode while
+leaving the default function-calling behavior unchanged.
+
 ## Verification record
 
 Baseline checkout confirmed:
@@ -79,10 +87,30 @@ Recorded local results:
 
 ```text
 compileall: PASS
-focused backend/evidence/recovery tests: 17 passed, 2 warnings
-full suite: 1396 passed, 139 skipped, 2 warnings, 294 subtests
+focused backend/evidence/recovery tests: 18 passed, 2 warnings
+full suite: 1400 passed, 139 skipped, 2 warnings, 294 subtests
 git diff --check: PASS
 ```
+
+Real decision-only smoke confirmation:
+
+```text
+symbol/date: NVDA / 2026-09-21
+pair status: COMPLETED
+backends: traders=HOLD, berkshire=HOLD
+signal agreement: true
+evidence sources: 21; recorded source errors: 0
+evidence SHA-256: 17860ad31ee1f64698c5d5ae288a743606dd9e2728ea75d24d4a23dc0af452ec
+analysis_input_mode: frozen_evidence
+auto_trade: false
+checkpoint_enabled: false
+shared downstream nodes: 9/9 present in both run logs
+broker/order mutation events: 0
+```
+
+The supplied `agnes-3.0-flash` token was rejected by the local gateway with
+HTTP 403.  The successful smoke used the gateway-authorized
+`gemini-3.5-flash-lite` model and its configured OpenAI-compatible fallback.
 
 Required commands:
 
@@ -98,8 +126,8 @@ PYTHONPATH=. .venv-p2/bin/pytest -q
 
 ## Known limits
 
-- A real shadow pair was not run in this implementation pass; doing so would
-  require live provider credentials and would be an external-data smoke test.
+- The smoke used the gateway's available model rather than the supplied
+  `agnes-3.0-flash`, which the token was not authorized to use.
 - GitHub Actions Python 3.11/3.12 results require the CI workflow to execute.
 - The old prompt-profile compatibility code remains for non-formal callers and
   is explicitly not the true Berkshire backend.

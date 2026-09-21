@@ -344,6 +344,9 @@ class TradingAgentsGraph:
     def _get_provider_kwargs(self, provider: str) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
         provider = (provider or "openai").lower()
+        structured_output_method = self.config.get("structured_output_method")
+        if structured_output_method:
+            kwargs["structured_output_method"] = structured_output_method
         if provider == "google" and self.config.get("google_thinking_level"):
             kwargs["thinking_level"] = self.config["google_thinking_level"]
         elif provider in ("openai", "local_openai") and self.config.get("openai_reasoning_effort"):

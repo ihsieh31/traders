@@ -704,6 +704,7 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
     """Factory function to get the appropriate chat model."""
     base_url = kwargs.pop("base_url", None)
     model_role = kwargs.pop("model_role", "deep")
+    structured_output_method = kwargs.pop("structured_output_method", None)
     # F08: the configured finite request timeout must survive into the
     # Responses adapter (and its bound clones), not just the ChatOpenAI path.
     timeout = kwargs.pop("timeout", None)
@@ -777,4 +778,7 @@ def get_chat_model(model_name: str, api_key: Optional[str] = None, **kwargs):
             )
         except Exception:
             _NormalizedChatOpenAI = ChatOpenAI
-        return _NormalizedChatOpenAI(**chat_kwargs)
+        return _NormalizedChatOpenAI(
+            structured_output_method=structured_output_method,
+            **chat_kwargs,
+        )

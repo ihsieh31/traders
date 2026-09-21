@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
+from pydantic import PrivateAttr
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
@@ -24,11 +25,18 @@ def _endpoint_default_headers(
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
+    _structured_output_method: Optional[str] = PrivateAttr(default=None)
+
+    def __init__(self, *args, structured_output_method=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._structured_output_method = structured_output_method
+
     def invoke(self, input, config=None, **kwargs):
         return normalize_content(super().invoke(input, config, **kwargs))
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
-        return super().with_structured_output(schema, method=method or "function_calling", **kwargs)
+        selected_method = method or self._structured_output_method or "function_calling"
+        return super().with_structured_output(schema, method=selected_method, **kwargs)
 
 
 def _input_to_messages(input_: Any) -> list:
@@ -101,7 +109,12 @@ class OpenAIClient(BaseLLMClient):
                 api_key=api_key,
                 base_url=self.base_url,
                 model_role=self.kwargs.get("model_role", "deep"),
-                **{k: v for k, v in self.kwargs.items() if k not in ("api_key", "model_role")},
+                structured_output_method=self.kwargs.get("structured_output_method"),
+                **{
+                    k: v
+                    for k, v in self.kwargs.items()
+                    if k not in ("api_key", "model_role", "structured_output_method")
+                },
             )
 
         llm_kwargs = {"model": self.model}

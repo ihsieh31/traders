@@ -47,6 +47,7 @@ def create_trader(llm, memory, config=None):
         # portfolio context already present in state is used, and missing
         # fields are labeled rather than substituted with present-day
         # account facts.
+        shadow_decision_only = bool(config and config.get("auto_trade") is False)
         if analysis_date_mode(state.get("trade_date")) == "historical":
             current_position = state.get("current_position") or HISTORICAL_SOURCE_UNAVAILABLE
             position_stats_desc = state.get("position_stats") or HISTORICAL_SOURCE_UNAVAILABLE
@@ -54,6 +55,20 @@ def create_trader(llm, memory, config=None):
                 state.get("account_status") or HISTORICAL_SOURCE_UNAVAILABLE
             )
             broker_account_id = state.get("broker_account_id")
+        elif shadow_decision_only:
+            # A/B and other decision-only runs must not require a broker
+            # account merely to produce a shadow decision.  The execution
+            # boundary is disabled by auto_trade=False, so there is no
+            # authoritative live position to consult for this analysis.
+            current_position = "NEUTRAL"
+            position_stats_desc = (
+                "Shadow decision-only mode: broker position snapshot not queried."
+            )
+            account_status_desc = (
+                "Shadow decision-only mode: broker account not queried; "
+                "auto_trade=False."
+            )
+            broker_account_id = None
         else:
             context = capture_position_context(company_name)
             position_stats_desc = render_position_context(context)

@@ -59,6 +59,7 @@ def create_risk_manager(llm, memory, config=None):
         # verified point-in-time portfolio context the Decision role fails
         # closed: no opening READY intent, output is NO_TRADE / HOLD with an
         # explicit unavailability explanation.
+        shadow_decision_only = bool(config and config.get("auto_trade") is False)
         if analysis_date_mode(state.get("trade_date")) == "historical":
             historical_position = state.get("current_position")
             historical_position_stats = state.get("position_stats")
@@ -107,6 +108,20 @@ def create_risk_manager(llm, memory, config=None):
             current_position = historical_position
             position_stats_desc = historical_position_stats
             account_status_desc = historical_account_status
+            state["current_position"] = current_position
+        elif shadow_decision_only:
+            # The A/B runner is explicitly decision-only.  Do not read the
+            # broker for account/position context: no execution can follow
+            # this graph, and missing Alpaca credentials must not invalidate
+            # the analysis comparison.
+            current_position = state.get("current_position") or "NEUTRAL"
+            position_stats_desc = (
+                "Shadow decision-only mode: broker position snapshot not queried."
+            )
+            account_status_desc = (
+                "Shadow decision-only mode: broker account not queried; "
+                "auto_trade=False."
+            )
             state["current_position"] = current_position
         else:
             expected_account = state.get("broker_account_id")

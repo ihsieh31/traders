@@ -113,7 +113,19 @@ def _run_team(llm: Any, state: Mapping[str, Any], config: Mapping[str, Any]) -> 
             "team_lead": canonical,
         },
         "analysis_evidence": evidence,
-        "analysis_status": {role: "completed" for role in ROLE_NAMES},
+        # The shared Build Report Context node validates coverage using the
+        # native downstream report names.  Berkshire's four upstream roles
+        # have already been synthesized into all five canonical reports, so
+        # expose both identities without pretending they were native analyst
+        # calls.
+        "analysis_status": {
+            **{role: "completed" for role in ROLE_NAMES},
+            "market": "completed",
+            "social": "completed",
+            "news": "completed",
+            "fundamentals": "completed",
+            "macro": "completed",
+        },
         "analysis_errors": {},
         "messages": [AIMessage(content=json.dumps(canonical, ensure_ascii=False))],
     }

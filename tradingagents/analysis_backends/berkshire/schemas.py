@@ -40,20 +40,45 @@ CANONICAL_REPORT_KEYS = (
     "macro_report",
 )
 
-# Whole-word matching avoids rejecting ordinary words such as "buyback" while
-# still making executable recommendations fail closed.
-_FORBIDDEN = re.compile(
-    r"\b(?:buy|sell|long|short|hold|wait|avoid|position\s+sizing|portfolio\s+weight|tradeintent|executable\s+order)\b",
-    re.IGNORECASE,
+# Reject executable instructions and decision fields, while allowing factual
+# analysis such as "the company expects to sell twice as many chips" or
+# "long-term demand".  The contract bans issuing decisions, not every
+# occurrence of an English word that can also appear in source evidence.
+_EXECUTABLE_PATTERNS = (
+    r"\b(?:recommend(?:ation)?|suggest(?:ion)?|decision|stance|proposal|signal|action)\b"
+    r"[^.\n]{0,100}\b(?:buy|sell|long|short|hold|wait|avoid)\b",
+    r"\b(?:buy|sell|hold|wait|avoid)\b[^.\n]{0,100}\b"
+    r"(?:shares?|stock|position|exposure|entry|allocation|investment|portfolio)\b",
+    r"\b(?:go|stay|remain|open|close|enter|exit|reduce|increase)\s+"
+    r"(?:long|short|flat|neutral|(?:a|the)\s+(?:long|short)\s+position|"
+    r"(?:the\s+)?(?:position|exposure))\b",
+    r"\b(?:position\s+sizing|portfolio\s+weight|tradeintent|executable\s+order)\b",
+    r"(?:\bdo not\b|\bdon't\b|\bshould not\b|\bmust not\b|\bnever\b)\s+"
+    r"(?:buy|sell|hold|wait|avoid|go\s+long|go\s+short)\b",
 )
+_EXECUTABLE = tuple(re.compile(pattern, re.IGNORECASE) for pattern in _EXECUTABLE_PATTERNS)
 
 
 def assert_analysis_only(value: Any, *, label: str) -> None:
     text = json.dumps(value, ensure_ascii=False, default=str)
-    match = _FORBIDDEN.search(text)
-    if match:
+    for pattern in _EXECUTABLE:
+        match = pattern.search(text)
+        if match:
+            excerpt = match.group(0).strip()
+            raise ValueError(
+                f"{label} contains forbidden executable decision language: {excerpt!r}"
+            )
+    # JSON action-like fields are executable even when the value is separated
+    # from the surrounding prose.
+    action_field = re.search(
+        r'"(?:action|recommendation|signal|final_action|final_decision)"\s*:\s*'
+        r'"(?:buy|sell|long|short|hold|wait|avoid)"',
+        text,
+        flags=re.IGNORECASE,
+    )
+    if action_field:
         raise ValueError(
-            f"{label} contains forbidden executable decision language: {match.group(0)!r}"
+            f"{label} contains forbidden executable decision language: {action_field.group(0)!r}"
         )
 
 
