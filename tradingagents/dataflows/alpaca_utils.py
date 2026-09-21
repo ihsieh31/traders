@@ -285,9 +285,45 @@ def get_alpaca_crypto_client() -> CryptoHistoricalDataClient:
 
 PAPER_API_BASE_URL = "https://paper-api.alpaca.markets"
 
+_READ_ONLY_MUTATION_METHODS = frozenset(
+    {
+        "submit_order",
+        "cancel_order_by_id",
+        "cancel_orders",
+        "replace_order_by_id",
+        "close_position",
+        "close_all_positions",
+        "delete_order_by_id",
+    }
+)
+
 
 class PaperTradingEnforcementError(RuntimeError):
     """Raised when any live/non-paper trading path is attempted (fail closed)."""
+
+
+class ReadOnlyTradingClient:
+    """Delegate Alpaca reads while blocking every known mutation method."""
+
+    def __init__(self, client: TradingClient):
+        self._client = client
+
+    def __getattr__(self, name: str):
+        if name in _READ_ONLY_MUTATION_METHODS:
+            def blocked(*args, **kwargs):
+                raise PaperTradingEnforcementError(
+                    f"Alpaca read-only mode blocks TradingClient.{name}"
+                )
+
+            return blocked
+        return getattr(self._client, name)
+
+
+def _alpaca_read_only_enabled() -> bool:
+    raw = get_env("ALPACA_READ_ONLY", "true")
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _resolve_paper_base_url(explicit_base_url: Optional[str] = None) -> Optional[str]:
@@ -296,7 +332,14 @@ def _resolve_paper_base_url(explicit_base_url: Optional[str] = None) -> Optional
         candidate = get_env("ALPACA_BASE_URL") or get_env("ALPACA_PAPER_BASE_URL")
     if candidate is None:
         return None
-    return str(candidate).strip()
+    normalized = str(candidate).strip().rstrip("/")
+    # alpaca-py appends its resource path (e.g. /v2/account) to
+    # ``url_override``. Accept the documented full endpoint from .env while
+    # passing only the host root to the SDK, avoiding /v2/v2/... requests.
+    paper_v2 = f"{PAPER_API_BASE_URL.rstrip('/')}/v2"
+    if normalized == paper_v2:
+        return PAPER_API_BASE_URL
+    return normalized
 
 
 def validate_paper_endpoint(base_url: Optional[str]) -> None:
@@ -369,6 +412,8 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
         )
     client._retry = 0
     session.request = partial(request, timeout=(3.05, 10.0))
+    if _alpaca_read_only_enabled():
+        return ReadOnlyTradingClient(client)
     return client
 
 

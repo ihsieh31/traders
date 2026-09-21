@@ -117,6 +117,27 @@ class PaperOnlyLockTests(unittest.TestCase):
                 with self.assertRaises(au.PaperTradingEnforcementError):
                     au.get_alpaca_trading_client()
 
+    def test_read_only_client_allows_reads_and_blocks_mutations(self):
+        from tradingagents.dataflows import alpaca_utils as au
+
+        underlying = MagicMock()
+        underlying.get_account.return_value = SimpleNamespace(id="paper-account")
+        client = au.ReadOnlyTradingClient(underlying)
+
+        self.assertEqual(client.get_account().id, "paper-account")
+        with self.assertRaises(au.PaperTradingEnforcementError):
+            client.submit_order(object())
+        with self.assertRaises(au.PaperTradingEnforcementError):
+            client.cancel_order_by_id("order-1")
+
+    def test_full_paper_v2_endpoint_is_normalized_for_alpaca_sdk(self):
+        from tradingagents.dataflows import alpaca_utils as au
+
+        self.assertEqual(
+            au._resolve_paper_base_url("https://paper-api.alpaca.markets/v2"),
+            au.PAPER_API_BASE_URL,
+        )
+
     def test_live_and_unknown_base_urls_fail_closed(self):
         from tradingagents.dataflows import alpaca_utils as au
 

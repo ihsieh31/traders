@@ -58,3 +58,10 @@ def isolate_long_run_state(monkeypatch, tmp_path):
 
     monkeypatch.setattr(guardrails, "_SAFETY_HOME", tmp_path / "safety")
     guardrails.reset_safety_guard()
+
+
+@pytest.fixture(autouse=True)
+def isolate_operator_llm_endpoint(monkeypatch):
+    """Keep the operator's local .env routing from changing unit-test defaults."""
+    monkeypatch.delenv("TRADINGBUFFETT_OPENAI_USE_LOCAL", raising=False)
+    monkeypatch.delenv("TRADINGBUFFETT_OPENAI_BASE_URL", raising=False)
