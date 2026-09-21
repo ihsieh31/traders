@@ -14,6 +14,10 @@ from tradingagents.prompt_capture import capture_agent_prompt
 
 def create_news_analyst(llm, toolkit):
     def news_analyst_node(state):
+        if toolkit.config.get("analysis_input_mode") == "frozen_evidence":
+            from tradingagents.agents.analysts.frozen import create_frozen_analyst
+
+            return create_frozen_analyst(llm, toolkit, "news", "news_report")(state)
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
         analysis_mode = analysis_date_mode(current_date)

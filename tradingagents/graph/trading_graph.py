@@ -18,6 +18,8 @@ from tradingagents.llm_clients.retry import (
 )
 from tradingagents.llm_clients.roles import describe_roles, resolve_role_config
 from tradingagents.analysis_profiles import resolve_analysis_profile
+from tradingagents.analysis_backends import resolve_analysis_backend
+from tradingagents.experiments.evidence_snapshot import load_evidence_packet
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.agents.utils.memory import FinancialSituationMemory, TradingMemoryLog
@@ -72,6 +74,12 @@ class TradingAgentsGraph:
             DEFAULT_CONFIG if config is None else config
         )
         self.analysis_profile = resolve_analysis_profile(self.config)
+        self.analysis_backend = resolve_analysis_backend(self.config)
+        if self.analysis_backend == "berkshire" and self.analysis_profile != "traders":
+            raise ValueError(
+                "formal Berkshire analysis requires analysis_profile='traders'; "
+                "analysis_profile is a legacy prompt-profile selector"
+            )
         self.callbacks = callbacks or []
 
         # Update the interface's config
@@ -622,6 +630,18 @@ class TradingAgentsGraph:
         init_agent_state = self.propagator.create_initial_state(
             company_name, trade_date
         )
+        analysis_backend = getattr(self, "analysis_backend", resolve_analysis_backend(self.config))
+        init_agent_state["analysis_backend"] = analysis_backend
+        init_agent_state["analysis_backend_meta"] = {}
+        if self.config.get("analysis_input_mode") == "frozen_evidence":
+            evidence_path = self.config.get("evidence_packet_path")
+            if not evidence_path:
+                raise RuntimeError("frozen analysis requires evidence_packet_path")
+            init_agent_state["analysis_evidence"] = load_evidence_packet(
+                evidence_path,
+                symbol=company_name,
+                trade_date=str(trade_date),
+            )
         resume_checkpoint = self._has_checkpoint_for_run(
             company_name, str(trade_date)
         )
@@ -637,7 +657,17 @@ class TradingAgentsGraph:
             "debug": self.debug,
             "analysis_profile": getattr(self, "analysis_profile", None)
             or resolve_analysis_profile(self.config),
+            "analysis_backend": analysis_backend,
         }
+        if self.config.get("evidence_packet_sha256"):
+            metadata["evidence_packet_sha256"] = self.config["evidence_packet_sha256"]
+        if self.config.get("evidence_packet_path"):
+            try:
+                metadata["evidence_captured_at"] = init_agent_state.get(
+                    "analysis_evidence", {}
+                ).get("captured_at")
+            except AttributeError:
+                pass
         for marker in ("_long_run_observation_id", "_analysis_source"):
             value = self.config.get(marker)
             if value:

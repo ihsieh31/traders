@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run a controlled, decision-only Traders versus Berkshire analyst A/B pair.
+"""Run a controlled, decision-only Traders versus Berkshire analysis pair.
 
-The two runs use the same graph, tools, models, dates, and downstream decision
-nodes. Only ``analysis_profile`` and the explicitly isolated run destinations
-are different. Runs are intentionally serial because the application keeps
-some process-global configuration and audit context.
+The two runs share one frozen EvidencePacket and the complete downstream graph.
+Only ``analysis_backend`` and explicitly isolated learning/run destinations
+differ. Runs are intentionally serial because the application keeps some
+process-global configuration and audit context.
 """
 
 from __future__ import annotations
@@ -27,7 +27,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from tradingagents.analysis_profiles import resolve_analysis_profile
+from tradingagents.analysis_backends import resolve_analysis_backend
+from tradingagents.experiments.evidence_snapshot import (
+    EvidenceIntegrityError,
+    build_or_load_evidence_packet,
+)
 from tradingagents.app_identity import default_results_dir, validate_app_path
 from tradingagents.default_config import DEFAULT_CONFIG
 
@@ -50,10 +54,11 @@ def safe_ticker_component(value: str, *, max_len: int = 64) -> str:
     return safe
 
 
-PROFILE_ORDER = ("traders", "berkshire")
+BACKEND_ORDER = ("traders", "berkshire")
+PROFILE_ORDER = BACKEND_ORDER  # Compatibility alias for summary consumers.
 AB_ALLOWED_DIFFERENCES = frozenset(
     {
-        "analysis_profile",
+        "analysis_backend",
         "results_dir",
         "_analysis_source",
         "memory_log_path",
@@ -108,6 +113,16 @@ def assert_ab_invariants(config_a: Mapping[str, Any], config_b: Mapping[str, Any
             raise RuntimeError(f"A/B invariant violation: {key} must be enabled for both profiles")
     if config_a.get("auto_trade") is not False or config_b.get("auto_trade") is not False:
         raise RuntimeError("A/B invariant violation: auto_trade must be disabled")
+    if config_a.get("analysis_profile") != config_b.get("analysis_profile"):
+        raise RuntimeError("A/B invariant violation: analysis_profile must be identical")
+    if config_a.get("analysis_input_mode") != "frozen_evidence" or config_b.get("analysis_input_mode") != "frozen_evidence":
+        raise RuntimeError("A/B invariant violation: analysis_input_mode must be frozen_evidence")
+    if not config_a.get("evidence_packet_path") or config_a.get("evidence_packet_path") != config_b.get("evidence_packet_path"):
+        raise RuntimeError("A/B invariant violation: evidence_packet_path must be shared")
+    if not config_a.get("evidence_packet_sha256") or config_a.get("evidence_packet_sha256") != config_b.get("evidence_packet_sha256"):
+        raise RuntimeError("A/B invariant violation: evidence_packet_sha256 must be shared")
+    if config_a.get("checkpoint_enabled") is not False or config_b.get("checkpoint_enabled") is not False:
+        raise RuntimeError("A/B invariant violation: checkpoint_enabled must be false")
 
     for key in _ISOLATED_PATH_KEYS:
         left = Path(str(config_a.get(key, ""))).resolve(strict=False)
@@ -153,6 +168,8 @@ def build_ab_configs(
     trade_date: str,
     pair_dir: str | Path,
     experiment_root: str | Path | None = None,
+    evidence_packet_path: str | Path | None = None,
+    evidence_packet_sha256: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build isolated profile configs while keeping all experiment inputs equal."""
 
@@ -175,14 +192,21 @@ def build_ab_configs(
     )
 
     configs: dict[str, dict[str, Any]] = {}
-    for profile in PROFILE_ORDER:
-        profile_dir = campaign_path / "_profiles" / profile
+    packet_path = Path(evidence_packet_path or (campaign_path / "evidence" / str(trade_date) / safe_ticker_component(symbol) / "evidence_packet.json"))
+    for backend in BACKEND_ORDER:
+        profile_dir = campaign_path / "_profiles" / backend
         config = deepcopy(shared)
         config.update(
             {
-                "analysis_profile": profile,
+                # Compatibility profile is deliberately identical.  The
+                # formal experiment variable is analysis_backend.
+                "analysis_profile": "traders",
+                "analysis_backend": backend,
+                "analysis_input_mode": "frozen_evidence",
+                "evidence_packet_path": str(packet_path),
+                "evidence_packet_sha256": evidence_packet_sha256 or "pending",
                 "results_dir": str(profile_dir / "results"),
-                "_analysis_source": f"ab_{profile}",
+                "_analysis_source": f"ab_{backend}",
                 "memory_log_path": str(profile_dir / "memory.md"),
                 "agent_memory_dir": str(profile_dir / "agent_memory"),
                 "data_cache_dir": str(profile_dir / "data_cache"),
@@ -194,8 +218,8 @@ def build_ab_configs(
                 "long_run_dir": str(profile_dir / "long_run"),
             }
         )
-        resolve_analysis_profile(config)
-        configs[profile] = config
+        resolve_analysis_backend(config)
+        configs[backend] = config
 
     assert_ab_invariants(configs["traders"], configs["berkshire"])
     return configs
@@ -247,19 +271,37 @@ def _ensure_campaign_manifest(
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError("A/B campaign manifest is unreadable") from exc
-        if existing.get("config_fingerprint") != fingerprint:
+        if (
+            existing.get("schema_version") != 2
+            or existing.get("experiment") != "traders-vs-ai-berkshire-analysis-backend"
+            or existing.get("backends") != list(BACKEND_ORDER)
+            or existing.get("analysis_input_mode") != "frozen_evidence"
+            or existing.get("config_fingerprint") != fingerprint
+        ):
             raise RuntimeError(
                 "A/B campaign invariant violation: configuration or analyst set changed"
             )
         return fingerprint
 
     payload = {
-        "schema_version": 1,
-        "profiles": list(PROFILE_ORDER),
+        "schema_version": 2,
+        "experiment": "traders-vs-ai-berkshire-analysis-backend",
+        "backends": list(BACKEND_ORDER),
+        "analysis_input_mode": "frozen_evidence",
+        "downstream_shared": True,
+        "auto_trade": False,
+        "max_arm_attempts": 3,
         "selected_analysts": list(selected_analysts),
         "config_fingerprint": fingerprint,
         "memory_policy": "enabled and isolated per profile",
-        "execution_policy": "serial shadow decisions; auto_trade disabled",
+        "execution_policy": "serial, order-counterbalanced, shadow decisions only",
+        "berkshire_reference": {
+            "repo": "xbtlin/ai-berkshire",
+            "commit": "1cc1e362378cd3fea99a4f4c3b50676bce9aa4c6",
+        },
+        "traders_baseline": {
+            "commit": "81123b6e7abe6526147bc79b469f68ee8a9c5e64",
+        },
     }
     temp_path = manifest_path.with_suffix(".tmp")
     temp_path.write_text(
@@ -281,7 +323,7 @@ def _signal_text(signal: Any) -> str:
 
 
 def _run_one(
-    profile: str,
+    backend: str,
     config: Mapping[str, Any],
     *,
     symbol: str,
@@ -305,20 +347,91 @@ def _run_one(
         state, signal = graph.propagate(symbol, trade_date)
         return {
             "status": "completed",
+            "analysis_backend": backend,
             "signal": _signal_text(signal),
             "elapsed_seconds": round(time.monotonic() - started, 4),
             "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
             "final_state_keys": sorted(state) if isinstance(state, Mapping) else [],
         }
-    except Exception as exc:  # The summary must preserve partial pair evidence.
+    except Exception as exc:  # Pair state preserves partial evidence.
+        retryable = type(exc).__name__ in {
+            "ProviderFailure",
+            "TimeoutError",
+            "ConnectionError",
+            "BrokenPipeError",
+            "ConnectionResetError",
+        }
+        if isinstance(exc, OSError):
+            retryable = True
         return {
-            "status": "failed",
+            "status": "failed_retryable" if retryable else "failed_terminal",
+            "analysis_backend": backend,
             "signal": "",
             "elapsed_seconds": round(time.monotonic() - started, 4),
             "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
+
+
+MAX_ARM_ATTEMPTS = 3
+
+
+def _new_pair_state(pair_id: str, campaign_fingerprint: str, evidence_sha256: str) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "pair_id": pair_id,
+        "campaign_fingerprint": campaign_fingerprint,
+        "evidence_sha256": evidence_sha256,
+        "status": "NEW",
+        "arms": {
+            backend: {"status": "pending", "attempts": 0, "attempt_history": []}
+            for backend in BACKEND_ORDER
+        },
+    }
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _load_pair_state(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"pair_state.json is unreadable: {path}") from exc
+    if not isinstance(value, dict) or value.get("schema_version") != 2:
+        raise RuntimeError("pair_state.json has an unsupported schema")
+    return value
+
+
+def _recover_interrupted_arms(state: dict[str, Any]) -> None:
+    for arm in state.get("arms", {}).values():
+        if arm.get("status") == "in_progress":
+            arm["status"] = "failed_retryable"
+            arm.setdefault("attempt_history", []).append(
+                {
+                    "status": "failed_retryable",
+                    "error_type": "ProcessInterrupted",
+                    "error": "previous process exited during arm",
+                }
+            )
+    if any(arm.get("status") == "failed_retryable" for arm in state.get("arms", {}).values()):
+        state["status"] = "PARTIAL"
+
+
+def _validate_pair_state(state: Mapping[str, Any], *, pair_id: str, fingerprint: str, evidence_sha256: str) -> None:
+    if state.get("pair_id") != pair_id:
+        raise RuntimeError("pair state identity mismatch")
+    if state.get("campaign_fingerprint") != fingerprint:
+        raise RuntimeError("A/B campaign invariant violation: pair fingerprint changed")
+    if state.get("evidence_sha256") != evidence_sha256:
+        raise RuntimeError("A/B evidence invariant violation: evidence hash changed")
 
 
 def run_analysis_ab(
@@ -331,7 +444,7 @@ def run_analysis_ab(
     debug: bool = False,
     graph_cls=None,
 ) -> dict[str, Any]:
-    """Run both profiles serially and persist ``pair_summary.json``."""
+    """Run or resume one crash-safe, frozen-evidence A/B pair."""
 
     if not symbol.strip():
         raise ValueError("symbol must not be empty")
@@ -340,40 +453,80 @@ def run_analysis_ab(
     except ValueError as exc:
         raise ValueError(f"trade_date must be ISO YYYY-MM-DD: {trade_date!r}") from exc
 
-    root = validate_app_path(
-        results_root or (default_results_dir() / "ab"), field="results_dir"
-    )
+    base = deepcopy(dict(DEFAULT_CONFIG if base_config is None else base_config))
+    if base.get("auto_trade") is True:
+        raise RuntimeError("A/B runner refuses auto_trade=True")
+    root = validate_app_path(results_root or (default_results_dir() / "ab"), field="results_dir")
     pair_id = hashlib.sha256(f"{symbol}|{trade_date}".encode("utf-8")).hexdigest()[:16]
     pair_dir = root / str(trade_date) / safe_ticker_component(symbol)
-    base = deepcopy(dict(DEFAULT_CONFIG if base_config is None else base_config))
-    configs = build_ab_configs(
-        base,
-        symbol=symbol,
-        trade_date=str(trade_date),
-        pair_dir=pair_dir,
-        experiment_root=root,
-    )
     execution_order = _execution_order(symbol, str(trade_date))
-    results: dict[str, dict[str, Any]] = {}
     summary_path = pair_dir / "pair_summary.json"
-    in_progress_path = pair_dir / ".pair_in_progress"
+    state_path = pair_dir / "pair_state.json"
     with _experiment_lock(root):
         if summary_path.exists():
             raise RuntimeError(
                 f"A/B pair already completed; refusing to overwrite: {summary_path}"
             )
-        if in_progress_path.exists():
-            raise RuntimeError(
-                f"A/B pair has an unresolved prior attempt: {in_progress_path}"
+
+        packet_path = root / "evidence" / str(trade_date) / safe_ticker_component(symbol) / "evidence_packet.json"
+        capture_config = deepcopy(base)
+        capture_config.update({"analysis_input_mode": "live_tools", "evidence_packet_sha256": None})
+        try:
+            evidence = build_or_load_evidence_packet(
+                packet_path,
+                symbol=symbol,
+                trade_date=str(trade_date),
+                config=capture_config,
             )
+        except EvidenceIntegrityError as exc:
+            raise RuntimeError(f"frozen evidence unavailable: {exc}") from exc
+
+        configs = build_ab_configs(
+            base,
+            symbol=symbol,
+            trade_date=str(trade_date),
+            pair_dir=pair_dir,
+            experiment_root=root,
+            evidence_packet_path=packet_path,
+            evidence_packet_sha256=evidence["sha256"],
+        )
+        assert_ab_invariants(configs["traders"], configs["berkshire"])
         campaign_fingerprint = _ensure_campaign_manifest(
             root, configs["traders"], selected_analysts
         )
         pair_dir.mkdir(parents=True, exist_ok=True)
-        in_progress_path.write_text(pair_id, encoding="utf-8")
+
+        state = _load_pair_state(state_path)
+        if state is None:
+            state = _new_pair_state(pair_id, campaign_fingerprint, evidence["sha256"])
+        else:
+            _validate_pair_state(
+                state,
+                pair_id=pair_id,
+                fingerprint=campaign_fingerprint,
+                evidence_sha256=evidence["sha256"],
+            )
+            if state.get("status") == "FAILED_TERMINAL":
+                raise RuntimeError("A/B pair reached FAILED_TERMINAL; use a new results-root")
+            _recover_interrupted_arms(state)
+        state["status"] = "IN_PROGRESS"
+        _write_json_atomic(state_path, state)
+
         for profile in execution_order:
-            print(f"[AB] Running {profile} profile for {symbol} as of {trade_date}")
-            results[profile] = _run_one(
+            arm = state["arms"][profile]
+            if arm.get("status") == "completed":
+                continue
+            if int(arm.get("attempts", 0) or 0) >= MAX_ARM_ATTEMPTS:
+                arm["status"] = "failed_terminal"
+                state["status"] = "FAILED_TERMINAL"
+                _write_json_atomic(state_path, state)
+                return state
+
+            arm["attempts"] = int(arm.get("attempts", 0) or 0) + 1
+            arm["status"] = "in_progress"
+            _write_json_atomic(state_path, state)
+            print(f"[AB] Running {profile} analysis backend for {symbol} as of {trade_date}")
+            result = _run_one(
                 profile,
                 configs[profile],
                 symbol=symbol,
@@ -382,34 +535,56 @@ def run_analysis_ab(
                 debug=debug,
                 graph_cls=graph_cls,
             )
+            arm["status"] = result["status"]
+            arm["result"] = result
+            arm.setdefault("attempt_history", []).append(result)
+            if result["status"] != "completed":
+                terminal = result["status"] == "failed_terminal" or arm["attempts"] >= MAX_ARM_ATTEMPTS
+                if terminal:
+                    arm["status"] = "failed_terminal"
+                    state["status"] = "FAILED_TERMINAL"
+                else:
+                    state["status"] = "PARTIAL"
+                _write_json_atomic(state_path, state)
+                return state
+            _write_json_atomic(state_path, state)
 
-    traders_signal = results["traders"].get("signal", "").upper()
-    berkshire_signal = results["berkshire"].get("signal", "").upper()
-    shared = {
-        "selected_analysts": list(selected_analysts),
-        "provider": base.get("analysis_provider") or base.get("llm_provider", ""),
-        "quick_model": base.get("quick_think_llm", ""),
-        "deep_model": base.get("deep_think_llm", ""),
-        "research_depth": base.get("research_depth", ""),
-        "max_tool_iterations": base.get("max_tool_iterations_per_agent", 0),
-        "memory_retrieval_enabled": True,
-        "reflection_on_outcome_enabled": True,
-        "memory_maintenance_enabled": True,
-        "memory_isolation": "per-profile persistent stores",
-        "checkpoint_enabled": False,
-        "auto_trade": False,
-        "execution_mode": "serial, order-counterbalanced, shadow-decision-only",
-        "external_input_caveat": (
-            "Live external sources are queried at different wall-clock times; "
-            "the runner guarantees configuration and state isolation, not byte-identical responses."
-        ),
-    }
+        if any(state["arms"][backend].get("status") != "completed" for backend in BACKEND_ORDER):
+            state["status"] = "PARTIAL"
+            _write_json_atomic(state_path, state)
+            return state
+
+        state["status"] = "COMPLETED"
+        _write_json_atomic(state_path, state)
+        results = {backend: state["arms"][backend]["result"] for backend in BACKEND_ORDER}
+        traders_signal = results["traders"].get("signal", "").upper()
+        berkshire_signal = results["berkshire"].get("signal", "").upper()
+        shared = {
+            "selected_analysts": list(selected_analysts),
+            "analysis_input_mode": "frozen_evidence",
+            "evidence_packet_path": str(packet_path),
+            "evidence_packet_sha256": evidence["sha256"],
+            "evidence_captured_at": evidence["captured_at"],
+            "provider": base.get("analysis_provider") or base.get("llm_provider", ""),
+            "quick_model": base.get("quick_think_llm", ""),
+            "deep_model": base.get("deep_think_llm", ""),
+            "research_depth": base.get("research_depth", ""),
+            "max_tool_iterations": base.get("max_tool_iterations_per_agent", 0),
+            "memory_retrieval_enabled": True,
+            "reflection_on_outcome_enabled": True,
+            "memory_maintenance_enabled": True,
+            "memory_isolation": "per-backend persistent stores",
+            "checkpoint_enabled": False,
+            "auto_trade": False,
+            "execution_mode": "serial, order-counterbalanced, shadow-decision-only",
+        }
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "pair_id": pair_id,
         "campaign_fingerprint": campaign_fingerprint,
         "symbol": symbol,
         "trade_date": str(trade_date),
+        "evidence_sha256": evidence["sha256"],
         "execution_order": execution_order,
         "shared": shared,
         "traders": results["traders"],
@@ -423,7 +598,6 @@ def run_analysis_ab(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     os.replace(temp_summary_path, summary_path)
-    in_progress_path.unlink(missing_ok=True)
     print(f"[AB] Pair summary: {summary_path}")
     return summary
 
@@ -470,7 +644,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[AB] ERROR: {exc}", file=sys.stderr)
         return 2
 
-    statuses = [summary[profile]["status"] for profile in PROFILE_ORDER]
+    if summary.get("status") == "COMPLETED":
+        return 0
+    statuses = [
+        (summary.get("arms", {}).get(backend) or {}).get("status")
+        for backend in BACKEND_ORDER
+    ]
     return 0 if all(status == "completed" for status in statuses) else 1
 
 

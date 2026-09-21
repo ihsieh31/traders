@@ -138,6 +138,9 @@ def summarize(root: str | Path) -> dict[str, Any]:
         "pair_count": len(pairs),
         "signal_agreement_pairs": agreement,
         "signal_disagreement_pairs": disagreement,
+        # ``profiles`` remains a read-compatibility alias for old dashboards;
+        # formal experiments are keyed by analysis backend.
+        "backends": profile_json,
         "profiles": profile_json,
         "notes": [
             "Telemetry is read from RunAuditLogger JSON files.",

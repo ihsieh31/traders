@@ -16,6 +16,10 @@ from tradingagents.prompt_capture import capture_agent_prompt
 
 def create_fundamentals_analyst(llm, toolkit):
     def fundamentals_analyst_node(state):
+        if toolkit.config.get("analysis_input_mode") == "frozen_evidence":
+            from tradingagents.agents.analysts.frozen import create_frozen_analyst
+
+            return create_frozen_analyst(llm, toolkit, "fundamentals", "fundamentals_report")(state)
         # print(f"[FUNDAMENTALS] Starting fundamentals analysis for {state['company_of_interest']}")
         start_time = time.time()
         

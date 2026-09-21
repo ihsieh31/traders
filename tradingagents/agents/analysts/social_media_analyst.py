@@ -14,6 +14,10 @@ from tradingagents.prompt_capture import capture_agent_prompt
 
 def create_social_media_analyst(llm, toolkit):
     def social_media_analyst_node(state):
+        if toolkit.config.get("analysis_input_mode") == "frozen_evidence":
+            from tradingagents.agents.analysts.frozen import create_frozen_analyst
+
+            return create_frozen_analyst(llm, toolkit, "social", "sentiment_report")(state)
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]

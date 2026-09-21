@@ -15,6 +15,8 @@ from tradingagents.agents.analysts.macro_analyst import create_macro_analyst
 from tradingagents.agents.utils.agent_states import AgentState
 from tradingagents.agents.utils.agent_utils import Toolkit
 from tradingagents.agents.utils.report_context import create_report_context_node
+from tradingagents.analysis_backends import resolve_analysis_backend
+from tradingagents.analysis_backends.berkshire import create_berkshire_analysis_team
 from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.run_logger import get_run_audit_logger
 
@@ -132,6 +134,14 @@ class GraphSetup:
                         symbol=symbol,
                         metadata={"node_name": node_name},
                     )
+
+            if result.get("analysis_backend_meta"):
+                logger.log_agent_output(
+                    output_type="analysis_backend_meta",
+                    content=result["analysis_backend_meta"],
+                    symbol=symbol,
+                    metadata={"node_name": node_name},
+                )
 
             investment_debate_state = result.get("investment_debate_state")
             if isinstance(investment_debate_state, dict):
@@ -531,6 +541,8 @@ class GraphSetup:
         """
         if len(selected_analysts) == 0:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
+
+        analysis_backend = resolve_analysis_backend(self.config)
         
         # Check if parallel execution is enabled
         parallel_mode = self.config.get("parallel_analysts", True)
@@ -541,7 +553,7 @@ class GraphSetup:
         delete_nodes = {}
         tool_nodes = {}
 
-        if "market" in selected_analysts:
+        if analysis_backend == "traders" and "market" in selected_analysts:
             analyst_nodes["market"] = self._wrap_node_with_run_logging(
                 "Market Analyst",
                 create_market_analyst(
@@ -551,7 +563,7 @@ class GraphSetup:
             delete_nodes["market"] = create_msg_delete()
             tool_nodes["market"] = self.tool_nodes["market"]
 
-        if "social" in selected_analysts:
+        if analysis_backend == "traders" and "social" in selected_analysts:
             analyst_nodes["social"] = self._wrap_node_with_run_logging(
                 "Social Analyst",
                 create_social_media_analyst(
@@ -561,7 +573,7 @@ class GraphSetup:
             delete_nodes["social"] = create_msg_delete()
             tool_nodes["social"] = self.tool_nodes["social"]
 
-        if "news" in selected_analysts:
+        if analysis_backend == "traders" and "news" in selected_analysts:
             analyst_nodes["news"] = self._wrap_node_with_run_logging(
                 "News Analyst",
                 create_news_analyst(
@@ -571,7 +583,7 @@ class GraphSetup:
             delete_nodes["news"] = create_msg_delete()
             tool_nodes["news"] = self.tool_nodes["news"]
 
-        if "fundamentals" in selected_analysts:
+        if analysis_backend == "traders" and "fundamentals" in selected_analysts:
             analyst_nodes["fundamentals"] = self._wrap_node_with_run_logging(
                 "Fundamentals Analyst",
                 create_fundamentals_analyst(
@@ -581,7 +593,7 @@ class GraphSetup:
             delete_nodes["fundamentals"] = create_msg_delete()
             tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
 
-        if "macro" in selected_analysts:
+        if analysis_backend == "traders" and "macro" in selected_analysts:
             analyst_nodes["macro"] = self._wrap_node_with_run_logging(
                 "Macro Analyst",
                 create_macro_analyst(
@@ -646,7 +658,19 @@ class GraphSetup:
         )
         workflow.add_node("Build Report Context", report_context_node)
 
-        if parallel_mode:
+        if analysis_backend == "berkshire":
+            # This is the only topology change in the formal experiment.  The
+            # node emits the same five canonical report fields consumed by the
+            # unchanged report-context and downstream decision graph.
+            berkshire_team_node = self._wrap_node_with_run_logging(
+                "Berkshire Analysis Team",
+                create_berkshire_analysis_team(self.deep_thinking_llm, self.config),
+            )
+            workflow.add_node("Berkshire Analysis Team", berkshire_team_node)
+            workflow.add_edge(START, "Berkshire Analysis Team")
+            workflow.add_edge("Berkshire Analysis Team", "Build Report Context")
+            workflow.add_edge("Build Report Context", "Bull Researcher")
+        elif parallel_mode:
             # Create parallel analysts coordinator
             parallel_analysts_node = self._create_parallel_analysts_coordinator(
                 selected_analysts, analyst_nodes, tool_nodes, delete_nodes

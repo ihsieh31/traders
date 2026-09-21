@@ -77,6 +77,14 @@ DEFAULT_CONFIG = {
     "analysis_provider": None,
     "analysis_model": None,
     "analysis_backend_url": None,
+    # Explicit upstream analysis topology.  The default preserves the native
+    # five-analyst Traders graph exactly.
+    "analysis_backend": "traders",
+    # Production keeps the existing live-tool behavior.  The controlled A/B
+    # runner overrides this to frozen_evidence before constructing either arm.
+    "analysis_input_mode": "live_tools",
+    "evidence_packet_path": None,
+    "evidence_packet_sha256": None,
     # Analyst research methodology.  The graph and all downstream decision
     # nodes stay shared across profiles for controlled A/B experiments.
     "analysis_profile": "traders",

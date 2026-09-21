@@ -1,7 +1,9 @@
-"""Analysis-method profile resolution for controlled analyst experiments.
+"""Legacy prompt-profile compatibility layer.
 
-Profiles deliberately select prompt templates only.  Analyst topology,
-tooling, tool-loop limits, and every downstream decision node remain shared.
+Profiles deliberately select prompt templates only.  They are not the formal
+Traders-versus-Berkshire A/B variable; that variable is ``analysis_backend``.
+Analyst topology, tooling, tool-loop limits, and every downstream decision node
+remain shared when this compatibility layer is used.
 """
 
 from __future__ import annotations

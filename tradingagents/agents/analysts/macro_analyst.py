@@ -16,6 +16,10 @@ from tradingagents.prompt_capture import capture_agent_prompt
 
 def create_macro_analyst(llm, toolkit):
     def macro_analyst_node(state):
+        if toolkit.config.get("analysis_input_mode") == "frozen_evidence":
+            from tradingagents.agents.analysts.frozen import create_frozen_analyst
+
+            return create_frozen_analyst(llm, toolkit, "macro", "macro_report")(state)
         # print(f"[MACRO] Starting macro economic analysis for {state['trade_date']}")
         start_time = time.time()
         

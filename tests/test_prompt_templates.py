@@ -23,6 +23,7 @@ class PromptTemplateTests(unittest.TestCase):
     expected_groups = {
         "analysts",
         "berkshire",
+        "berkshire_team",
         "graph",
         "managers",
         "researchers",

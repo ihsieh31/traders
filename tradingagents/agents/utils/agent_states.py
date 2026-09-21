@@ -85,6 +85,15 @@ class AgentState(MessagesState):
     analysis_errors: Annotated[
         Dict[str, str], "Sanitized failure reason per selected analyst"
     ]
+    analysis_backend: Annotated[
+        str, "Explicit upstream analysis topology used for this run"
+    ]
+    analysis_backend_meta: Annotated[
+        Dict[str, Any], "Raw role outputs and synthesis metadata for the backend"
+    ]
+    analysis_evidence: Annotated[
+        Dict[str, Any], "Frozen evidence packet shared by both A/B arms"
+    ]
     report_context: Annotated[
         Dict[str, Any],
         "Structured context package built from all analyst reports",
