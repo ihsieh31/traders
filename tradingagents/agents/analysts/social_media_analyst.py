@@ -6,15 +6,10 @@ from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
 from tradingagents.dataflows.interface_utils import analysis_date_mode
+from tradingagents.analysis_profiles import analyst_prompt
 from tradingagents.prompts import load_prompt, render_prompt
 
-# Import prompt capture utility
-try:
-    from webui.utils.prompt_capture import capture_agent_prompt
-except ImportError:
-    # Fallback for when webui is not available
-    def capture_agent_prompt(report_type, prompt_content, symbol=None):
-        pass
+from tradingagents.prompt_capture import capture_agent_prompt
 
 
 def create_social_media_analyst(llm, toolkit):
@@ -55,8 +50,9 @@ def create_social_media_analyst(llm, toolkit):
                 " 'source unavailable'; never substitute present-day data."
             )
         system_message = render_prompt(
-            "analysts/social_system",
+            analyst_prompt(toolkit.config, "social"),
             source_guidance=source_guidance,
+            current_date=current_date,
         )
         asset_context = f"The current company we want to analyze is {ticker}"
 

@@ -170,11 +170,11 @@ class R05ClockBeforeFreshnessTests(unittest.TestCase):
             quote_factory=quote_factory,
         )
         service._quarantine_rejection = lambda symbol: None
-        env = {"TRADINGAGENTS_EXECUTION_LOCK_DIR": str(Path(tmp) / "locks")}
+        env = {"TRADINGBUFFETT_EXECUTION_LOCK_DIR": str(Path(tmp) / "locks")}
         if quote_ttl is not None:
-            env["TRADINGAGENTS_QUOTE_TTL_SECONDS"] = quote_ttl
+            env["TRADINGBUFFETT_QUOTE_TTL_SECONDS"] = quote_ttl
         if snapshot_ttl is not None:
-            env["TRADINGAGENTS_SNAPSHOT_TTL_SECONDS"] = snapshot_ttl
+            env["TRADINGBUFFETT_SNAPSHOT_TTL_SECONDS"] = snapshot_ttl
         patches = [patch.dict("os.environ", env, clear=False), guard_patch(),
                    *network_forbidden()]
         for p in patches:
@@ -335,7 +335,7 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
 
         guard = NS(enabled=True, check_order=lambda *a, **k: NS(allowed=True, reasons=[]))
         patches = [
-            patch.dict("os.environ", {"TRADINGAGENTS_EXECUTION_LOCK_DIR":
+            patch.dict("os.environ", {"TRADINGBUFFETT_EXECUTION_LOCK_DIR":
                                       str(Path(tmp) / "locks")}, clear=False),
             patch("tradingagents.safety.get_safety_guard", return_value=guard),
             patch.object(cfgmod, "_config",

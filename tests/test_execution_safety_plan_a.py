@@ -121,7 +121,7 @@ def env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cfg, "_config", {**DEFAULT_CONFIG, "auto_screening_enabled": False,
                                          "data_cache_dir": str(tmp_path), "alerts_enabled": False})
-    monkeypatch.setenv("TRADINGAGENTS_EXECUTION_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("TRADINGBUFFETT_EXECUTION_LOCK_DIR", str(tmp_path / "locks"))
     monkeypatch.setattr(socket.socket, "connect", Mock(side_effect=AssertionError("network forbidden")))
     monkeypatch.setattr(socket, "create_connection", Mock(side_effect=AssertionError("network forbidden")))
     guard = NS(enabled=False, check_order=lambda *a, **k: NS(allowed=True, reasons=[]),
@@ -286,8 +286,8 @@ def test_r04_reversal_never_submits_opposite_open_same_call(env):
 
 def test_r05_expired_at_dispatch_zero_broker_posts(env, monkeypatch):
     service, broker = env
-    monkeypatch.setenv("TRADINGAGENTS_QUOTE_TTL_SECONDS", "3600")
-    monkeypatch.setenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", "3600")
+    monkeypatch.setenv("TRADINGBUFFETT_QUOTE_TTL_SECONDS", "3600")
+    monkeypatch.setenv("TRADINGBUFFETT_SNAPSHOT_TTL_SECONDS", "3600")
     stamp = now()
     data = opening(stamp=stamp)
     data["entry_policy"]["expires_at"] = (stamp + timedelta(seconds=30)).isoformat()
@@ -318,7 +318,7 @@ def test_r05_stale_quote_at_dispatch_zero_broker_posts(env, monkeypatch):
 
 def test_r05_stale_snapshot_at_dispatch_zero_broker_posts(env, monkeypatch):
     service, broker = env
-    monkeypatch.setenv("TRADINGAGENTS_QUOTE_TTL_SECONDS", "3600")
+    monkeypatch.setenv("TRADINGBUFFETT_QUOTE_TTL_SECONDS", "3600")
     stamp = now()
     data = opening(stamp=stamp)
     # Snapshot TTL stays 30s while the quote tolerates an hour: +40s

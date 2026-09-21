@@ -4,6 +4,7 @@ from typing import Any
 from langchain_openai import AzureChatOpenAI
 
 from .base_client import BaseLLMClient, normalize_content
+from tradingagents.app_identity import env_name, get_env
 
 
 class NormalizedAzureChatOpenAI(AzureChatOpenAI):
@@ -13,18 +14,18 @@ class NormalizedAzureChatOpenAI(AzureChatOpenAI):
 
 class AzureOpenAIClient(BaseLLMClient):
     def get_llm(self) -> Any:
-        api_key = self.kwargs.get("api_key") or os.environ.get("AZURE_OPENAI_API_KEY")
-        endpoint = self.base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        api_key = self.kwargs.get("api_key") or get_env("AZURE_OPENAI_API_KEY")
+        endpoint = self.base_url or get_env("AZURE_OPENAI_ENDPOINT")
         if not api_key:
-            raise ValueError("Provider 'azure' requires AZURE_OPENAI_API_KEY.")
+            raise ValueError(f"Provider 'azure' requires {env_name('AZURE_OPENAI_API_KEY')}.")
         if not endpoint:
-            raise ValueError("Provider 'azure' requires AZURE_OPENAI_ENDPOINT or backend_url.")
+            raise ValueError(f"Provider 'azure' requires {env_name('AZURE_OPENAI_ENDPOINT')} or backend_url.")
 
         llm_kwargs = {
             "model": self.model,
-            "azure_deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", self.model),
+            "azure_deployment": get_env("AZURE_OPENAI_DEPLOYMENT_NAME", self.model),
             "azure_endpoint": endpoint,
-            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+            "api_version": get_env("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
             "api_key": api_key,
         }
         for key in ("timeout", "reasoning_effort", "callbacks", "http_client", "http_async_client"):

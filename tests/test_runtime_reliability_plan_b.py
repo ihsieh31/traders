@@ -60,7 +60,7 @@ class IsolatedLongRunTest(unittest.TestCase):
         self.old_cwd = os.getcwd()
         os.chdir(self.workdir)
         self.old_env = dict(os.environ)
-        os.environ["TRADINGAGENTS_LONG_RUN_DIR"] = str(self.workdir / "longrun")
+        os.environ["TRADINGBUFFETT_LONG_RUN_DIR"] = str(self.workdir / "longrun")
         self._saved_stop = lr._stop_requested
 
     def tearDown(self):

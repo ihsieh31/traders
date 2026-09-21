@@ -2,13 +2,15 @@
 
 版本：3.0
 
-最後更新：2026-09-12
+最後更新：2026-09-21
 
 GitHub：[ihsieh31/traders](https://github.com/ihsieh31/traders)
 
-本機：`/Users/zongen/Downloads/codex/tradingAlpaca`
+本機：`/Users/zongen/Downloads/codex/tradingBuffett`
 
 上游：[huygiatrng/AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) @ `8d9d770da9ecc108d70fd8a97caae032c53caad0`
+
+> **2026-09-21 運作狀態**：WebUI 已移除，目前只保留 CLI、Phase-D long-run 與 Traders×Berkshire shadow A/B。A/B 的 retrieval/reflection/maintenance 記憶全開且按 profile 持久隔離，中途 config 漂移與同 pair 覆寫都 fail closed。本段以下對 WebUI 的描述為歷史實作與驗收記錄，不代表當前 runtime surface。
 
 ## 1. 唯一目標
 
@@ -110,7 +112,7 @@ Screening／Analysis／Decision各自可設定provider、model、endpoint與cred
 
 單一指令 `python -m cli.main long-run` 編排整個 30 日觀察（`tradingagents/long_run.py`，約 3,000 行，單一模組擁有完整生命週期）：
 
-- **設定與授權**：非機密設定存 `~/.tradingagents/long_run/config.json`（祕密僅寫入當前目錄 `.env`，config 寫入前拒絕任何疑似祕密內容）；互動精靈詢問 Analysis/Decision/Screening 三角色 provider/model/endpoint、選配 Analysis fallback、每日 notional、每日執行時刻（09:30–16:00 ET）、分析師、深度與語言。唯讀 preflight（config schema、無人值守安全 gate、每條 role 路徑一次 LLM transport probe（至多 4 條）、Alpaca 唯讀帳戶/持倉/權威日曆證明）之後，需一次明確的 Paper-test 授權；**授權前零 recovery mutation**，授權後、建立觀察前才執行唯一一次 post-authorization recovery（要求 `CLEAN`）。
+- **設定與授權**：非機密設定存 `~/.tradingbuffett/long_run/config.json`（祕密僅寫入當前目錄 `.env`，config 寫入前拒絕任何疑似祕密內容）；互動精靈詢問 Analysis/Decision/Screening 三角色 provider/model/endpoint、選配 Analysis fallback、每日 notional、每日執行時刻（09:30–16:00 ET）、分析師、深度與語言。唯讀 preflight（config schema、無人值守安全 gate、每條 role 路徑一次 LLM transport probe（至多 4 條）、Alpaca 唯讀帳戶/持倉/權威日曆證明）之後，需一次明確的 Paper-test 授權；**授權前零 recovery mutation**，授權後、建立觀察前才執行唯一一次 post-authorization recovery（要求 `CLEAN`）。
 - **執行模式**：強制 `auto_screening_enabled=True`、`safety_enabled=True`、paper-only（apply 後重驗，違反即 `SAFETY_DISABLED`/`CONFIG_APPLY_FAILED`）；本次 runtime 在任何 broker mutation 前安裝為全域執行設定（R01）；`allow_shorts` 為逐觀察 opt-in（false = investment BUY/HOLD/SELL，true = trading LONG/NEUTRAL/SHORT；SHORT 另受 execution 層 deterministic guard——crypto 一律拒絕）。
 - **每日 round**（`run_daily_round`）：journal gate（COMPLETED 冪等；MISSED/STOPPED 拒絕重跑 `SESSION_SETTLED`；損毀即 `STATE_CORRUPT`）→ 停止/到期 precheck（R02 layer 1，recovery 的每個 resubmit POST 前再查一次 layer 2）→ `startup_recover(can_submit=...)` → `enforce_exit_deadlines` → pre/post-round sanitized 帳戶快照（NaN/缺失即 `SNAPSHOT_UNAVAILABLE`，絕不 coercion 成 0/空持倉）→ 每日 LLM 預算 gate → Phase C screening（停止即 `SCREENING_STOPPED`；執行-only resume 不重入 screening，F19）→ 逐 symbol 序列分析（crash-safe ANALYZING 標記、run-log 意圖回收；ProviderFailure 即 `PROVIDER_FAILURE`）→ 逐 symbol 經共用 auto-trade 進 `ExecutionService`（開倉必須 broker-side stop-loss、exposure cap 裁切含在途單、Top20 entry gate、最後 POST 前重驗市場時鐘/快照/報價，R05）→ 模糊結果 `EXECUTION_AMBIGUOUS`、帳戶暫停 `ACCOUNT_PAUSED`、kill switch `KILL_SWITCH` 皆整體停止。
 - **排程器**：sweep 把 process 離線期間錯過的 session 結案 `MISSED_PROCESS_DOWN`（絕不以過期分析/補單回填）；收盤證明未開始的 session 結案 MISSED、絕不逾期補跑；**F-03 bounded retry**：calendar/scheduler 暫時性例外至多重試 3 次（間隔 5.0 秒，經 injected sleep），`LongRunStop` 永不重試，耗盡後 fail-closed `CALENDAR_UNAVAILABLE`；**F-04 fence**：round 內普通例外不再裸逃，整個觀察 finalize 為 `STOPPED/UNEXPECTED_ROUND_ERROR` 並留下 journal 證據（KeyboardInterrupt/SystemExit 仍向外傳播）。

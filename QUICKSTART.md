@@ -1,132 +1,93 @@
 # Quick Start
 
-From zero to a first multi-agent analysis in about five minutes.
-
-> **Python ≥ 3.10 required** (3.11/3.12 recommended — this is what CI and
-> the Docker image use; Phase D `long-run` refuses older interpreters).
-
 ## 1. Install
-
-This quickstart is for the **Traders** fork
-([ihsieh31/traders](https://github.com/ihsieh31/traders)) — not the
-upstream [AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent)
-it was forked from.
 
 ```bash
 git clone https://github.com/ihsieh31/traders.git
 cd traders
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS/Linux:
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 2. Configure keys
+Python 3.10+ is required; 3.11 or 3.12 is recommended.
+
+## 2. Configure
 
 ```bash
-cp env.sample .env   # Windows: copy env.sample .env
+cp env.sample .env
 ```
 
-Edit `.env` — the minimum to run:
+Minimum `.env` values:
 
-| Key | Where to get it | Required |
-|---|---|---|
-| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | free paper account at [alpaca.markets](https://alpaca.markets) | ✅ |
-| `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) (or set `LLM_PROVIDER` to another provider) | ✅ |
-| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io) — richer news | optional |
-| `FRED_API_KEY` | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) — macro analyst | optional |
-| `COINDESK_API_KEY` | crypto news | optional |
+```env
+TRADINGBUFFETT_ALPACA_API_KEY=your_paper_key
+TRADINGBUFFETT_ALPACA_SECRET_KEY=your_paper_secret
+TRADINGBUFFETT_ALPACA_USE_PAPER=True
+TRADINGBUFFETT_LLM_PROVIDER=openai
+TRADINGBUFFETT_OPENAI_API_KEY=your_openai_key
+```
 
-> **Paper-only: keep `ALPACA_USE_PAPER=True`.** Everything works against the
-> Alpaca Paper API. Live trading is disabled; `False` or a live endpoint
-> fails closed with zero broker calls.
+This is a paper-only build. Live credentials or `ALPACA_USE_PAPER=False` fail closed.
 
-## 3. Run
+## 3. Choose a command
 
 ```bash
-python run_webui_dash.py
+python -m cli.main --help
 ```
 
-Open the printed URL (default `http://127.0.0.1:7860`; if the port is taken
-the app scans for a free one), then:
+Interactive analysis:
 
-1. Enter symbols — stocks (`NVDA, AAPL`), crypto (`BTC/USD`), or a mix.
-2. Pick your LLM provider/models and research depth.
-3. Press **Analyze** and watch the five analysts, the bull/bear debate,
-   and the risk team stream their reports live.
-4. Execute the recommendation manually, or enable auto-execution and
-   recurring scheduled analysis.
+```bash
+python -m cli.main analyze
+```
 
-Prefer a terminal? `python -m cli.main` runs the same pipeline
-interactively.
-
-## 3b. 30-day Paper observation (Phase D, CLI-only)
+30-day unattended Paper observation:
 
 ```bash
 python -m cli.main long-run
 ```
 
-The first run asks for any missing settings (Analysis/Decision/Screening
-role provider+model, optional Analysis fallback, daily run time, trade
-notional, `allow_shorts` short-exposure opt-in, missing API keys — secrets
-are written to the local `.env`, never into the config file), runs a
-read-only preflight with one LLM probe per role route, then asks for one
-explicit Paper-test authorization before entering `RUNNING`. Only after
-authorization does it run one `CLEAN`-required execution recovery and
-create the observation.
-
-- Paper only (`ALPACA_USE_PAPER=True`); 30 calendar days, US trading days
-  only (authoritative Alpaca calendar; early closes run at close−30min).
-- The terminal process must stay running. After a crash/reboot (or Ctrl-C),
-  rerunning the same command resumes the original window (no duplicate
-  orders, one session executes at most once). A session missed while the
-  process was down is recorded as `MISSED_PROCESS_DOWN` and is never
-  backfilled with a late (stale) analysis or order.
-- Transient calendar/scheduling errors retry up to 3 times (5 s apart);
-  exhausted retries fail closed. An ordinary bug inside a daily round
-  finalizes the observation `STOPPED/UNEXPECTED_ROUND_ERROR` with evidence
-  instead of silently killing the process.
-- Hard safety/provider failures (unsafe recovery, paused account, kill
-  switch, screening stop, LLM budget exhausted, ambiguous broker outcome)
-  stop the observation with a partial report instead of silently
-  continuing. A stopped observation is final: rerunning `long-run` starts a
-  new 30-day window, it does not resume the stopped one.
-- Final reports: `~/.tradingagents/long_run/runs/<run_id>/final_report.md`
-  and `final_report.json` — an honest account-equity observation with its
-  limitations listed, not a profitability proof.
-
-## 4. Verify your setup
+Traders × Berkshire shadow A/B pair:
 
 ```bash
-python -m pytest tests/
+python scripts/run_analysis_ab.py \
+  --symbol NVDA \
+  --date 2026-09-21 \
+  --results-root ~/.tradingbuffett/results/ab
 ```
 
-The suite is deterministic (no network, no live keys) — it should pass on
-a fresh clone.
+Use the same A/B results root for all 30 days. The first pair creates `AB_CAMPAIGN.json`; later pairs fail closed if shared settings or the analyst set change.
 
-## 5. Where results live
+## 4. Verify
 
-- **Reports & audit trail**: `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/`
-  — every prompt, tool call, LLM call (with token usage), and the final state.
-- **Decision log**: `~/.tradingagents/memory/trading_memory.md` — every
-  final decision, later resolved with realized returns.
-- **Phase D observation**: `~/.tradingagents/long_run/` — saved settings
-  (`config.json`), the active-run state, and per-run evidence plus final
-  reports under `runs/<run_id>/`.
-- **Durable execution ledger**: `eval_results/execution.db` — intents,
-  orders, fills, protection links, and the account's last `CLEAN`/`PAUSED`
-  reconciliation state. Never delete rows to force `CLEAN`.
+```bash
+python -m compileall -q tradingagents cli scripts
+python -m pytest -q
+```
+
+The test suite is offline and must not use real keys or broker mutation.
+
+## 5. Output locations
+
+| Artifact | Default path |
+|---|---|
+| Run audit logs | `~/.tradingbuffett/results/<symbol>/TradingAgentsStrategy_logs/runs/` |
+| Decision memory | `~/.tradingbuffett/memory/trading_memory.md` |
+| Agent vector memory | `~/.tradingbuffett/memory/agent_memory/` |
+| Execution ledger | `~/.tradingbuffett/execution/execution.sqlite3` |
+| Long-run state | `~/.tradingbuffett/long_run/` |
+| A/B results | `~/.tradingbuffett/results/ab/` |
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Action |
 |---|---|
-| `Alpaca API key or secret not found` | `.env` not loaded or keys empty — recheck step 2. |
-| `unauthorized` from Alpaca | Paper keys expired — regenerate paper keys (live keys are unsupported). |
-| Analysis stalls at an analyst | Usually a rate limit; lower research depth or increase the start delays in settings. |
-| Crypto symbol not found | Use the slash format: `BTC/USD`, not `BTCUSD`. |
+| Alpaca key missing | Confirm the two namespaced Paper keys are present in `.env`. |
+| Alpaca unauthorized | Regenerate Paper keys; live keys are unsupported. |
+| Provider stops a run | Check the run audit event, credentials, timeout and bounded retry settings. |
+| Memory is empty | Confirm an embedding-capable OpenAI-compatible endpoint is configured. |
+| A/B campaign invariant violation | Restore the original config/analyst set or start a new results root. |
+| `.pair_in_progress` exists | Audit the interrupted pair before removing the marker; do not blindly rerun it. |
 
-Next: read [ARCHITECTURE.md](ARCHITECTURE.md) for how the pipeline works
-inside.
+Continue with [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md).

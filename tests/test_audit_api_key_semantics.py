@@ -65,7 +65,7 @@ class U06SecretNotReturnedTests(unittest.TestCase):
     def test_u06_env_secret_is_not_returned_to_browser(self):
         mod, app = _register()
         load_fn = _find(app, "load_api_keys")
-        os.environ["OPENAI_API_KEY"] = "sk-server-secret-value"
+        os.environ["TRADINGBUFFETT_OPENAI_API_KEY"] = "sk-server-secret-value"
 
         outputs = load_fn(None)  # no stored keys -> env fallback path
         # 16 api inputs + alpaca-paper + env-file-status
@@ -81,7 +81,7 @@ class U06SecretNotReturnedTests(unittest.TestCase):
                 )
         # The status must tell the operator the key is configured.
         self.assertIn("configured", str(status).lower())
-        del os.environ["OPENAI_API_KEY"]
+        del os.environ["TRADINGBUFFETT_OPENAI_API_KEY"]
 
     def test_u06_runtime_config_still_receives_env_keys(self):
         from webui.callbacks import api_config_callbacks as real_mod
@@ -89,7 +89,7 @@ class U06SecretNotReturnedTests(unittest.TestCase):
         orig = real_mod.apply_api_keys_to_config
         real_mod.apply_api_keys_to_config = lambda keys: (applied.update(keys) or True)
         try:
-            os.environ["ANTHROPIC_API_KEY"] = "sk-ant-server"
+            os.environ["TRADINGBUFFETT_ANTHROPIC_API_KEY"] = "sk-ant-server"
             mod, app = _register()
             load_fn = _find(app, "load_api_keys")
             load_fn(None)
@@ -97,7 +97,7 @@ class U06SecretNotReturnedTests(unittest.TestCase):
             self.assertEqual(applied.get("anthropic"), "sk-ant-server")
         finally:
             real_mod.apply_api_keys_to_config = orig
-            os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("TRADINGBUFFETT_ANTHROPIC_API_KEY", None)
 
 
 class U16ClearSemanticsTests(unittest.TestCase):
@@ -124,7 +124,7 @@ class U16ClearSemanticsTests(unittest.TestCase):
         clear_result = clear_fn(1)
         store_data = clear_result[-1]
 
-        os.environ["OPENAI_API_KEY"] = "sk-should-not-come-back"
+        os.environ["TRADINGBUFFETT_OPENAI_API_KEY"] = "sk-should-not-come-back"
         try:
             outputs = load_fn(store_data)
             values = outputs[:16]
@@ -133,12 +133,12 @@ class U16ClearSemanticsTests(unittest.TestCase):
                 "U16: an explicitly cleared store must not fall back to env",
             )
         finally:
-            os.environ.pop("OPENAI_API_KEY", None)
+            os.environ.pop("TRADINGBUFFETT_OPENAI_API_KEY", None)
 
     def test_u16_uninitialized_store_still_falls_back_to_env(self):
         mod, app = _register()
         load_fn = _find(app, "load_api_keys")
-        os.environ["FINNHUB_API_KEY"] = "fh-from-env"
+        os.environ["TRADINGBUFFETT_FINNHUB_API_KEY"] = "fh-from-env"
         try:
             # None store = first load (not explicitly cleared): env keys are
             # applied to the runtime config so the run keeps working.
@@ -152,7 +152,7 @@ class U16ClearSemanticsTests(unittest.TestCase):
                 real_mod.apply_api_keys_to_config = orig
             self.assertEqual(applied.get("finnhub"), "fh-from-env")
         finally:
-            os.environ.pop("FINNHUB_API_KEY", None)
+            os.environ.pop("TRADINGBUFFETT_FINNHUB_API_KEY", None)
 
 
 if __name__ == "__main__":

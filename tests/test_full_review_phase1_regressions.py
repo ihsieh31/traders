@@ -200,7 +200,7 @@ class _GuardIsolated:
     global state it leaves behind would poison them:
 
     - the real safety-guard singleton persists state under
-      ~/.tradingagents/safety (kill switch, rejection streaks);
+      ~/.tradingbuffett/safety (kill switch, rejection streaks);
     - run_daily_round/set_config swap the ambient tradingagents config.
 
     Both are snapshotted and restored around every test, and the long-run

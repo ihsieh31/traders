@@ -3,8 +3,8 @@ Error diagnostics and troubleshooting utilities for TradingAgents
 Provides detailed error information and resolution steps for common issues.
 """
 
-import os
 from typing import Dict, List, Optional
+from tradingagents.app_identity import env_name, get_env
 
 
 class ErrorDiagnostics:
@@ -15,7 +15,7 @@ class ErrorDiagnostics:
             "title": "🔑 OpenAI API Key Error",
             "description": "OpenAI API key is missing, invalid, or has insufficient credits",
             "solutions": [
-                "1. Check your .env file contains: OPENAI_API_KEY=your_key_here",
+                f"1. Check your .env file contains: {env_name('OPENAI_API_KEY')}=your_key_here",
                 "2. Verify your API key at https://platform.openai.com/api-keys",
                 "3. Ensure you have sufficient credits in your OpenAI account",
                 "4. Try regenerating your API key if it's old"
@@ -47,7 +47,7 @@ class ErrorDiagnostics:
             "description": "Alpaca trading API credentials are missing or invalid", 
             "solutions": [
                 "1. Get API keys from https://app.alpaca.markets/paper/dashboard/overview",
-                "2. Add to .env file: ALPACA_API_KEY=your_key and ALPACA_SECRET_KEY=your_secret",
+                f"2. Add to .env file: {env_name('ALPACA_API_KEY')}=your_key and {env_name('ALPACA_SECRET_KEY')}=your_secret",
                 "3. Use Alpaca Paper keys only: this build is paper-only and live paths fail closed",
                 "4. Check API key permissions include market data access"
             ],
@@ -232,20 +232,20 @@ class ErrorDiagnostics:
         issues = []
         
         # Check API keys
-        if not os.getenv("OPENAI_API_KEY"):
+        if not get_env("OPENAI_API_KEY"):
             issues.append({
                 "type": "missing_config",
                 "severity": "high", 
-                "message": "OPENAI_API_KEY not found in environment variables",
-                "solution": "Add OPENAI_API_KEY to your .env file"
+                "message": f"{env_name('OPENAI_API_KEY')} not found in environment variables",
+                "solution": f"Add {env_name('OPENAI_API_KEY')} to your .env file"
             })
             
-        if not os.getenv("ALPACA_API_KEY") or not os.getenv("ALPACA_SECRET_KEY"):
+        if not get_env("ALPACA_API_KEY") or not get_env("ALPACA_SECRET_KEY"):
             issues.append({
                 "type": "missing_config",
                 "severity": "high",
                 "message": "Alpaca API credentials not found",
-                "solution": "Add ALPACA_API_KEY and ALPACA_SECRET_KEY to your .env file"
+                "solution": f"Add {env_name('ALPACA_API_KEY')} and {env_name('ALPACA_SECRET_KEY')} to your .env file"
             })
         
         return issues

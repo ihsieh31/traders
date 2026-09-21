@@ -1168,7 +1168,7 @@ def get_stock_news_openai(ticker, curr_date):
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
-        return f"Error: OpenAI API key not found. Please set OPENAI_API_KEY environment variable."
+        return f"Error: OpenAI API key not found. Please set TRADINGBUFFETT_OPENAI_API_KEY environment variable."
     
     try:
         # Standardize ticker format for consistent API calls
@@ -1288,7 +1288,7 @@ def get_global_news_openai(curr_date, ticker_context=None):
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
-        return f"Error: OpenAI API key not found. Please set OPENAI_API_KEY environment variable."
+        return f"Error: OpenAI API key not found. Please set TRADINGBUFFETT_OPENAI_API_KEY environment variable."
     
     try:
         config = get_config()
@@ -1421,7 +1421,7 @@ def get_fundamentals_openai(ticker, curr_date):
     # Get API key from environment variables or config
     api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
     if not api_key:
-        return f"Error: OpenAI API key not found. Please set OPENAI_API_KEY environment variable."
+        return f"Error: OpenAI API key not found. Please set TRADINGBUFFETT_OPENAI_API_KEY environment variable."
     
     try:
         config = get_config()

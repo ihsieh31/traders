@@ -142,7 +142,7 @@ class IsolatedTest(unittest.TestCase):
         self.old_cwd = os.getcwd()
         os.chdir(self.workdir)
         self.old_env = dict(os.environ)
-        os.environ["TRADINGAGENTS_LONG_RUN_DIR"] = str(self.workdir / "longrun")
+        os.environ["TRADINGBUFFETT_LONG_RUN_DIR"] = str(self.workdir / "longrun")
         # Snapshot process-global config: rounds call set_config() via
         # _apply_runtime_config(); none of it may leak into other test files.
         import tradingagents.dataflows.config as _cfgmod

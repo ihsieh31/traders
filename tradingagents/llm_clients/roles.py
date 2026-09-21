@@ -21,8 +21,8 @@ Rules (implementation contract):
   local-OpenAI switch.
 - Credentials, endpoints, and provider kwargs are resolved per role; the
   Analysis key/base URL is never copied to a different-provider Decision.
-- Role-specific env overrides (``ANALYSIS_OPENAI_API_KEY``,
-  ``DECISION_ANTHROPIC_API_KEY``, ...) are checked before the provider's
+- Role-specific env overrides (``TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY``,
+  ``TRADINGBUFFETT_DECISION_ANTHROPIC_API_KEY``, ...) are checked before the provider's
   standard key so one vendor can be used with two accounts. Secrets are
   never persisted to UI config, logs, or sample values.
 - Optional failover route: when the ``analysis_fallback_provider``
@@ -33,7 +33,7 @@ Rules (implementation contract):
   exhaustion must not kill a Phase-D round at whichever role hits it. Any
   fallback key set without the required pair is a startup config error —
   failover fails closed. The fallback credential comes from
-  ``ANALYSIS_FALLBACK_<PROVIDER>_API_KEY`` before the provider's standard
+  ``TRADINGBUFFETT_ANALYSIS_FALLBACK_<PROVIDER>_API_KEY`` before the provider's standard
   key, and a cross-provider fallback never inherits the Analysis endpoint.
 """
 
@@ -49,6 +49,7 @@ from tradingagents.dataflows.config import (
     get_openai_base_url,
     is_local_openai_enabled,
 )
+from tradingagents.app_identity import get_env
 
 ROLE_CONFIG_KEYS = (
     "analysis_provider",
@@ -114,7 +115,7 @@ def _resolve_provider_key(provider: str, role: str) -> str:
     """Role-specific env override first, then the provider's standard key."""
     provider_key = provider.upper().replace("/", "_")
     override_env = f"{role.upper()}_{provider_key}_API_KEY"
-    override = os.getenv(override_env)
+    override = get_env(override_env)
     if override and override.strip():
         return override.strip()
     return get_llm_api_key(provider) or ""

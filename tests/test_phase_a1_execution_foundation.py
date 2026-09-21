@@ -169,7 +169,7 @@ class PaperOnlyLockTests(unittest.TestCase):
         with patch.object(au, "get_api_key", return_value="dummy"):
             with patch.object(au, "get_alpaca_use_paper", return_value="True"):
                 with patch.dict(
-                    os.environ, {"ALPACA_BASE_URL": "https://api.alpaca.markets"}
+                    os.environ, {"TRADINGBUFFETT_ALPACA_BASE_URL": "https://api.alpaca.markets"}
                 ):
                     with self.assertRaises(au.PaperTradingEnforcementError):
                         au.get_alpaca_trading_client()

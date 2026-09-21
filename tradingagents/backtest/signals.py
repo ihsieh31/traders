@@ -12,6 +12,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Dict, Optional
 
+from tradingagents.app_identity import default_results_dir, validate_app_path
+
 ACTION_ALIASES = {action: action for action in ("BUY", "SELL", "HOLD", "LONG", "SHORT", "NEUTRAL")}
 
 
@@ -23,8 +25,13 @@ def _sanitize_symbol_for_path(symbol: str) -> str:
     return re.sub(r"[^\w\-.]+", "_", symbol.strip()) or "unknown"
 
 
-def load_recorded_runs(symbol: str, eval_results_dir: str = "eval_results") -> dict[str, dict]:
-    runs_dir = Path(eval_results_dir) / _sanitize_symbol_for_path(symbol) / "TradingAgentsStrategy_logs" / "runs"
+def load_recorded_runs(
+    symbol: str, eval_results_dir: str | Path | None = None
+) -> dict[str, dict]:
+    root = validate_app_path(
+        eval_results_dir or default_results_dir(), field="results_dir"
+    )
+    runs_dir = root / _sanitize_symbol_for_path(symbol) / "TradingAgentsStrategy_logs" / "runs"
     chosen = {}
     for path in sorted(runs_dir.glob("*.json")):
         try:
@@ -54,6 +61,8 @@ def load_recorded_runs(symbol: str, eval_results_dir: str = "eval_results") -> d
     return {key: value[1] for key, value in sorted(chosen.items())}
 
 
-def load_recorded_signals(symbol: str, eval_results_dir: str = "eval_results") -> Dict[str, str]:
+def load_recorded_signals(
+    symbol: str, eval_results_dir: str | Path | None = None
+) -> Dict[str, str]:
     return {day: normalize_action(run["summary"]["final_signal"])
             for day, run in load_recorded_runs(symbol, eval_results_dir).items()}

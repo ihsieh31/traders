@@ -47,11 +47,10 @@ setup(
         "Upstream TradingAgents": "https://github.com/TauricResearch/TradingAgents",
         "Upstream AlpacaTradingAgent": "https://github.com/huygiatrng/AlpacaTradingAgent",
     },
-    packages=find_namespace_packages(include=["tradingagents*", "cli*", "webui*"]),
+    packages=find_namespace_packages(include=["tradingagents*", "cli*"]),
     include_package_data=True,
     package_data={
         "cli": ["static/*.txt"],
-        "webui": ["assets/*.css"],
         "tradingagents.prompts": [
             "templates/*.md",
             "templates/*/*.md",
@@ -62,7 +61,6 @@ setup(
     entry_points={
         "console_scripts": [
             "tradingagents=cli.main:app",
-            "tradingagents-web=webui.cli:main",
         ],
     },
     classifiers=[

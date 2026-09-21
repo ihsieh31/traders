@@ -415,7 +415,7 @@ class F15UsageTests(_Isolated, unittest.TestCase):
         # Exactly one audit event carrying the usage in the run log.
         payloads = [
             json.loads(p.read_text())
-            for p in Path("eval_results").glob("AAPL/TradingAgentsStrategy_logs/runs/*.json")
+            for p in Path(os.environ["TRADINGBUFFETT_RESULTS_DIR"]).glob("AAPL/TradingAgentsStrategy_logs/runs/*.json")
         ]
         usage_events = [
             e for p in payloads for e in p["events"]
@@ -524,7 +524,7 @@ class F15UsageTests(_Isolated, unittest.TestCase):
 
         payloads = [
             json.loads(p.read_text())
-            for p in Path("eval_results").glob(
+            for p in Path(os.environ["TRADINGBUFFETT_RESULTS_DIR"]).glob(
                 "AAPL/TradingAgentsStrategy_logs/runs/*.json")
         ]
         events = [
@@ -642,7 +642,7 @@ class _BudgetRoundFixture(_Isolated):
         import tradingagents.long_run as lr
 
         self._lr = lr
-        os.environ["TRADINGAGENTS_LONG_RUN_DIR"] = str(self.workdir / "longrun")
+        os.environ["TRADINGBUFFETT_LONG_RUN_DIR"] = str(self.workdir / "longrun")
         self._regime = patch(
             "tradingagents.regime.regime_risk_multiplier", return_value=1.0)
         self._portfolio = patch(
@@ -1118,19 +1118,21 @@ class F13CostScopingTests(_Isolated, unittest.TestCase):
     def test_execution_db_resolver_precedence(self):
         from tradingagents.execution.service import resolve_execution_db_path
 
-        os.environ.pop("TRADINGAGENTS_EXECUTION_DB", None)
-        self.assertEqual(resolve_execution_db_path(), "eval_results/execution.db")
-        os.environ["TRADINGAGENTS_EXECUTION_DB"] = "/tmp/custom.db"
+        os.environ.pop("TRADINGBUFFETT_EXECUTION_DB", None)
+        self.assertEqual(resolve_execution_db_path(), str(Path.home() / ".tradingbuffett" / "execution" / "execution.sqlite3"))
+        os.environ["TRADINGBUFFETT_EXECUTION_DB"] = "/tmp/custom.db"
         self.assertEqual(resolve_execution_db_path(), "/tmp/custom.db")
         self.assertEqual(
-            resolve_execution_db_path("/explicit.db"), "/explicit.db")
+            resolve_execution_db_path(self.workdir / "explicit.db"),
+            str(self.workdir / "explicit.db"),
+        )
 
     def test_service_and_report_resolve_same_env_db(self):
         from tradingagents.execution import ExecutionStore
         from tradingagents.execution.service import ExecutionService, resolve_execution_db_path
 
         custom = self.workdir / "custom-execution.db"
-        os.environ["TRADINGAGENTS_EXECUTION_DB"] = str(custom)
+        os.environ["TRADINGBUFFETT_EXECUTION_DB"] = str(custom)
         store = ExecutionStore(str(custom))
         orders = store.list_all_orders()  # initializes the store schema
         self.assertIsInstance(orders, list)
@@ -1140,9 +1142,12 @@ class F13CostScopingTests(_Isolated, unittest.TestCase):
             Path(service.db_path).resolve(), custom.resolve())
         self.assertEqual(
             Path(resolve_execution_db_path()).resolve(), custom.resolve())
-        # The final report path uses the same resolver (no default file).
-        default_db = self.workdir / "eval_results" / "execution.db"
-        self.assertFalse(default_db.exists())
+        # The final report path uses the same resolver and does not fall back
+        # to the default when a custom DB is configured.  The default file
+        # may predate this test in a developer checkout, so do not assert its
+        # filesystem absence here.
+        default_db = Path.home() / ".tradingbuffett" / "execution" / "execution.sqlite3"
+        self.assertNotEqual(Path(service.db_path).resolve(), default_db.resolve())
 
 
 # ---------------------------------------------------------------------------
@@ -1155,7 +1160,7 @@ class F14FinalSnapshotTests(_Isolated):
         import tradingagents.long_run as lr
 
         self._lr = lr
-        os.environ["TRADINGAGENTS_LONG_RUN_DIR"] = str(self.workdir / "longrun")
+        os.environ["TRADINGBUFFETT_LONG_RUN_DIR"] = str(self.workdir / "longrun")
 
     def _fake_broker(self, equity, positions):
         return lambda: SimpleNamespace(

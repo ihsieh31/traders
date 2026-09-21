@@ -62,7 +62,7 @@ def fixed(monkeypatch, tmp_path):
     monkeypatch.setattr(lr, "datetime", FixedDateTime)
     monkeypatch.setattr(lr, "utc_now_iso", lambda: STAMP.isoformat())
     monkeypatch.setattr(lr, "_stop_requested", False)
-    monkeypatch.setenv("TRADINGAGENTS_EXECUTION_DB", str(tmp_path / "report.sqlite3"))
+    monkeypatch.setenv("TRADINGBUFFETT_EXECUTION_DB", str(tmp_path / "report.sqlite3"))
     from tradingagents.dataflows import config
     from tradingagents.default_config import DEFAULT_CONFIG
     import tradingagents.run_logger as logger

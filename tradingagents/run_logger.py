@@ -13,6 +13,12 @@ import uuid
 from typing import Any, Dict, Optional
 
 from tradingagents.redaction import sanitize_for_log
+from tradingagents.app_identity import (
+    DEFAULT_RESULTS_DIR,
+    default_results_dir,
+    get_env,
+    validate_app_path,
+)
 
 
 _CURRENT_RUN_ID: ContextVar[Optional[str]] = ContextVar(
@@ -50,6 +56,13 @@ def _redact_sensitive_config(value: Any) -> Any:
     return sanitize_for_log(value, redacted="[REDACTED]")
 
 
+def _default_results_root() -> Path:
+    configured = get_env("RESULTS_DIR")
+    return validate_app_path(
+        configured or default_results_dir(), field="results_dir"
+    )
+
+
 class RunAuditLogger:
     """
     Persist a complete audit trail for each analysis run.
@@ -66,7 +79,7 @@ class RunAuditLogger:
 
     def _recover_stale_running_logs(self) -> None:
         """Mark stale on-disk runs as aborted if they were left in running state."""
-        root = Path("eval_results")
+        root = _default_results_root()
         if not root.exists():
             return
 
@@ -142,7 +155,8 @@ class RunAuditLogger:
             run_uuid = uuid.uuid4().hex[:10]
             run_id = f"{trade_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_uuid}"
 
-            run_dir = Path((config or {}).get("results_dir", "eval_results")) / safe_symbol / "TradingAgentsStrategy_logs" / "runs"
+            configured_root = (config or {}).get("results_dir") or _default_results_root()
+            run_dir = validate_app_path(configured_root, field="results_dir") / safe_symbol / "TradingAgentsStrategy_logs" / "runs"
             run_dir.mkdir(parents=True, exist_ok=True)
             file_path = (run_dir / f"{run_id}.json").resolve()
 
@@ -442,7 +456,7 @@ class RunAuditLogger:
 def load_final_state_snapshot(
     symbol: str,
     trade_date: str,
-    eval_results_dir: str = "eval_results",
+    eval_results_dir: str | Path | None = None,
     metadata_match: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return the final_state snapshot of the newest completed run for a date.
@@ -457,7 +471,9 @@ def load_final_state_snapshot(
     manual/WebUI/other-observation run (F12).
     """
     runs_dir = (
-        Path(eval_results_dir)
+        validate_app_path(
+            eval_results_dir or _default_results_root(), field="results_dir"
+        )
         / _sanitize_for_path(symbol or "unknown")
         / "TradingAgentsStrategy_logs"
         / "runs"

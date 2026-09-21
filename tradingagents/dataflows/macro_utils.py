@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Annotated, Dict, List, Optional
 from .config import get_api_key, DATA_DIR
-import os
+from tradingagents.app_identity import get_env
 import pandas as pd
 
 
@@ -15,7 +15,7 @@ def get_fred_api_key():
     except:
         api_key = None
     if not api_key:
-        api_key = os.getenv("FRED_API_KEY")
+        api_key = get_env("FRED_API_KEY")
     return api_key
 
 
@@ -33,7 +33,7 @@ def get_fred_data(series_id: str, start_date: str, end_date: str) -> Dict:
     """
     api_key = get_fred_api_key()
     if not api_key:
-        return {"error": "FRED API key not found. Please set FRED_API_KEY environment variable."}
+        return {"error": "FRED API key not found. Please set TRADINGBUFFETT_FRED_API_KEY environment variable."}
 
     url = "https://api.stlouisfed.org/fred/series/observations"
     params = {

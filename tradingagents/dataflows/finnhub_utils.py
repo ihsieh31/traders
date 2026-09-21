@@ -17,7 +17,7 @@ def get_finnhub_client():
     """
     api_key = get_finnhub_api_key()
     if not api_key:
-        raise ValueError("Finnhub API key not found. Please set FINNHUB_API_KEY environment variable or in .env file.")
+        raise ValueError("Finnhub API key not found. Please set TRADINGBUFFETT_FINNHUB_API_KEY environment variable or in .env file.")
     try:
         import finnhub  # type: ignore
     except ImportError as exc:
@@ -31,7 +31,7 @@ def _request_finnhub_json(path: str, params: Dict[str, Any]) -> Any:
     api_key = get_finnhub_api_key()
     if not api_key:
         raise ValueError(
-            "Finnhub API key not found. Please set FINNHUB_API_KEY environment variable or in .env file."
+            "Finnhub API key not found. Please set TRADINGBUFFETT_FINNHUB_API_KEY environment variable or in .env file."
         )
 
     request_params = dict(params or {})

@@ -33,6 +33,8 @@ from __future__ import annotations
 import math
 import os
 import time
+
+from tradingagents.app_identity import get_env
 from typing import Any, Optional
 
 from langchain_core.exceptions import OutputParserException
@@ -198,7 +200,7 @@ class _RetryController:
         self.model = model
         self.max_retries = validate_llm_max_retries(max_retries)
         self.backoff_cap = float(
-            os.getenv("TRADINGAGENTS_LLM_RETRY_BACKOFF_MAX_SECONDS", "4.0")
+            get_env("LLM_RETRY_BACKOFF_MAX_SECONDS", "4.0")
         )
         self.sleep = time.sleep
 
@@ -360,7 +362,7 @@ class _FailoverRetryController:
         self.fallback_model = fallback_model
         self.max_retries = validate_llm_max_retries(max_retries)
         self.backoff_cap = float(
-            os.getenv("TRADINGAGENTS_LLM_RETRY_BACKOFF_MAX_SECONDS", "4.0")
+            get_env("LLM_RETRY_BACKOFF_MAX_SECONDS", "4.0")
         )
         self.sleep = time.sleep
         self.on_switch = on_switch  # best-effort audit hook: payload dict -> None

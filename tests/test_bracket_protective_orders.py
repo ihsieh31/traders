@@ -115,7 +115,7 @@ class BracketExecutionTests(unittest.TestCase):
             ),
             # These tests isolate broker protective-order behavior. The safety
             # gate has its own integration tests and must not persist state in
-            # the developer's real ~/.tradingagents directory during pytest.
+            # the developer's real ~/.tradingbuffett directory during pytest.
             patch("tradingagents.safety.get_safety_guard", return_value=disabled_guard),
         ]
         for p in self.patches:

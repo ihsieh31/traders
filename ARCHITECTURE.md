@@ -6,7 +6,7 @@ and operators who want to know where things happen and why.
 ## The big picture
 
 ```
-                        ┌──────────────────────── WebUI (Dash) / CLI ───────────────────────┐
+                        ┌──────────────────────── CLI / scheduled runners ───────────────────────┐
                         │  symbols, LLM provider, depth, auto-trade, scheduling             │
                         └──────────────────────────────┬────────────────────────────────────┘
                                                        ▼
@@ -39,8 +39,8 @@ schema. Numeric stop-loss and take-profit controls can be submitted as
 broker-side bracket/OTO orders when enabled; qualitative controls remain
 advisory.
 
-There are two operating surfaces above the same pipeline: the interactive
-WebUI/CLI for one-off analyses and scheduled rounds, and the Phase D
+There are two operating surfaces above the same pipeline: the CLI for
+one-off analyses, and the Phase D
 `long-run` orchestrator (`tradingagents/long_run.py`) that drives the whole
 pipeline unattended for 30 calendar days with its own config, state,
 scheduling, and reporting (see the Phase D lifecycle section below).
@@ -53,12 +53,12 @@ scheduling, and reporting (see the Phase D lifecycle section below).
 | `tradingagents/agents/` | The agents themselves: `analysts/` (market, social, news, fundamentals, macro), `researchers/` (bull/bear), `managers/`, `trader/`, `risk_mgmt/`, plus `utils/` (agent states, memory, trading modes) and `schemas.py` (typed `TradeIntent`). |
 | `tradingagents/dataflows/` | Every external data source behind one interface: `alpaca_utils.py` (bars, quotes, account, orders, execution), Finnhub, Google News, Reddit, FRED macro, crypto sources, with a yfinance fallback for supported failures. `config.py` holds runtime config + API keys. |
 | `tradingagents/screening/` | Phase C full-market screening: session math (`sessions.py`), the ACTIVE US_EQUITY universe with pagination (`universe.py`), deterministic bars validation + eligibility + Top40 formula (`metrics.py`), the third Screening role with the strict Top20 schema (`llm.py`, `prompt.py`), the daily selection cache (`selection_store.py`), the round pipeline (`pipeline.py`) and the execution entry gate (`gate.py`). |
-| `tradingagents/dataflows/market_calendar.py` | Single shared US-market holiday tables and session walks used by both the WebUI market-hours module and Phase C screening. |
+| `tradingagents/dataflows/market_calendar.py` | Single shared US-market holiday tables and session walks used by scheduling and Phase C screening. |
 | `tradingagents/llm_clients/` | Provider adapters (OpenAI, local OpenAI-compatible endpoints, Anthropic, Google, xAI, MiniMax, DeepSeek, Qwen, GLM, OpenRouter, Ollama, Azure — 12 names) behind `create_llm_client`. `roles.py` resolves the fixed Analysis/Decision/Screening roles plus the optional `analysis_fallback` route; `retry.py` is the single bounded retry owner (`RetryingLLM`/`RetryingRunnable` are real LangChain Runnables, `ProviderFailure`, exact request caps, transient-vs-permanent classification including all 5xx/Cloudflare codes) and hosts the shared-budget Primary→Fallback failover used by all three roles. |
-| `tradingagents/execution/` | The execution core: `service.py` is the single durable entry (`execute`, `startup_recover`, `enforce_exit_deadlines`, `liquidate`, `account_status`, `lookup_unknown`); `store.py` is the stdlib-SQLite intent/order/fill ledger plus `protective_children` and the reserved `__ACCOUNT__` intent rows (account binding, frozen reconciliation baseline, explicit `rebase_account_state`); `authority.py` owns `capture_broker_snapshot`, TTL/freshness validation, the `Reconciler` (CLEAN/PAUSED reason vocabulary, gated operator `rebase_baseline`), and the account-keyed OS execution lock; `context.py` renders the shared Trader/Decision position context; `auto_trade.py` is the shared WebUI/Phase-D execution helper. Internal owners: `order_planning.py` validates/plans; `requests.py` constructs SDK requests/classifies errors; `dispatch.py` checks final authority and performs initial submits; `protection.py` owns cancel races/stop coverage/gaps; `recovery.py` owns lookup/adopt/resubmit/reconciliation/cap bridge; `exits.py` owns durable close preparation/core/maintenance summaries; `intent_execution.py` owns sizing/outbox/replay/per-spec execution. Explicit original methods delegate with named call-time collaborators; the service keeps public orchestration and account locks. |
+| `tradingagents/execution/` | The execution core: `service.py` is the single durable entry (`execute`, `startup_recover`, `enforce_exit_deadlines`, `liquidate`, `account_status`, `lookup_unknown`); `store.py` is the stdlib-SQLite intent/order/fill ledger plus `protective_children` and the reserved `__ACCOUNT__` intent rows (account binding, frozen reconciliation baseline, explicit `rebase_account_state`); `authority.py` owns `capture_broker_snapshot`, TTL/freshness validation, the `Reconciler` (CLEAN/PAUSED reason vocabulary, gated operator `rebase_baseline`), and the account-keyed OS execution lock; `context.py` renders the shared Trader/Decision position context; `auto_trade.py` is the shared CLI/Phase-D execution helper. Internal owners: `order_planning.py` validates/plans; `requests.py` constructs SDK requests/classifies errors; `dispatch.py` checks final authority and performs initial submits; `protection.py` owns cancel races/stop coverage/gaps; `recovery.py` owns lookup/adopt/resubmit/reconciliation/cap bridge; `exits.py` owns durable close preparation/core/maintenance summaries; `intent_execution.py` owns sizing/outbox/replay/per-spec execution. Explicit original methods delegate with named call-time collaborators; the service keeps public orchestration and account locks. |
 | `tradingagents/safety/guardrails.py` | Deterministic `SafetyGuard`: kill switch (dominates everything), daily-loss halt from broker `last_equity`, drawdown-from-HWM breaker, consecutive-rejection breaker, per-order notional / symbol concentration caps, daily LLM token budget. State is flock-protected; a corrupt state file fails closed at startup. |
-| `tradingagents/prompts/` | All agent prompts as editable text templates (`TRADINGAGENTS_PROMPT_DIR` overrides). |
-| `tradingagents/run_logger.py` | Append-only audit trail: every prompt, tool call, LLM call (with token usage), state snapshot, and final state per run under `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/`. Provider failures add a `provider_failure` event and a `stopped` run status. |
+| `tradingagents/prompts/` | All agent prompts as editable text templates (`TRADINGBUFFETT_PROMPT_DIR` overrides). |
+| `tradingagents/run_logger.py` | Append-only audit trail: every prompt, tool call, LLM call (with token usage), state snapshot, and final state per run under `~/.tradingbuffett/results/<symbol>/TradingAgentsStrategy_logs/runs/`. Provider failures add a `provider_failure` event and a `stopped` run status. |
 | `tradingagents/risk/exposure.py` | Phase B deterministic exposure evaluator: clips opening notionals to the canonical symbol cap, sector cap, gross cap and cash, counting outstanding increasing orders. |
 | `tradingagents/risk/corporate_actions.py` | Persisted corporate-action quarantine (split/ticker change/delisting/non-tradable): fail-closed gate for new exposure, operator+CLEAN release, no TTL. |
 | `tradingagents/dataflows/sec_ir.py` | Official SEC filings (submissions API) and configured company IR pages with honest published/retrieved metadata and per-type freshness. |
@@ -66,13 +66,12 @@ scheduling, and reporting (see the Phase D lifecycle section below).
 | `tradingagents/default_config.py` | Single source of defaults; everything is overridable per run. |
 | `tradingagents/long_run.py` | Phase D coordinator and compatibility entry: daily round, observation loop, finalization, resume, the single stop flag, signal handling, and `LongRunDeps`. Config, state, calendar, probes, execution support, and reports have implementation owners in `long_run_support/`; old imports remain supported. |
 | `tradingagents/long_run_support/` | Internal implementations: `state.py` owns atomic files/journals/runner lock; `config.py` configuration/runtime installation/unattended validation; `sessions.py` calendar and bounded scheduler retry; `preflight.py` probes/snapshots/authorized recovery; `round_support.py` intent and execution adapters; `symbols.py` per-symbol resume/analysis/execution state machine; `reporting.py` final evidence aggregation/rendering. These modules receive named collaborators from the coordinator and never import it back at runtime. |
-| `webui/` | Dash interface: `layout.py` composes panels from `components/`, `callbacks/` register interaction handlers, `utils/state.py` is the shared app state. Includes the allow-shorts/trading-mode switch, Phase C screening panel, safety guardrails panel, LLM cost panel, and backtest panel. Phase D has no WebUI surface — it is CLI-only. Entry: `python run_webui_dash.py`. |
 | `cli/` | Terminal interface: `python -m cli.main` (interactive analysis with Step 5b role overrides and Step 5c screening settings) and `python -m cli.main long-run` (Phase D). |
 | `tests/` | Pytest suite; deterministic, no network, no live keys. |
 
 ## The analysis lifecycle
 
-1. **Kickoff** — WebUI/CLI builds a config (provider, models, depth, mode)
+1. **Kickoff** — CLI or scheduled runner builds a config (provider, models, depth, mode)
    and calls `TradingAgentsGraph.propagate(symbol, date)`. A run log is
    opened immediately; everything that follows is recorded incrementally.
 2. **Analysts** — five analysts run (parallel by default) with tool access;
@@ -84,7 +83,7 @@ scheduling, and reporting (see the Phase D lifecycle section below).
    risky/safe/neutral risk debate stress-tests it; the risk manager issues
    the final decision plus a typed `TradeIntent`.
 5. **Signal + execution** — `SignalProcessor` extracts the executable
-   action. If auto-trading is on, the WebUI executes the typed `TradeIntent`
+   action. If paper execution is authorized, the runner executes the typed `TradeIntent`
    via the single durable entry `tradingagents.execution.ExecutionService`
    (SQLite outbox commit before any broker POST, deterministic
    `client_order_id`, UNKNOWN lookup/adopt). Before mutation it captures one
@@ -105,7 +104,7 @@ scheduling, and reporting (see the Phase D lifecycle section below).
 
 ## Phase C screening lifecycle (auto mode)
 
-Off by default. With `auto_screening_enabled` on, the scheduler (WebUI loop/market-hour modes, CLI) calls
+Off by default. With `auto_screening_enabled` on, the CLI/long-run scheduler calls
 `tradingagents.screening.pipeline.prepare_screening_round` once per round:
 
 1. **Scan-or-cache** — the first round of a US trading day fetches the full
@@ -151,7 +150,7 @@ modules do not own a second stop flag or dependency container. Detailed contract
 and all original symbol ownership are recorded under `docs/refactoring/`.
 
 1. **Setup + preflight** — non-secret config lives in
-   `~/.tradingagents/long_run/config.json` (a write of suspected secret
+   `~/.tradingbuffett/long_run/config.json` (a write of suspected secret
    material is refused); credentials go to the local `.env` via hidden
    prompts (role-specific key envs are honored first). Preflight is
    strictly read-only: config schema validation, the unattended safety gate
@@ -212,7 +211,7 @@ and all original symbol ownership are recorded under `docs/refactoring/`.
    decisions/signals, screening scans and Top20 turnover, safety events,
    execution tallies, observation-scoped LLM costs, and an explicit
    `return_kind=unadjusted_account_equity_change` with its limitations.
-   Reports land in `~/.tradingagents/long_run/runs/<run_id>/`.
+   Reports land in `~/.tradingbuffett/long_run/runs/<run_id>/`.
 
 ## Memory and learning
 
@@ -231,19 +230,19 @@ Two complementary memories:
 
 | Location | Contents |
 |---|---|
-| `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/*.json` | Full audit trail per run: config, events (prompts, tool calls, LLM calls with token usage), snapshots, final state, final signal. |
-| `~/.tradingagents/memory/trading_memory.md` | The decision log (path configurable). |
-| `~/.tradingagents/memory/agent_memory/` | Persistent per-agent ChromaDB reflection memories. |
-| `~/.tradingagents/safety/` | Safety high-water mark, rejection/token counters, and the optional `KILL_SWITCH` flag. |
+| `~/.tradingbuffett/results/<symbol>/TradingAgentsStrategy_logs/runs/*.json` | Full audit trail per run: config, events (prompts, tool calls, LLM calls with token usage), snapshots, final state, final signal. |
+| `~/.tradingbuffett/memory/trading_memory.md` | The decision log (path configurable). |
+| `~/.tradingbuffett/memory/agent_memory/` | Persistent per-agent ChromaDB reflection memories. |
+| `~/.tradingbuffett/safety/` | Safety high-water mark, rejection/token counters, and the optional `KILL_SWITCH` flag. |
 | `reports/YYYY-MM-DD.{md,html}` | Optional daily operations reports. |
 | `tradingagents/dataflows/data_cache/` | Cached market data. |
 | `eval_results/.../checkpoints` | Optional SQLite LangGraph checkpoints for resume. |
 | `dataflows/data_cache/screening_selection.json` | Phase C daily Top20 selection (trading date, as_of, role/model, config fingerprint, Top40 features, validated Top20, sector mode, `integrity` self-hash seal). No credentials; `.lock` sibling serializes concurrent first scans. |
-| `eval_results/execution.db` | Durable intent/order/fill ledger (`execution_intents`, `orders`, `fills`, `protective_children`; schema v3). Reserved `__ACCOUNT__` intent rows store the DB↔account binding and the latest `CLEAN`/`PAUSED` reasons plus the reconciliation baseline — no second persistence system. |
-| `eval_results/.execution-locks/` | Per-account stdlib OS locks. File descriptors are released by the OS after process exit/crash; no stale lease cleanup exists. |
-| `~/.tradingagents/long_run/config.json` | Non-secret Phase-D observation settings (roles, notional, run time, analysts, `allow_shorts`). Secret-bearing writes are refused; credentials live in the local `.env`. |
-| `~/.tradingagents/long_run/active.json` + `runner.lock` | The single active observation state (corrupt state is a hard stop) and the cross-process single-runner lock. |
-| `~/.tradingagents/long_run/runs/<run_id>/` | Per-observation evidence: `manifest.json`, append-only `events.jsonl`, `account_snapshots.jsonl` (`startup`/`pre_round`/`post_round`/`final` phases), `rounds/<YYYY-MM-DD>.json` journals, `daily_reports/`, and `final_report.{md,json}`. |
+| `~/.tradingbuffett/execution/execution.sqlite3` | Durable intent/order/fill ledger (`execution_intents`, `orders`, `fills`, `protective_children`; schema v3). Reserved `__ACCOUNT__` intent rows store the DB↔account binding and the latest `CLEAN`/`PAUSED` reasons plus the reconciliation baseline — no second persistence system. |
+| `~/.tradingbuffett/execution-locks/` | Per-account stdlib OS locks. File descriptors are released by the OS after process exit/crash; no stale lease cleanup exists. |
+| `~/.tradingbuffett/long_run/config.json` | Non-secret Phase-D observation settings (roles, notional, run time, analysts, `allow_shorts`). Secret-bearing writes are refused; credentials live in the local `.env`. |
+| `~/.tradingbuffett/long_run/active.json` + `runner.lock` | The single active observation state (corrupt state is a hard stop) and the cross-process single-runner lock. |
+| `~/.tradingbuffett/long_run/runs/<run_id>/` | Per-observation evidence: `manifest.json`, append-only `events.jsonl`, `account_snapshots.jsonl` (`startup`/`pre_round`/`post_round`/`final` phases), `rounds/<YYYY-MM-DD>.json` journals, `daily_reports/`, and `final_report.{md,json}`. |
 
 ## Execution recovery and authority
 
@@ -297,8 +296,8 @@ execution path ever calls it automatically.
 
 ## Configuration
 
-`tradingagents/default_config.py` is the single source of truth; the WebUI
-and CLI pass overrides per run, and API keys come from `.env` /
+`tradingagents/default_config.py` is the single source of truth; the CLI and
+scheduled runners pass overrides per run, and API keys come from `.env` /
 environment (see `env.sample`). This build is paper-only: the trading client
 is hard-locked to `paper=True`, `ALPACA_USE_PAPER=False` fails closed, and
 only the explicit paper endpoint is allowed.
@@ -328,7 +327,7 @@ with `OPENAI_EMBEDDING_MODEL` / `OPENAI_EMBEDDING_BASE_URL` /
 their first failure.
 
 Phase D does not add keys to `DEFAULT_CONFIG`; its settings live in
-`~/.tradingagents/long_run/config.json` (`duration_calendar_days`,
+`~/.tradingbuffett/long_run/config.json` (`duration_calendar_days`,
 `run_time_et`, `base_trade_notional_usd`, the three role triples, the
 optional fallback triple, `allow_shorts`, analysts, depth, language) and
 force full-system mode at runtime: `auto_screening_enabled=True`,
@@ -354,7 +353,7 @@ check`). Do not hand-edit the lock.
 ## Integrated contribution set
 
 These reviewed contributions were integrated together because several are
-stacked and share execution, configuration, and WebUI paths:
+stacked and share execution, configuration, and CLI paths:
 
 | PR | Adds |
 |---|---|

@@ -5,6 +5,7 @@ from langchain_anthropic import ChatAnthropic
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+from tradingagents.app_identity import env_name, get_env
 
 
 class NormalizedChatAnthropic(ChatAnthropic):
@@ -18,9 +19,9 @@ class AnthropicClient(BaseLLMClient):
         llm_kwargs = {"model": self.model}
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
-        api_key = self.kwargs.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
+        api_key = self.kwargs.get("api_key") or get_env("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError("Provider 'anthropic' requires ANTHROPIC_API_KEY.")
+            raise ValueError(f"Provider 'anthropic' requires {env_name('ANTHROPIC_API_KEY')}.")
         llm_kwargs["api_key"] = api_key
         for key in ("timeout", "max_tokens", "callbacks", "http_client", "http_async_client", "effort"):
             if key in self.kwargs:

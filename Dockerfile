@@ -36,11 +36,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PATH="/opt/venv/bin:${PATH}" \
-    PORT=7860 \
-    SERVER_NAME=0.0.0.0 \
-    TRADINGAGENTS_CACHE_DIR=/app/tradingagents/dataflows/data_cache \
-    TRADINGAGENTS_RESULTS_DIR=/app/eval_results \
-    TRADINGAGENTS_MEMORY_LOG_PATH=/app/.tradingagents/memory/trading_memory.md \
+    TRADINGBUFFETT_CACHE_DIR=/app/tradingagents/dataflows/data_cache \
+    TRADINGBUFFETT_RESULTS_DIR=/app/.tradingbuffett/results \
+    TRADINGBUFFETT_MEMORY_LOG_PATH=/app/.tradingbuffett/memory/trading_memory.md \
     MPLCONFIGDIR=/tmp/matplotlib
 
 WORKDIR /app
@@ -62,18 +60,11 @@ RUN python -m pip install --no-deps -e . \
     && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app \
     && mkdir -p \
         /app/tradingagents/dataflows/data_cache \
-        /app/eval_results \
-        /app/.tradingagents/memory \
+        /app/.tradingbuffett/memory \
         /tmp/matplotlib \
     && chown -R app:app /app /tmp/matplotlib
 
 USER app
 
-EXPOSE 7860
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\", \"7860\")}', timeout=3).read(1)"
-
-CMD ["sh", "-c", "exec python run_webui_dash.py --server-name \"${SERVER_NAME:-0.0.0.0}\" --port \"${PORT:-7860}\""]
-
-
+ENTRYPOINT ["tradingagents"]
+CMD ["--help"]

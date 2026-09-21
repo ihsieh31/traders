@@ -6,16 +6,12 @@ import time
 import json
 from langchain_core.messages import AIMessage, ToolMessage
 from tradingagents.dataflows.interface_utils import analysis_date_mode
+from tradingagents.analysis_profiles import analyst_prompt
 from tradingagents.llm_clients.retry import ProviderFailure
 from tradingagents.prompts import load_prompt, render_prompt
+from tradingagents.app_identity import get_env
 
-# Import prompt capture utility
-try:
-    from webui.utils.prompt_capture import capture_agent_prompt
-except ImportError:
-    # Fallback for when webui is not available
-    def capture_agent_prompt(report_type, prompt_content, symbol=None):
-        pass
+from tradingagents.prompt_capture import capture_agent_prompt
 
 
 def create_macro_analyst(llm, toolkit):
@@ -75,8 +71,9 @@ def create_macro_analyst(llm, toolkit):
                 )
 
             system_message = render_prompt(
-                "analysts/macro_system",
+                analyst_prompt(toolkit.config, "macro"),
                 source_guidance=source_guidance,
+                current_date=current_date,
             )
             asset_context = (
                 f"Asset context is {ticker}. "
@@ -320,7 +317,7 @@ def create_macro_analyst(llm, toolkit):
             # never be repackaged as a completed report.
             import traceback
             import os as _os
-            if _os.environ.get("TRADINGAGENTS_DEBUG_TRACEBACK"):
+            if get_env("DEBUG_TRACEBACK"):
                 traceback.print_exc()
             raise RuntimeError(error_msg) from e
 

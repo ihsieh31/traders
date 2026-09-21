@@ -212,96 +212,77 @@ def _should_retry_tool_output(
 
 
 def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
-    """
-    Decorator to time function calls and track them for UI display with timeout protection
-    
-    Args:
-        analyst_type: Type of analyst (MARKET, SOCIAL, etc.)
-        timeout_seconds: Maximum execution time allowed (default 120s)
-        uses_web_search: If True, applies a small configurable timeout extension for web tools
-    """
+    """Time, retry and audit tool calls without a presentation-layer dependency."""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Start timing
             start_time = time.time()
-            
-            # Get the function (tool) name
             tool_name = func.__name__
-            
-            # Timeout handling using ThreadPoolExecutor (cross-platform)
             import concurrent.futures
-            
+
             def run_function():
                 return func(*args, **kwargs)
-            
-            # Format tool inputs for display
+
             input_summary = {}
             input_summary_full = {}
-            
-            # Get function signature to map args to parameter names
             import inspect
             sig = inspect.signature(func)
             param_names = list(sig.parameters.keys())
-            
-            # Map positional args to parameter names
             for i, arg in enumerate(args):
                 if i < len(param_names):
                     param_name = param_names[i]
-                    # Truncate long string arguments for display
                     input_summary_full[param_name] = arg
-                    if isinstance(arg, str) and len(arg) > 100:
-                        input_summary[param_name] = arg[:97] + "..."
-                    else:
-                        input_summary[param_name] = arg
-            
-            # Add keyword arguments
+                    input_summary[param_name] = (
+                        arg[:97] + "..."
+                        if isinstance(arg, str) and len(arg) > 100
+                        else arg
+                    )
             for key, value in kwargs.items():
                 input_summary_full[key] = value
-                if isinstance(value, str) and len(value) > 100:
-                    input_summary[key] = value[:97] + "..."
-                else:
-                    input_summary[key] = value
-
-            print(f"[{analyst_type}] 🔧 Starting tool '{tool_name}' with inputs: {input_summary}")
-            
-            # Notify the state management system of tool call execution
-            try:
-                from webui.utils.state import app_state
-                import datetime
-                timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                
-                # Execute the function with timeout protection + semantic retry
-                semantic_retry_enabled = Toolkit._config.get("tool_semantic_retry_enabled", True)
-                max_semantic_retries = int(Toolkit._config.get("tool_semantic_retry_max_retries", 1))
-                retry_backoff_seconds = float(Toolkit._config.get("tool_semantic_retry_backoff_seconds", 0.8))
-                base_timeout_seconds = float(timeout_seconds)
-                web_search_timeout_extension = 0.0
-                if uses_web_search:
-                    web_search_timeout_extension = float(
-                        Toolkit._config.get("web_search_timeout_extension_seconds", 45)
-                    )
-                effective_timeout_seconds = max(
-                    10.0, base_timeout_seconds + web_search_timeout_extension
+                input_summary[key] = (
+                    value[:97] + "..."
+                    if isinstance(value, str) and len(value) > 100
+                    else value
                 )
 
-                def _execute_once():
-                    # Do not use context manager here: on timeout, __exit__ waits for worker completion.
-                    # That defeats timeout enforcement and can block for several extra minutes.
-                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                    future = executor.submit(run_function)
-                    try:
-                        return future.result(timeout=effective_timeout_seconds)
-                    except concurrent.futures.TimeoutError:
-                        future.cancel()
-                        raise
-                    finally:
-                        executor.shutdown(wait=False, cancel_futures=True)
+            current_symbol = next(
+                (
+                    str(input_summary_full[key])
+                    for key in ("symbol", "ticker", "company_name")
+                    if input_summary_full.get(key)
+                ),
+                None,
+            )
 
+            print(f"[{analyst_type}] 🔧 Starting tool '{tool_name}' with inputs: {input_summary}")
+
+            semantic_retry_enabled = Toolkit._config.get("tool_semantic_retry_enabled", True)
+            max_semantic_retries = int(Toolkit._config.get("tool_semantic_retry_max_retries", 1))
+            retry_backoff_seconds = float(Toolkit._config.get("tool_semantic_retry_backoff_seconds", 0.8))
+            web_search_timeout_extension = (
+                float(Toolkit._config.get("web_search_timeout_extension_seconds", 45))
+                if uses_web_search
+                else 0.0
+            )
+            effective_timeout_seconds = max(
+                10.0, float(timeout_seconds) + web_search_timeout_extension
+            )
+
+            def _execute_once():
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                future = executor.submit(run_function)
+                try:
+                    return future.result(timeout=effective_timeout_seconds)
+                except concurrent.futures.TimeoutError:
+                    future.cancel()
+                    raise
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
+
+            try:
                 retry_count = 0
                 quality_details = {}
                 first_quality = {}
-                result = None
                 best_result = None
                 best_quality = None
 
@@ -316,35 +297,20 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                         )
                         print(f"[{analyst_type}] ⏰ {timeout_msg}")
 
-                        tool_call_info = {
-                            "timestamp": timestamp,
-                            "tool_name": tool_name,
-                            "inputs": input_summary,
-                            "output": f"TIMEOUT ERROR: {timeout_msg}",
-                            "execution_time": f"{elapsed:.2f}s",
-                            "status": "timeout",
-                            "agent_type": analyst_type,
-                            "symbol": getattr(app_state, 'analyzing_symbol', None) or getattr(app_state, 'current_symbol', None),
-                            "error_details": {
-                                "error_type": "TimeoutError",
-                                "timeout_seconds": effective_timeout_seconds,
-                                "actual_time": elapsed
-                            },
-                            "retry_count": retry_count,
+                        error_details = {
+                            "error_type": "TimeoutError",
+                            "timeout_seconds": effective_timeout_seconds,
+                            "actual_time": elapsed,
                         }
-
-                        app_state.tool_calls_log.append(tool_call_info)
-                        app_state.tool_calls_count = len(app_state.tool_calls_log)
-                        app_state.needs_ui_update = True
                         get_run_audit_logger().log_tool_call(
                             tool_name=tool_name,
                             inputs=input_summary_full,
-                            output=tool_call_info["output"],
+                            output=f"TIMEOUT ERROR: {timeout_msg}",
                             status="timeout",
                             execution_time_seconds=elapsed,
                             agent_type=analyst_type,
-                            symbol=tool_call_info["symbol"],
-                            error_details=tool_call_info.get("error_details", {}),
+                            symbol=current_symbol,
+                            error_details=error_details,
                             quality_details={"flags": ["timeout"], "is_suspect": True},
                             retry_count=retry_count,
                         )
@@ -395,7 +361,7 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                     retry_count += 1
                     get_run_audit_logger().log_event(
                         event_type="tool_retry",
-                        symbol=getattr(app_state, "analyzing_symbol", None) or getattr(app_state, "current_symbol", None),
+                        symbol=current_symbol,
                         payload={
                             "tool_name": tool_name,
                             "agent_type": analyst_type,
@@ -413,53 +379,26 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                     result = best_result
                     quality_details = best_quality
                 
-                # Calculate execution time
                 elapsed = time.time() - start_time
                 print(f"[{analyst_type}] ✅ Tool '{tool_name}' completed in {elapsed:.2f}s")
-                
-                # Format the result for display (truncate if too long)
-                result_summary = result
-                
-                # Store the complete tool call information including the output
-                # Get current symbol from app_state for filtering
-                current_symbol = getattr(app_state, 'analyzing_symbol', None) or getattr(app_state, 'current_symbol', None)
-                
-                tool_call_info = {
-                    "timestamp": timestamp,
-                    "tool_name": tool_name,
-                    "inputs": input_summary,
-                    "output": result_summary,
-                    "execution_time": f"{elapsed:.2f}s",
-                    "status": "success",
-                    "agent_type": analyst_type,  # Add agent type for filtering
-                    "symbol": current_symbol,  # Add symbol for filtering
-                    "retry_count": retry_count,
-                    "quality_details": quality_details,
-                    "initial_quality": first_quality or quality_details,
-                }
-                
-                app_state.tool_calls_log.append(tool_call_info)
-                app_state.tool_calls_count = len(app_state.tool_calls_log)
-                app_state.needs_ui_update = True
-                print(f"[TOOL TRACKER] Registered tool call: {tool_name} for {analyst_type} (Total: {app_state.tool_calls_count})")
                 get_run_audit_logger().log_tool_call(
                     tool_name=tool_name,
                     inputs=input_summary_full,
-                    output=result_summary,
+                    output=result,
                     status="success",
                     execution_time_seconds=elapsed,
                     agent_type=analyst_type,
                     symbol=current_symbol,
-                    quality_details=quality_details,
+                    quality_details={
+                        **quality_details,
+                        "initial_quality": first_quality or quality_details,
+                    },
                     retry_count=retry_count,
                 )
-                
                 return result
-                
+
             except Exception as e:
                 elapsed = time.time() - start_time
-                
-                # Enhanced error logging with detailed debugging info
                 error_details = {
                     "tool_name": tool_name,
                     "inputs": input_summary,
@@ -468,7 +407,6 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                     "error_message": str(e),
                 }
                 
-                # Add specific error handling for common issues
                 detailed_error = str(e)
                 if "api key" in str(e).lower():
                     detailed_error = f"API KEY ERROR: {str(e)}\n💡 SOLUTION: Check your API key configuration in the .env file"
@@ -489,35 +427,11 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                 print(f"   Error Message: {detailed_error}")
                 print(f"   Tool Inputs: {input_summary}")
                 
-                # Store the failed tool call information with enhanced details
                 try:
-                    from webui.utils.state import app_state
-                    import datetime
-                    timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                    
-                    # Get current symbol from app_state for filtering
-                    current_symbol = getattr(app_state, 'analyzing_symbol', None) or getattr(app_state, 'current_symbol', None)
-                    
-                    tool_call_info = {
-                        "timestamp": timestamp,
-                        "tool_name": tool_name,
-                        "inputs": input_summary,
-                        "output": f"ERROR ({error_details['error_type']}): {detailed_error}",
-                        "execution_time": f"{elapsed:.2f}s",
-                        "status": "error",
-                        "agent_type": analyst_type,  # Add agent type for filtering
-                        "symbol": current_symbol,  # Add symbol for filtering
-                        "error_details": error_details  # Add structured error details
-                    }
-                    
-                    app_state.tool_calls_log.append(tool_call_info)
-                    app_state.tool_calls_count = len(app_state.tool_calls_log)
-                    app_state.needs_ui_update = True
-                    print(f"[TOOL TRACKER] Registered failed tool call: {tool_name} for {analyst_type} (Total: {app_state.tool_calls_count})")
                     get_run_audit_logger().log_tool_call(
                         tool_name=tool_name,
                         inputs=input_summary_full,
-                        output=tool_call_info["output"],
+                        output=f"ERROR ({error_details['error_type']}): {detailed_error}",
                         status="error",
                         execution_time_seconds=elapsed,
                         agent_type=analyst_type,
@@ -528,9 +442,8 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                     )
                 except Exception as track_error:
                     print(f"[TOOL TRACKER] Failed to track failed tool call: {track_error}")
-                
-                raise  # Re-raise the exception
-                
+                raise
+
         return wrapper
     return decorator
 

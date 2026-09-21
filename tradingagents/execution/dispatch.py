@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
+from tradingagents.app_identity import get_env
 
 
 def _market_clock_closed(self, broker: Any) -> Optional[str]:
@@ -93,7 +94,7 @@ def _validate_opening_dispatch(
         validate_freshness(
             snapshot.observed_at,
             ttl_seconds=float(
-                os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
+                get_env("SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
             ),
             label="broker snapshot",
         )

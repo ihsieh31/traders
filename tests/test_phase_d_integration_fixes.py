@@ -33,11 +33,11 @@ from tradingagents.llm_clients.retry import ProviderFailure
 REDACTED = lr.REDACTED_API_KEY
 
 _ROLE_KEY_VARS = (
-    "OPENAI_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "OPENAI_USE_LOCAL", "OPENAI_BASE_URL",
-    "ANALYSIS_OPENAI_API_KEY", "DECISION_OPENAI_API_KEY",
-    "SCREENING_OPENAI_API_KEY", "ANALYSIS_FALLBACK_OPENAI_API_KEY",
+    "TRADINGBUFFETT_OPENAI_API_KEY",
+    "TRADINGBUFFETT_DEEPSEEK_API_KEY",
+    "TRADINGBUFFETT_OPENAI_USE_LOCAL", "TRADINGBUFFETT_OPENAI_BASE_URL",
+    "TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY", "TRADINGBUFFETT_DECISION_OPENAI_API_KEY",
+    "TRADINGBUFFETT_SCREENING_OPENAI_API_KEY", "TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY",
 )
 
 
@@ -59,12 +59,12 @@ def _hermetic_env(**extra):
 def _all_role_keys(**extra):
     """Deterministic role credentials for a full preflight run."""
     env = _hermetic_env(
-        ANALYSIS_OPENAI_API_KEY="sk-key-analysis",
-        DECISION_OPENAI_API_KEY="sk-key-decision",
-        SCREENING_OPENAI_API_KEY="sk-key-screening",
-        ANALYSIS_FALLBACK_OPENAI_API_KEY="sk-key-fallback",
+        TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY="sk-key-analysis",
+        TRADINGBUFFETT_DECISION_OPENAI_API_KEY="sk-key-decision",
+        TRADINGBUFFETT_SCREENING_OPENAI_API_KEY="sk-key-screening",
+        TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY="sk-key-fallback",
     )
-    env.pop("OPENAI_API_KEY", None)
+    env.pop("TRADINGBUFFETT_OPENAI_API_KEY", None)
     env.update(extra)
     return env
 
@@ -120,7 +120,7 @@ class _PreflightTest(unittest.TestCase):
         self.old_cwd = os.getcwd()
         os.chdir(self.workdir)
         self.old_env = dict(os.environ)
-        os.environ["TRADINGAGENTS_LONG_RUN_DIR"] = str(self.workdir / "longrun")
+        os.environ["TRADINGBUFFETT_LONG_RUN_DIR"] = str(self.workdir / "longrun")
         # WebUI runtime keys are a process-global credential store; keep the
         # key resolution here fully driven by the env set per test.
         from tradingagents.dataflows import config as cfgmod
@@ -169,7 +169,7 @@ class PreflightSecretsBoundaryTest(_PreflightTest):
         cfg = _valid_cfg()
         runtime = lr.build_runtime_config(cfg)
         with patch.dict(os.environ, _all_role_keys(
-            OPENAI_API_KEY="sk-live-standard-secret",
+            TRADINGBUFFETT_OPENAI_API_KEY="sk-live-standard-secret",
         )):
             lr.run_preflight(cfg, runtime, self._deps(probe))
         self.assertTrue(probe.calls)
@@ -236,7 +236,7 @@ class DefaultProbeLiveKeyResolutionTest(_PreflightTest):
 
     def test_analysis_role_uses_analysis_key(self):
         _, captured = self._run_default_probe_capture(
-            _hermetic_env(ANALYSIS_OPENAI_API_KEY="sk-role-analysis"),
+            _hermetic_env(TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY="sk-role-analysis"),
             "analysis",
         )
         self.assertEqual(captured["api_key"], "sk-role-analysis")
@@ -244,8 +244,8 @@ class DefaultProbeLiveKeyResolutionTest(_PreflightTest):
     def test_decision_role_uses_decision_key(self):
         _, captured = self._run_default_probe_capture(
             _hermetic_env(
-                ANALYSIS_OPENAI_API_KEY="sk-role-analysis",
-                DECISION_OPENAI_API_KEY="sk-role-decision",
+                TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY="sk-role-analysis",
+                TRADINGBUFFETT_DECISION_OPENAI_API_KEY="sk-role-decision",
             ),
             "decision",
         )
@@ -254,8 +254,8 @@ class DefaultProbeLiveKeyResolutionTest(_PreflightTest):
     def test_screening_role_uses_screening_key(self):
         _, captured = self._run_default_probe_capture(
             _hermetic_env(
-                ANALYSIS_OPENAI_API_KEY="sk-role-analysis",
-                SCREENING_OPENAI_API_KEY="sk-role-screening",
+                TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY="sk-role-analysis",
+                TRADINGBUFFETT_SCREENING_OPENAI_API_KEY="sk-role-screening",
             ),
             "screening",
         )
@@ -264,8 +264,8 @@ class DefaultProbeLiveKeyResolutionTest(_PreflightTest):
     def test_analysis_fallback_role_uses_fallback_key(self):
         _, captured = self._run_default_probe_capture(
             _hermetic_env(
-                ANALYSIS_OPENAI_API_KEY="sk-role-analysis",
-                ANALYSIS_FALLBACK_OPENAI_API_KEY="sk-role-fallback",
+                TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY="sk-role-analysis",
+                TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY="sk-role-fallback",
             ),
             "analysis_fallback",
         )
@@ -273,7 +273,7 @@ class DefaultProbeLiveKeyResolutionTest(_PreflightTest):
 
     def test_redacted_marker_never_reaches_client(self):
         _, captured = self._run_default_probe_capture(
-            _hermetic_env(ANALYSIS_OPENAI_API_KEY="sk-role-analysis"),
+            _hermetic_env(TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY="sk-role-analysis"),
             "analysis",
         )
         self.assertNotEqual(captured["api_key"], "***")
@@ -389,8 +389,8 @@ class FallbackPreflightTest(_PreflightTest):
         # keys, so a developer .env exporting ANALYSIS_FALLBACK_* via
         # load_dotenv() would defeat the "missing credential" scenario.
         env = _all_role_keys()
-        env.pop("ANALYSIS_FALLBACK_OPENAI_API_KEY")
-        env.pop("OPENAI_API_KEY", None)
+        env.pop("TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY")
+        env.pop("TRADINGBUFFETT_OPENAI_API_KEY", None)
         with patch.dict(os.environ, env, clear=True), patch(
             "tradingagents.llm_clients.roles.get_llm_api_key", return_value="",
         ):
@@ -513,13 +513,13 @@ class CliFallbackSetupTest(unittest.TestCase):
             return f"sk-{label.lower()}-fresh"
 
         env = _hermetic_env(
-            OPENAI_API_KEY="sk-openai-standard",
-            ALPACA_API_KEY="PK-test",
-            ALPACA_SECRET_KEY="sk-alpaca-test",
+            TRADINGBUFFETT_OPENAI_API_KEY="sk-openai-standard",
+            TRADINGBUFFETT_ALPACA_API_KEY="PK-test",
+            TRADINGBUFFETT_ALPACA_SECRET_KEY="sk-alpaca-test",
         )
         # patch.dict overlays; force the fallback provider's standard key to
         # be absent so the missing-credential prompt path is exercised.
-        env["DEEPSEEK_API_KEY"] = ""
+        env["TRADINGBUFFETT_DEEPSEEK_API_KEY"] = ""
         from tradingagents.dataflows import config as cfgmod
 
         with patch.dict(os.environ, env), patch(
@@ -545,7 +545,7 @@ class CliFallbackSetupTest(unittest.TestCase):
         fallback_confirms = [c for c in confirms if "fallback" in c.lower()]
         self.assertEqual(len(fallback_confirms), 1)
         self.assertFalse(any("fallback" in p.lower() for p in prompts))
-        self.assertNotIn("ANALYSIS_FALLBACK_OPENAI_API_KEY", secrets)
+        self.assertNotIn("TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY", secrets)
 
     def test_enable_fallback_collects_provider_model_url_and_credential(self):
         cfg, secrets, _, prompts = self._run_collect(
@@ -559,8 +559,11 @@ class CliFallbackSetupTest(unittest.TestCase):
         )
         # Fallback provider has no usable key -> one secret prompt; the
         # secret lands in the secrets dict (destined for .env), never in cfg.
-        self.assertIn("DEEPSEEK_API_KEY", secrets)
-        self.assertEqual(secrets["DEEPSEEK_API_KEY"], "sk-deepseek_api_key-fresh")
+        self.assertIn("TRADINGBUFFETT_DEEPSEEK_API_KEY", secrets)
+        self.assertEqual(
+            secrets["TRADINGBUFFETT_DEEPSEEK_API_KEY"],
+            "sk-tradingbuffett_deepseek_api_key-fresh",
+        )
         self.assertNotIn("sk-deepseek_api_key-fresh", str(cfg))
 
     def test_existing_complete_fallback_preserved_without_reask(self):
@@ -712,10 +715,9 @@ class PhaseBEnvIsolationTest(unittest.TestCase):
             result = unittest.TextTestRunner(verbosity=0).run(suite)
         self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
 
-    def test_ambient_local_switch_pollutes_unshielded_resolution(self):
-        # Sanity check that the env actually matters for a non-hermetic call:
-        # a defaulted provider flips to local_openai when the switch is set,
-        # which is exactly what the HermeticRoleTest base class shields.
+    def test_ambient_legacy_local_switch_does_not_cross_namespace(self):
+        # Legacy unprefixed variables must not affect tradingBuffett role
+        # resolution; only the namespaced variables are authoritative.
         from tradingagents.llm_clients.roles import resolve_role_config
 
         config = {
@@ -728,7 +730,7 @@ class PhaseBEnvIsolationTest(unittest.TestCase):
             "OPENAI_BASE_URL": "https://example.invalid/v1",
         }):
             resolved = resolve_role_config(dict(config))
-        self.assertEqual(resolved["analysis"].provider, "local_openai")
+        self.assertEqual(resolved["analysis"].provider, "openai")
 
 
 if __name__ == "__main__":

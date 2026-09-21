@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from tradingagents.app_identity import DEFAULT_RESULTS_DIR, validate_app_path
+
 
 def run_symbol_work(
     *,
@@ -161,7 +163,10 @@ def run_symbol_work(
             recovered = _recover_intent_from_run_log(
                 symbol, session_date,
                 observation_id=run_id,
-                results_dir=str(runtime.get("results_dir") or "eval_results"),
+                results_dir=str(validate_app_path(
+                    runtime.get("results_dir") or DEFAULT_RESULTS_DIR,
+                    field="results_dir",
+                )),
             )
             if recovered:
                 entry["trade_intent"] = recovered

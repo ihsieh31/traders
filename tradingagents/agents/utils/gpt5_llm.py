@@ -22,6 +22,7 @@ from tradingagents.openai_model_registry import (
     is_responses_model,
     normalize_model_params,
 )
+from tradingagents.app_identity import get_env
 
 
 class ToolBindingError(ValueError):
@@ -168,7 +169,7 @@ def _env_extra_headers() -> Dict[str, str]:
     ``X-Session-ID``). An entry with an empty value is skipped; malformed
     entries without a colon are ignored rather than failing every call.
     """
-    raw = os.getenv("OPENAI_EXTRA_HEADERS", "")
+    raw = get_env("OPENAI_EXTRA_HEADERS", "")
     headers: Dict[str, str] = {}
     for part in raw.replace("\n", ";").split(";"):
         entry = part.strip()
@@ -489,29 +490,6 @@ class GPT5ChatModel(BaseChatModel):
                 "usage": usage or {},
                 "error_message": error_message,
             }
-
-            # F15: UI counters update without re-emitting an audit event; the
-            # single token-bearing llm_call audit event is emitted here so
-            # Responses-model usage reaches the daily budget exactly once
-            # (the common usage callback skips adapter-marked results).
-            try:
-                from webui.utils.state import app_state
-
-                app_state.register_llm_call(
-                    model_name=self.model,
-                    purpose="gpt5_responses",
-                    latency_seconds=payload["latency_seconds"],
-                    input_chars=payload["input_chars"],
-                    output_chars=payload["output_chars"],
-                    effort=payload["effort"],
-                    verbosity=payload["verbosity"],
-                    usage=payload["usage"],
-                    status=status,
-                    error_message=error_message,
-                    write_audit=False,
-                )
-            except Exception:
-                pass
 
             if not (usage or {}).get("total_tokens"):
                 return

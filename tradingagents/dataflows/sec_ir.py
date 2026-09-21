@@ -32,6 +32,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
+from tradingagents.app_identity import (
+    APP_HOME,
+    DEFAULT_RESULTS_DIR,
+    app_home,
+    get_env,
+    validate_app_path,
+)
+
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 DOCUMENT_URL_TEMPLATE = (
@@ -114,13 +122,15 @@ class SecIrClient:
         now: Callable[[], datetime] = datetime.now,
         throttle_seconds: float = SEC_THROTTLE_SECONDS,
     ):
-        self.cache_dir = (
-            Path(cache_dir) if cache_dir else Path.home() / ".tradingagents" / "cache" / "sec_ir"
+        self.cache_dir = validate_app_path(
+            cache_dir or (app_home() / "cache" / "sec_ir"),
+            field="sec_ir_cache_dir",
         )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.user_agent = (
             user_agent
-            or f"TradingAgents research contact via env SEC_IR_USER_AGENT ({_utc_now_iso()[:10]})"
+            or get_env("SEC_IR_USER_AGENT")
+            or f"TradingBuffett research contact ({_utc_now_iso()[:10]})"
         )
         self.ir_pages = {
             str(sym).upper().replace("/", ""): url for sym, url in (ir_pages or {}).items()
@@ -447,8 +457,11 @@ def default_client_from_config(config: Optional[dict]) -> Optional[SecIrClient]:
     import os
 
     return SecIrClient(
-        cache_dir=Path(config.get("data_cache_dir") or "eval_results") / "sec_ir",
-        user_agent=os.getenv("SEC_IR_USER_AGENT") or config.get("sec_ir_user_agent"),
+        cache_dir=validate_app_path(
+            config.get("data_cache_dir") or DEFAULT_RESULTS_DIR,
+            field="data_cache_dir",
+        ) / "sec_ir",
+        user_agent=get_env("SEC_IR_USER_AGENT") or config.get("sec_ir_user_agent"),
         ir_pages=dict(config.get("company_ir_pages") or {}),
         freshness_days=dict(config.get("sec_ir_freshness_days") or {}),
     )

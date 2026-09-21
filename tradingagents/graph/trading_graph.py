@@ -17,6 +17,7 @@ from tradingagents.llm_clients.retry import (
     validate_llm_max_retries,
 )
 from tradingagents.llm_clients.roles import describe_roles, resolve_role_config
+from tradingagents.analysis_profiles import resolve_analysis_profile
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.agents.utils.memory import FinancialSituationMemory, TradingMemoryLog
@@ -28,6 +29,10 @@ from tradingagents.agents.utils.agent_states import (
 )
 from tradingagents.openai_model_registry import normalize_model_params, describe_model_params
 from tradingagents.run_logger import get_run_audit_logger
+from tradingagents.app_identity import (
+    DEFAULT_RESULTS_DIR,
+    validate_config_paths,
+)
 from tradingagents.dataflows.config import (
     get_llm_api_key,
     get_openai_base_url,
@@ -63,7 +68,10 @@ class TradingAgentsGraph:
             config: Configuration dictionary. If None, uses default config
         """
         self.debug = debug
-        self.config = config or DEFAULT_CONFIG
+        self.config = validate_config_paths(
+            DEFAULT_CONFIG if config is None else config
+        )
+        self.analysis_profile = resolve_analysis_profile(self.config)
         self.callbacks = callbacks or []
 
         # Update the interface's config
@@ -71,7 +79,7 @@ class TradingAgentsGraph:
 
         # Create necessary directories
         os.makedirs(self.config["data_cache_dir"], exist_ok=True)
-        os.makedirs(self.config.get("results_dir", "eval_results"), exist_ok=True)
+        os.makedirs(self.config.get("results_dir", DEFAULT_RESULTS_DIR), exist_ok=True)
 
         # Initialize LLMs with appropriate parameters based on model type and research depth
         deep_think_model = self.config["deep_think_llm"]
@@ -451,7 +459,7 @@ class TradingAgentsGraph:
             current_date = date.today()
 
         from tradingagents.backtest.signals import load_recorded_runs
-        forward_runs = load_recorded_runs(ticker, self.config.get("results_dir", "eval_results"))
+        forward_runs = load_recorded_runs(ticker, self.config.get("results_dir", DEFAULT_RESULTS_DIR))
         for entry in self.memory_log.get_pending_entries(ticker):
             entry_date_text = entry.get("date")
             if not entry_date_text or entry_date_text not in forward_runs:
@@ -515,7 +523,7 @@ class TradingAgentsGraph:
         try:
             from tradingagents.run_logger import load_final_state_snapshot
 
-            state = load_final_state_snapshot(ticker, trade_date, eval_results_dir=self.config.get("results_dir", "eval_results"))
+            state = load_final_state_snapshot(ticker, trade_date, eval_results_dir=self.config.get("results_dir", DEFAULT_RESULTS_DIR))
             if not state:
                 return
             alpha_text = (
@@ -625,7 +633,11 @@ class TradingAgentsGraph:
         # an unattended observation can never borrow a decision written by a
         # manual/WebUI run or a different observation. Manual CLI/WebUI runs
         # keep their own source metadata.
-        metadata = {"debug": self.debug}
+        metadata = {
+            "debug": self.debug,
+            "analysis_profile": getattr(self, "analysis_profile", None)
+            or resolve_analysis_profile(self.config),
+        }
         for marker in ("_long_run_observation_id", "_analysis_source"):
             value = self.config.get(marker)
             if value:
@@ -708,29 +720,6 @@ class TradingAgentsGraph:
             final_signal = trade_intent_action(final_state.get("final_trade_intent")) or self.process_signal(
                 final_state["final_trade_decision"]
             )
-            try:
-                from webui.utils.state import app_state
-
-                symbol_state = app_state.get_state(company_name) or {}
-                filtered_tool_calls = [
-                    call for call in app_state.tool_calls_log
-                    if call.get("symbol") == company_name
-                ]
-                run_logger.log_state_snapshot(
-                    stage="webui_runtime_context",
-                    snapshot={
-                        "session_id": symbol_state.get("session_id"),
-                        "session_start_time": symbol_state.get("session_start_time"),
-                        "agent_prompts": symbol_state.get("agent_prompts", {}),
-                        "tool_calls": filtered_tool_calls,
-                        "llm_calls_count": app_state.llm_calls_count,
-                        "tool_calls_count": app_state.tool_calls_count,
-                    },
-                    symbol=company_name,
-                )
-            except Exception:
-                pass
-
             run_logger.finish_run(
                 symbol=company_name,
                 status="completed",
@@ -798,7 +787,7 @@ class TradingAgentsGraph:
         # Save to file
         safe_ticker = safe_ticker_component(self.ticker)
         directory = (
-            Path(self.config.get("results_dir", "eval_results"))
+            Path(self.config.get("results_dir", DEFAULT_RESULTS_DIR))
             / safe_ticker
             / "TradingAgentsStrategy_logs"
         )

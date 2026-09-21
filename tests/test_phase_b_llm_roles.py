@@ -25,10 +25,10 @@ HERMETIC_ENV_OVERRIDES = {
     key: "" for key in (
         "OPENAI_USE_LOCAL",
         "OPENAI_BASE_URL",
-        "ANALYSIS_OPENAI_API_KEY",
-        "DECISION_OPENAI_API_KEY",
-        "ANALYSIS_FALLBACK_OPENAI_API_KEY",
-        "SCREENING_OPENAI_API_KEY",
+        "TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY",
+        "TRADINGBUFFETT_DECISION_OPENAI_API_KEY",
+        "TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY",
+        "TRADINGBUFFETT_SCREENING_OPENAI_API_KEY",
     )
 }
 
@@ -132,7 +132,7 @@ class RoleResolutionTests(HermeticRoleTest):
             resolve_role_config(_base_config(analysis_provider="gpt5"))
 
     def test_explicit_role_provider_not_rewritten_by_local_switch(self):
-        with patch.dict(os.environ, {"OPENAI_USE_LOCAL": "1"}):
+        with patch.dict(os.environ, {"TRADINGBUFFETT_OPENAI_USE_LOCAL": "1"}):
             resolved = resolve_role_config(
                 _base_config(
                     analysis_provider="openai",
@@ -144,7 +144,7 @@ class RoleResolutionTests(HermeticRoleTest):
         self.assertEqual(resolved["analysis"].provider, "openai")
 
     def test_global_local_switch_applies_to_defaulted_provider(self):
-        with patch.dict(os.environ, {"OPENAI_USE_LOCAL": "1"}):
+        with patch.dict(os.environ, {"TRADINGBUFFETT_OPENAI_USE_LOCAL": "1"}):
             resolved = resolve_role_config(_base_config(decision_model="local-model"))
         self.assertEqual(resolved["analysis"].provider, "local_openai")
         self.assertEqual(resolved["decision"].provider, "local_openai")
@@ -152,14 +152,14 @@ class RoleResolutionTests(HermeticRoleTest):
     def test_role_specific_key_env_overrides_provider_key(self):
         with patch.dict(
             os.environ,
-            {"DECISION_OPENAI_API_KEY": "decision-only-key", "OPENAI_API_KEY": "shared-key"},
+            {"TRADINGBUFFETT_DECISION_OPENAI_API_KEY": "decision-only-key", "TRADINGBUFFETT_OPENAI_API_KEY": "shared-key"},
         ):
             resolved = resolve_role_config(_base_config(decision_provider="openai"))
         self.assertEqual(resolved["decision_api_key"], "decision-only-key")
         self.assertEqual(resolved["analysis_api_key"], "shared-key")
 
     def test_decision_key_defaults_to_provider_key_not_analysis_copy(self):
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "shared-key"}, clear=True):
+        with patch.dict(os.environ, {"TRADINGBUFFETT_OPENAI_API_KEY": "shared-key"}, clear=True):
             resolved = resolve_role_config(_base_config(decision_provider="openai"))
         self.assertEqual(resolved["decision_api_key"], "shared-key")
         self.assertEqual(resolved["analysis_api_key"], "shared-key")

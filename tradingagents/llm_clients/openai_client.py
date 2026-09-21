@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
 from tradingagents.agents.utils.gpt5_llm import _endpoint_headers
+from tradingagents.app_identity import env_name, get_env
 
 
 def _endpoint_default_headers(
@@ -89,9 +90,9 @@ class OpenAIClient(BaseLLMClient):
         if self.provider in ("openai", "local_openai"):
             from tradingagents.agents.utils.gpt5_llm import get_chat_model
 
-            api_key = self.kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY")
+            api_key = self.kwargs.get("api_key") or get_env("OPENAI_API_KEY")
             if self.provider == "openai" and not api_key:
-                raise ValueError("Provider 'openai' requires OPENAI_API_KEY.")
+                raise ValueError(f"Provider 'openai' requires {env_name('OPENAI_API_KEY')}.")
             if self.provider == "local_openai":
                 api_key = api_key or "local-llm"
 
@@ -107,9 +108,9 @@ class OpenAIClient(BaseLLMClient):
         default_base, api_key_env = _PROVIDER_CONFIG[self.provider]
         llm_kwargs["base_url"] = self.base_url or default_base
         if api_key_env:
-            api_key = self.kwargs.get("api_key") or os.environ.get(api_key_env)
+            api_key = self.kwargs.get("api_key") or get_env(api_key_env)
             if not api_key:
-                raise ValueError(f"Provider '{self.provider}' requires {api_key_env}.")
+                raise ValueError(f"Provider '{self.provider}' requires {env_name(api_key_env)}.")
             llm_kwargs["api_key"] = api_key
         else:
             llm_kwargs["api_key"] = self.kwargs.get("api_key") or "ollama"

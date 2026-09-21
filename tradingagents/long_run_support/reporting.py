@@ -11,6 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from tradingagents.app_identity import (
+    DEFAULT_RESULTS_DIR,
+    default_results_dir,
+    validate_app_path,
+)
+
 
 def _load_snapshots(
     run_id: str, *, run_dir: Callable[[str], Path],
@@ -237,7 +243,10 @@ def aggregate_final_report(
         from tradingagents.llm_cost import aggregate_costs, scan_run_costs
 
         records = scan_run_costs(
-            eval_results_dir=runtime.get("results_dir", "eval_results"),
+            eval_results_dir=validate_app_path(
+                runtime.get("results_dir") or default_results_dir(),
+                field="results_dir",
+            ),
             overrides=runtime.get("llm_pricing_per_million"),
             metadata_match={"long_run_observation_id": run_id},
         )

@@ -598,7 +598,7 @@ class HonestPresentationTests(unittest.TestCase):
         import tradingagents.long_run as lr
 
         with tempfile.TemporaryDirectory() as tmp:
-            os_env_patch = patch.dict("os.environ", {"TRADINGAGENTS_LONG_RUN_DIR": tmp})
+            os_env_patch = patch.dict("os.environ", {"TRADINGBUFFETT_LONG_RUN_DIR": tmp})
             os_env_patch.start()
             self.addCleanup(os_env_patch.stop)
 

@@ -4,8 +4,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from tradingagents.app_identity import env_name, validate_app_path
 
-PROMPT_DIR_ENV = "TRADINGAGENTS_PROMPT_DIR"
+
+PROMPT_DIR_ENV = env_name("PROMPT_DIR")
 _DEFAULT_TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 
@@ -17,7 +19,10 @@ def _template_roots() -> list[Path]:
     configured = os.getenv(PROMPT_DIR_ENV)
     roots = []
     if configured:
-        roots.append(Path(configured).expanduser())
+        try:
+            roots.append(validate_app_path(configured, field="prompt_dir"))
+        except ValueError as exc:
+            raise PromptTemplateError(str(exc)) from exc
     roots.append(_DEFAULT_TEMPLATE_DIR)
     return roots
 

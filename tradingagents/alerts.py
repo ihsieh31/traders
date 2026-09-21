@@ -21,6 +21,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
+from tradingagents.app_identity import get_env
+
 _DEDUPE_LOCK = threading.Lock()
 _LAST_SENT: Dict[str, float] = {}
 
@@ -40,14 +42,14 @@ class AlertConfig:
             enabled=bool(cfg.get("alerts_enabled", True)),
             telegram_bot_token=str(
                 cfg.get("alert_telegram_bot_token")
-                or os.getenv("ALERT_TELEGRAM_BOT_TOKEN", "")
+                or get_env("ALERT_TELEGRAM_BOT_TOKEN", "")
             ),
             telegram_chat_id=str(
                 cfg.get("alert_telegram_chat_id")
-                or os.getenv("ALERT_TELEGRAM_CHAT_ID", "")
+                or get_env("ALERT_TELEGRAM_CHAT_ID", "")
             ),
             webhook_url=str(
-                cfg.get("alert_webhook_url") or os.getenv("ALERT_WEBHOOK_URL", "")
+                cfg.get("alert_webhook_url") or get_env("ALERT_WEBHOOK_URL", "")
             ),
             cooldown_seconds=float(cfg.get("alert_cooldown_seconds", 900.0) or 900.0),
         )

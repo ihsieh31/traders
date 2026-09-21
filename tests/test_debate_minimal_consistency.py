@@ -130,11 +130,11 @@ class PromptOverrideCleanupMixin(unittest.TestCase):
     """Use the built-in templates: drop any external prompt override."""
 
     def setUp(self):
-        self._old_prompt_dir = os.environ.pop("TRADINGAGENTS_PROMPT_DIR", None)
+        self._old_prompt_dir = os.environ.pop("TRADINGBUFFETT_PROMPT_DIR", None)
 
     def tearDown(self):
         if self._old_prompt_dir is not None:
-            os.environ["TRADINGAGENTS_PROMPT_DIR"] = self._old_prompt_dir
+            os.environ["TRADINGBUFFETT_PROMPT_DIR"] = self._old_prompt_dir
 
 
 class TraderFallbackContextTests(PromptOverrideCleanupMixin):

@@ -8,13 +8,7 @@ import json
 import re
 from tradingagents.prompts import load_prompt, render_prompt
 
-# Import prompt capture utility
-try:
-    from webui.utils.prompt_capture import capture_agent_prompt
-except ImportError:
-    # Fallback for when webui is not available
-    def capture_agent_prompt(report_type, prompt_content, symbol=None):
-        pass
+from tradingagents.prompt_capture import capture_agent_prompt
 
 
 def _normalize_market_report_markdown(content: str) -> str:

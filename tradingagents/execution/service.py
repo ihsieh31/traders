@@ -16,6 +16,8 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from tradingagents.app_identity import app_home, get_env, validate_app_path
+
 from tradingagents.execution import protection as _protection
 from tradingagents.execution import recovery as _recovery
 from tradingagents.execution import dispatch as _dispatch
@@ -52,7 +54,7 @@ __all__ = [
     "is_valid_order_transition",
 ]
 
-_DEFAULT_DB = "eval_results/execution.db"
+_DEFAULT_DB = str(app_home() / "execution" / "execution.sqlite3")
 _TIMEOUT_MARKERS = _requests._TIMEOUT_MARKERS
 
 
@@ -100,16 +102,16 @@ def resolve_execution_db_path(explicit: Optional[str | Path] = None) -> str:
     """Single execution-DB path resolver (F13): service and reports share it.
 
     Precedence: 1) explicit caller/runtime path, 2) the current
-    ``TRADINGAGENTS_EXECUTION_DB`` environment value read at call time
+    ``TRADINGBUFFETT_EXECUTION_DB`` environment value read at call time
     (never frozen at import), 3) the literal default. No default DB is
     created or opened here — callers decide when to open the store.
     """
     if explicit:
-        return str(explicit)
-    env_value = os.getenv("TRADINGAGENTS_EXECUTION_DB", "").strip()
+        return str(validate_app_path(explicit, field="execution_db"))
+    env_value = str(get_env("EXECUTION_DB", "")).strip()
     if env_value:
-        return env_value
-    return "eval_results/execution.db"
+        return str(validate_app_path(env_value, field="execution_db"))
+    return str(validate_app_path(app_home() / "execution" / "execution.sqlite3", field="execution_db"))
 
 
 def _default_db_path() -> str:

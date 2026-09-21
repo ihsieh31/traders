@@ -395,7 +395,7 @@ class F08AccountLockTests(unittest.TestCase):
     def test_f8_t1_same_account_different_db_dirs_share_one_lock(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
                 tempfile.TemporaryDirectory() as locks, \
-                patch.dict(os.environ, {"TRADINGAGENTS_EXECUTION_LOCK_DIR": locks}):
+                patch.dict(os.environ, {"TRADINGBUFFETT_EXECUTION_LOCK_DIR": locks}):
             lock_a = AccountExecutionLock(str(Path(a) / "execution.db"), PAPER)
             lock_b = AccountExecutionLock(str(Path(b) / "execution.db"), PAPER)
             self.assertEqual(lock_a.path, lock_b.path)
@@ -406,7 +406,7 @@ class F08AccountLockTests(unittest.TestCase):
 
     def test_f8_t2_different_accounts_use_different_locks(self):
         with tempfile.TemporaryDirectory() as locks, \
-                patch.dict(os.environ, {"TRADINGAGENTS_EXECUTION_LOCK_DIR": locks}):
+                patch.dict(os.environ, {"TRADINGBUFFETT_EXECUTION_LOCK_DIR": locks}):
             lock_a = AccountExecutionLock("whatever.db", "paper-A")
             lock_b = AccountExecutionLock("whatever.db", "paper-B")
             self.assertNotEqual(lock_a.path, lock_b.path)
@@ -416,19 +416,19 @@ class F08AccountLockTests(unittest.TestCase):
 
     def test_f8_t3_env_override_controls_the_lock_directory(self):
         with tempfile.TemporaryDirectory() as locks, \
-                patch.dict(os.environ, {"TRADINGAGENTS_EXECUTION_LOCK_DIR": locks}):
+                patch.dict(os.environ, {"TRADINGBUFFETT_EXECUTION_LOCK_DIR": locks}):
             lock = AccountExecutionLock("/any/db/path.db", PAPER)
             self.assertEqual(lock.path.parent, Path(locks))
             self.assertTrue(str(lock.path).startswith(str(locks)))
 
     def test_f8_t4_default_location_is_home_scoped(self):
         env = {k: v for k, v in os.environ.items()
-               if k != "TRADINGAGENTS_EXECUTION_LOCK_DIR"}
+               if k != "TRADINGBUFFETT_EXECUTION_LOCK_DIR"}
         with tempfile.TemporaryDirectory() as fake_home, \
                 patch.dict(os.environ, env, clear=True), \
                 patch.object(Path, "home", return_value=Path(fake_home)):
             lock = AccountExecutionLock("/any/db/path.db", PAPER)
-            expected = Path(fake_home) / ".tradingagents" / "execution-locks"
+            expected = Path(fake_home) / ".tradingbuffett" / "execution-locks"
             self.assertEqual(lock.path.parent, expected)
 
 

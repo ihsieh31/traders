@@ -15,10 +15,10 @@ class LocalLLMConfigTests(unittest.TestCase):
         self.original_config = config_module.get_config()
         self.original_runtime_keys = config_module.get_runtime_api_keys()
         self.original_env = {
-            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
-            "OPENAI_USE_LOCAL": os.environ.get("OPENAI_USE_LOCAL"),
-            "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL"),
-            "OPENAI_EMBEDDING_MODEL": os.environ.get("OPENAI_EMBEDDING_MODEL"),
+            "TRADINGBUFFETT_OPENAI_API_KEY": os.environ.get("TRADINGBUFFETT_OPENAI_API_KEY"),
+            "TRADINGBUFFETT_OPENAI_USE_LOCAL": os.environ.get("TRADINGBUFFETT_OPENAI_USE_LOCAL"),
+            "TRADINGBUFFETT_OPENAI_BASE_URL": os.environ.get("TRADINGBUFFETT_OPENAI_BASE_URL"),
+            "TRADINGBUFFETT_OPENAI_EMBEDDING_MODEL": os.environ.get("TRADINGBUFFETT_OPENAI_EMBEDDING_MODEL"),
         }
 
         config_module.clear_runtime_api_keys()
@@ -73,8 +73,8 @@ class LocalLLMConfigTests(unittest.TestCase):
         self.assertEqual(client_config, {"api_key": "sk-test"})
 
     def test_environment_variables_enable_local_mode(self):
-        os.environ["OPENAI_USE_LOCAL"] = "true"
-        os.environ["OPENAI_BASE_URL"] = "http://localhost:11434/v1"
+        os.environ["TRADINGBUFFETT_OPENAI_USE_LOCAL"] = "true"
+        os.environ["TRADINGBUFFETT_OPENAI_BASE_URL"] = "http://localhost:11434/v1"
 
         self.assertTrue(config_module.is_local_openai_enabled())
         self.assertEqual(config_module.get_openai_base_url(), "http://localhost:11434/v1")
@@ -84,7 +84,7 @@ class LocalLLMConfigTests(unittest.TestCase):
         )
 
     def test_embedding_model_can_be_overridden(self):
-        os.environ["OPENAI_EMBEDDING_MODEL"] = "nomic-embed-text"
+        os.environ["TRADINGBUFFETT_OPENAI_EMBEDDING_MODEL"] = "nomic-embed-text"
         self.assertEqual(config_module.get_openai_embedding_model(), "nomic-embed-text")
 
 

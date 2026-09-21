@@ -176,7 +176,7 @@ class IsolatedTest(unittest.TestCase):
         self.old_cwd = os.getcwd()
         os.chdir(self.workdir)
         self.old_env = dict(os.environ)
-        os.environ["TRADINGAGENTS_LONG_RUN_DIR"] = str(self.workdir / "longrun")
+        os.environ["TRADINGBUFFETT_LONG_RUN_DIR"] = str(self.workdir / "longrun")
         # Fast deterministic sizing (no network) for every round test.
         self._regime = patch(
             "tradingagents.regime.regime_risk_multiplier", return_value=1.0)
@@ -187,7 +187,7 @@ class IsolatedTest(unittest.TestCase):
         self._portfolio.start()
         # Isolate the process-global safety guard: the real one persists a
         # kill-switch flag and equity high-water mark under
-        # ~/.tradingagents/safety, so leftover operator state would fail
+        # ~/.tradingbuffett/safety, so leftover operator state would fail
         # every execution-path test with a stale KILL_SWITCH.
         from tradingagents.safety import SafetyGuard
 

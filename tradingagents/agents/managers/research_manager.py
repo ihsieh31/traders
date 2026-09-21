@@ -14,13 +14,7 @@ from ..utils.memory import TradingMemoryLog
 from ..utils.structured import bind_structured, invoke_structured_or_freetext
 from tradingagents.prompts import render_prompt
 
-# Import prompt capture utility
-try:
-    from webui.utils.prompt_capture import capture_agent_prompt
-except ImportError:
-    # Fallback for when webui is not available
-    def capture_agent_prompt(report_type, prompt_content, symbol=None):
-        pass
+from tradingagents.prompt_capture import capture_agent_prompt
 
 
 def create_research_manager(llm, memory, config=None):

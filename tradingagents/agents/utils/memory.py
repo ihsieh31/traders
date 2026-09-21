@@ -8,6 +8,7 @@ import re
 import uuid
 from tradingagents.dataflows.config import get_embedding_client_config, get_openai_embedding_model
 from tradingagents.agents.utils.agent_trading_modes import extract_recommendation
+from tradingagents.app_identity import validate_app_path
 
 
 class FinancialSituationMemory:
@@ -32,6 +33,8 @@ class FinancialSituationMemory:
         self.embeddings_enabled = self.client is not None
         self._warned_embedding_failure = False
         persist_dir = (config or {}).get("agent_memory_dir") or ""
+        if persist_dir:
+            persist_dir = str(validate_app_path(persist_dir, field="agent_memory_dir"))
         try:
             if persist_dir:
                 # Persistent store: lessons written after outcome resolution
@@ -226,7 +229,9 @@ class TradingMemoryLog:
         cfg = config or {}
         self.retrieval_enabled = bool(cfg.get("memory_retrieval_enabled", False))
         path = cfg.get("memory_log_path")
-        self._log_path = Path(path).expanduser() if path else None
+        self._log_path = (
+            validate_app_path(path, field="memory_log_path") if path else None
+        )
         if self._log_path:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
         self._max_entries = cfg.get("memory_log_max_entries")

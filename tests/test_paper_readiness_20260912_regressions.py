@@ -49,9 +49,9 @@ def isolated(tmp_path, monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", Mock(side_effect=AssertionError("network forbidden")))
     monkeypatch.setattr(socket, "create_connection", Mock(side_effect=AssertionError("network forbidden")))
-    monkeypatch.setenv("TRADINGAGENTS_EXECUTION_LOCK_DIR", str(tmp_path / "locks"))
-    monkeypatch.setenv("TRADINGAGENTS_LONG_RUN_DIR", str(tmp_path / "long_run"))
-    monkeypatch.setenv("TRADINGAGENTS_EXECUTION_DB", str(tmp_path / "execution.db"))
+    monkeypatch.setenv("TRADINGBUFFETT_EXECUTION_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "long_run"))
+    monkeypatch.setenv("TRADINGBUFFETT_EXECUTION_DB", str(tmp_path / "execution.db"))
     monkeypatch.setattr(lr, "_stop_requested", False)
     config = {**DEFAULT_CONFIG, "auto_screening_enabled": False, "allow_shorts": False,
               "data_cache_dir": str(tmp_path / "cache"), "alerts_enabled": False,

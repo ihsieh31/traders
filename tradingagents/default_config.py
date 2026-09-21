@@ -1,24 +1,35 @@
 import os
 
-_TRADINGAGENTS_HOME = os.path.join(os.path.expanduser("~"), ".tradingagents")
+from tradingagents.app_identity import (
+    APP_HOME,
+    DEFAULT_RESULTS_DIR,
+    PROJECT_ROOT,
+    get_env,
+    load_namespaced_dotenv,
+    validate_app_path,
+)
+
+load_namespaced_dotenv()
 
 DEFAULT_CONFIG = {
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
-    "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR", "eval_results"),
-    "memory_log_path": os.getenv(
-        "TRADINGAGENTS_MEMORY_LOG_PATH",
-        os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
-    ),
+    "results_dir": str(validate_app_path(
+        get_env("RESULTS_DIR", str(DEFAULT_RESULTS_DIR)), field="results_dir"
+    )),
+    "memory_log_path": str(validate_app_path(
+        get_env("MEMORY_LOG_PATH", str(APP_HOME / "memory" / "trading_memory.md")),
+        field="memory_log_path",
+    )),
     "memory_log_max_entries": None,
     # Paper observation: retrieval ON. Embeddings route to the Gemini
-    # OpenAI-compatible endpoint (see OPENAI_EMBEDDING_* in .env).
+    # OpenAI-compatible endpoint (see TRADINGBUFFETT_OPENAI_EMBEDDING_* in .env).
     "memory_retrieval_enabled": True,
     # Self-learning memory: when set, the per-agent ChromaDB reflection
     # memories persist across restarts instead of resetting each session.
-    "agent_memory_dir": os.getenv(
-        "TRADINGAGENTS_AGENT_MEMORY_DIR",
-        os.path.join(_TRADINGAGENTS_HOME, "memory", "agent_memory"),
-    ),
+    "agent_memory_dir": str(validate_app_path(
+        get_env("AGENT_MEMORY_DIR", str(APP_HOME / "memory" / "agent_memory")),
+        field="agent_memory_dir",
+    )),
     # Feed realized outcomes back into the per-agent memories (5 quick-LLM
     # reflection calls per resolved decision). Requires OpenAI embeddings.
     "reflection_on_outcome_enabled": True,
@@ -32,17 +43,17 @@ DEFAULT_CONFIG = {
     "checkpoint_enabled": False,
     # "data_dir": "/Users/yluo/Documents/Code/ScAI/FR1-data",
     "data_dir": "data/ScAI/FR1-data",
-    "data_cache_dir": os.getenv(
-        "TRADINGAGENTS_CACHE_DIR",
-        os.path.join(
-            os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
-            "dataflows/data_cache",
+    "data_cache_dir": str(validate_app_path(
+        get_env(
+            "CACHE_DIR",
+            str(PROJECT_ROOT / "tradingagents" / "dataflows" / "data_cache"),
         ),
-    ),
+        field="data_cache_dir",
+    )),
     # LLM settings
-    "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
-    "deep_think_llm": os.getenv("DEEP_THINK_LLM", "ling-3.0-flash-fin"),
-    "quick_think_llm": os.getenv("QUICK_THINK_LLM", "ling-3.0-flash-fin"),
+    "llm_provider": get_env("LLM_PROVIDER", "openai"),
+    "deep_think_llm": get_env("DEEP_THINK_LLM", "ling-3.0-flash-fin"),
+    "quick_think_llm": get_env("QUICK_THINK_LLM", "ling-3.0-flash-fin"),
     "backend_url": None,
     "google_thinking_level": None,
     "openai_reasoning_effort": None,
@@ -66,6 +77,9 @@ DEFAULT_CONFIG = {
     "analysis_provider": None,
     "analysis_model": None,
     "analysis_backend_url": None,
+    # Analyst research methodology.  The graph and all downstream decision
+    # nodes stay shared across profiles for controlled A/B experiments.
+    "analysis_profile": "traders",
     # Optional Analysis-only provider failover for the same intended model:
     # provider/model required as a pair (endpoint optional) — any subset
     # fails at startup. Enabled purely by presence of the pair; transient
@@ -80,9 +94,9 @@ DEFAULT_CONFIG = {
     # Phase B LLM retry policy: first try + at most N retries = at most N+1
     # actual requests per logical LLM invocation. Integer 0-3 only; anything
     # else fails at startup. 0 disables retries entirely.
-    "llm_max_retries": int(os.getenv("LLM_MAX_RETRIES", "3")),
+    "llm_max_retries": int(get_env("LLM_MAX_RETRIES", "3")),
     "llm_request_timeout_seconds": float(
-        os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "120.0")
+        get_env("LLM_REQUEST_TIMEOUT_SECONDS", "120.0")
     ),
     "quick_llm_params": {
         "reasoning_effort": "low",
@@ -115,9 +129,9 @@ DEFAULT_CONFIG = {
     "daily_llm_token_budget": 0,
     # Operational alerts (Telegram / webhook; stdlib-only, failure-isolated)
     "alerts_enabled": True,  # Master switch; channels below must also be configured
-    "alert_telegram_bot_token": None,  # Or env ALERT_TELEGRAM_BOT_TOKEN
-    "alert_telegram_chat_id": None,  # Or env ALERT_TELEGRAM_CHAT_ID
-    "alert_webhook_url": None,  # Generic JSON webhook; or env ALERT_WEBHOOK_URL
+    "alert_telegram_bot_token": None,  # Or env TRADINGBUFFETT_ALERT_TELEGRAM_BOT_TOKEN
+    "alert_telegram_chat_id": None,  # Or env TRADINGBUFFETT_ALERT_TELEGRAM_CHAT_ID
+    "alert_webhook_url": None,  # Generic JSON webhook; or env TRADINGBUFFETT_ALERT_WEBHOOK_URL
     "alert_cooldown_seconds": 900,  # Identical alerts suppressed within this window
     # Portfolio-level intelligence (deterministic sizing above per-symbol decisions)
     "portfolio_intelligence_enabled": True,  # Master switch for portfolio-aware sizing of new long exposure
@@ -213,7 +227,7 @@ DEFAULT_CONFIG = {
     # and news fallbacks. No scraping framework; stdlib HTTP with bounded
     # timeout/response size, official-host checks, SEC User-Agent, throttle.
     "sec_ir_enabled": True,
-    "sec_ir_user_agent": None,  # SEC policy requires a contact UA; env SEC_IR_USER_AGENT overrides
+    "sec_ir_user_agent": None,  # SEC policy requires a contact UA; env TRADINGBUFFETT_SEC_IR_USER_AGENT overrides
     "sec_ir_freshness_days": {"10-K": 500, "10-Q": 130, "8-K": 30, "ir": 14},
     # Explicit company IR publication pages. Missing entry => reported as
     # missing; never guessed. Example: {"AAPL": "https://investor.apple.com/"}

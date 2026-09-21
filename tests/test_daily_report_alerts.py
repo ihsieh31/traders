@@ -264,7 +264,7 @@ class RunLoggerSecretTests(unittest.TestCase):
                     },
                 )
                 logger.finish_run(run_id=run_id)
-                path = next(Path("eval_results").glob("**/runs/*.json"))
+                path = next(Path(os.environ["TRADINGBUFFETT_RESULTS_DIR"]).glob("**/runs/*.json"))
                 stored = json.loads(path.read_text(encoding="utf-8"))["config"]
             finally:
                 os.chdir(cwd)

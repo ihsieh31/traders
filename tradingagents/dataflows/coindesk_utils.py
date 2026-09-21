@@ -30,8 +30,8 @@ def get_news(symbol: str, n: int = 5, curr_date: str = None):
 
     api_key = get_api_key("coindesk_api_key", "COINDESK_API_KEY")
     if not api_key:
-        print("COINDESK_API_KEY not found in environment variables.")
-        return "COINDESK_API_KEY not found in environment variables."
+        print("TRADINGBUFFETT_COINDESK_API_KEY not found in environment variables.")
+        return "TRADINGBUFFETT_COINDESK_API_KEY not found in environment variables."
 
     url = f"https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories={symbol}"
 
@@ -69,4 +69,4 @@ def get_news(symbol: str, n: int = 5, curr_date: str = None):
     except requests.exceptions.RequestException as e:
         return f"Error fetching news from CryptoCompare: {e}"
     except Exception as e:
-        return f"An error occurred: {e}" 
+        return f"An error occurred: {e}"

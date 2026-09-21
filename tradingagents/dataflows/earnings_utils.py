@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Annotated, Dict, List, Optional
 from .config import get_api_key, DATA_DIR
-import os
+from tradingagents.app_identity import get_env
 import pandas as pd
 
 
@@ -12,7 +12,7 @@ def get_earnings_calendar_api_key():
     # Try to get from config first, then environment
     api_key = get_api_key("EARNINGS_CALENDAR_API_KEY")
     if not api_key:
-        api_key = os.getenv("EARNINGS_CALENDAR_API_KEY")
+        api_key = get_env("EARNINGS_CALENDAR_API_KEY")
     return api_key
 
 
@@ -244,4 +244,4 @@ def get_earnings_surprises_analysis(
         return result
         
     except Exception as e:
-        return f"Error analyzing earnings surprises for {ticker}: {str(e)}" 
+        return f"Error analyzing earnings surprises for {ticker}: {str(e)}"

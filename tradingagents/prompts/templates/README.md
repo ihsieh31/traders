@@ -10,6 +10,7 @@ Python graph code. Placeholders such as `{ticker}`, `{analysis_content}`, and
 
 - `shared/`: reusable collaboration and final recommendation scaffolding.
 - `analysts/`: market, social, news, fundamentals, and macro analyst prompts.
+- `berkshire/`: Berkshire-method research prompts for the controlled analysis A/B profile.
 - `researchers/`: bull and bear investment debate prompts.
 - `managers/`: research manager and final risk manager prompts.
 - `trader/`: trader system, plan, fallback, and final decision prompts.
@@ -21,7 +22,7 @@ To keep local prompt edits outside the repository, copy selected templates
 elsewhere and set:
 
 ```bash
-TRADINGAGENTS_PROMPT_DIR=/path/to/your/prompt/templates
+TRADINGBUFFETT_PROMPT_DIR=/path/to/your/prompt/templates
 ```
 
 The override directory only needs the files you want to override. Keep the same

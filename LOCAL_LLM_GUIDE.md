@@ -19,12 +19,12 @@ Environment-variable setup
 Create a `.env` file with:
 
 ```env
-OPENAI_USE_LOCAL=true
-OPENAI_BASE_URL=http://localhost:1234/v1
-OPENAI_API_KEY=local-llm
+TRADINGBUFFETT_OPENAI_USE_LOCAL=true
+TRADINGBUFFETT_OPENAI_BASE_URL=http://localhost:1234/v1
+TRADINGBUFFETT_OPENAI_API_KEY=local-llm
 
 # Optional when your endpoint exposes embeddings under a custom model name
-OPENAI_EMBEDDING_MODEL=text-embedding-ada-002
+TRADINGBUFFETT_OPENAI_EMBEDDING_MODEL=text-embedding-ada-002
 ```
 
 Model configuration

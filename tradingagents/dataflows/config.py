@@ -1,11 +1,15 @@
 # -------------------------------- config.py -----------------------
-import tradingagents.default_config as default_config
 from typing import Dict, Optional
-import os
-from dotenv import load_dotenv
+from tradingagents.app_identity import (
+    get_env,
+    load_namespaced_dotenv,
+    validate_config_paths,
+)
 
 # Load environment variables from .env file
-load_dotenv()
+load_namespaced_dotenv()
+
+import tradingagents.default_config as default_config
 
 # Use default config but allow it to be overridden
 _config: Optional[Dict] = None
@@ -19,7 +23,7 @@ def initialize_config():
     """Initialize the configuration with default values."""
     global _config, DATA_DIR
     if _config is None:
-        _config = default_config.DEFAULT_CONFIG.copy()
+        _config = validate_config_paths(default_config.DEFAULT_CONFIG)
         DATA_DIR = _config["data_dir"]
 
 
@@ -27,8 +31,8 @@ def set_config(config: Dict):
     """Update the configuration with custom values."""
     global _config, DATA_DIR
     if _config is None:
-        _config = default_config.DEFAULT_CONFIG.copy()
-    _config.update(config)
+        _config = validate_config_paths(default_config.DEFAULT_CONFIG)
+    _config.update(validate_config_paths(config))
     DATA_DIR = _config["data_dir"]
 
 
@@ -59,7 +63,7 @@ def clear_runtime_api_keys():
     _runtime_api_keys = {}
 
 
-def get_api_key(key_name: str, env_var_name: str) -> str:
+def get_api_key(key_name: str, env_var_name: Optional[str] = None) -> str:
     """
     Get API key with priority:
     1. Runtime API keys (set from WebUI)
@@ -70,8 +74,8 @@ def get_api_key(key_name: str, env_var_name: str) -> str:
     if key_name in _runtime_api_keys and _runtime_api_keys[key_name] is not None:
         return _runtime_api_keys[key_name]
     
-    # Then check environment variables
-    api_key = os.getenv(env_var_name)
+    # Then check this application's namespaced environment variables.
+    api_key = get_env(env_var_name or key_name)
     
     # If not found, check config
     if api_key is None and _config is not None and key_name in _config:
@@ -90,7 +94,7 @@ def _coerce_bool(value) -> bool:
 
 def is_local_openai_enabled() -> bool:
     """Return True when LLM calls should use an OpenAI-compatible local endpoint."""
-    env_value = os.getenv("OPENAI_USE_LOCAL")
+    env_value = get_env("OPENAI_USE_LOCAL")
     if env_value is not None:
         return _coerce_bool(env_value)
     config = get_config()
@@ -100,7 +104,7 @@ def is_local_openai_enabled() -> bool:
 def get_openai_base_url() -> Optional[str]:
     """Get the configured OpenAI-compatible base URL, if any."""
     config = get_config()
-    base_url = os.getenv("OPENAI_BASE_URL") or config.get("openai_base_url")
+    base_url = get_env("OPENAI_BASE_URL") or config.get("openai_base_url")
     return str(base_url).strip() if base_url else None
 
 
@@ -108,7 +112,7 @@ def get_openai_embedding_model() -> str:
     """Return the embedding model name used by reflection memory."""
     config = get_config()
     return (
-        os.getenv("OPENAI_EMBEDDING_MODEL")
+        get_env("OPENAI_EMBEDDING_MODEL")
         or config.get("openai_embedding_model")
         or "text-embedding-ada-002"
     )
@@ -151,10 +155,10 @@ def get_embedding_client_config() -> Dict[str, str]:
         in local mode, where the chat path falls back to a placeholder key.
     """
     client_config = get_openai_client_config()
-    emb_base = os.getenv("OPENAI_EMBEDDING_BASE_URL")
+    emb_base = get_env("OPENAI_EMBEDDING_BASE_URL")
     if emb_base and emb_base.strip():
         client_config["base_url"] = emb_base.strip()
-    emb_key = os.getenv("OPENAI_EMBEDDING_API_KEY")
+    emb_key = get_env("OPENAI_EMBEDDING_API_KEY")
     if emb_key and emb_key.strip():
         client_config["api_key"] = emb_key.strip()
     return client_config

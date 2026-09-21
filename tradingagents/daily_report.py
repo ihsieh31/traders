@@ -16,9 +16,11 @@ from datetime import date
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from tradingagents.app_identity import default_results_dir, validate_app_path
+
 
 def _day_runs(eval_results_dir: str, day: str) -> List[dict]:
-    root = Path(eval_results_dir)
+    root = validate_app_path(eval_results_dir, field="results_dir")
     if not root.is_dir():
         return []
     runs = []
@@ -87,7 +89,7 @@ def _cost_section(day: str, config: dict) -> List[str]:
         from tradingagents.llm_cost import aggregate_costs, scan_run_costs
 
         records = scan_run_costs(
-            eval_results_dir=config.get("results_dir", "eval_results"),
+            eval_results_dir=config.get("results_dir") or default_results_dir(),
             overrides=config.get("llm_pricing_per_million"),
         )
         day_bucket = aggregate_costs(records)["per_day"].get(day)
@@ -151,7 +153,7 @@ def generate_daily_report(
         except Exception:
             guard = None
 
-    runs = _day_runs(config.get("results_dir", "eval_results"), day)
+    runs = _day_runs(config.get("results_dir") or default_results_dir(), day)
     parts: List[str] = [f"# Daily Trading Report — {day}", ""]
     for line in extra_header or []:
         parts.append(f"> {line}")

@@ -22,6 +22,7 @@ from .metrics import (
     summarize_performance,
 )
 from .signals import load_recorded_signals
+from tradingagents.app_identity import default_results_dir, validate_app_path
 
 
 _BPS = 1e-4  # one basis point as a fraction
@@ -372,7 +373,7 @@ def run_recorded_backtest(
     symbol: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    eval_results_dir: str = "eval_results",
+    eval_results_dir: str | None = None,
     price_loader: Optional[Callable[[str, str, Optional[str]], pd.DataFrame]] = None,
     **backtest_kwargs,
 ) -> BacktestResult:
@@ -382,11 +383,14 @@ def run_recorded_backtest(
     from Alpaca (with its existing yfinance fallback). `price_loader` exists
     for tests and alternative data sources.
     """
-    signals = load_recorded_signals(symbol, eval_results_dir=eval_results_dir)
+    results_root = validate_app_path(
+        eval_results_dir or default_results_dir(), field="results_dir"
+    )
+    signals = load_recorded_signals(symbol, eval_results_dir=results_root)
     if not signals:
         raise ValueError(
             f"No recorded completed runs with final signals found for {symbol} "
-            f"under {eval_results_dir}/."
+            f"under {results_root}/."
         )
 
     first_signal = min(signals)
@@ -417,17 +421,20 @@ def run_recorded_walk_forward(
     symbol: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    eval_results_dir: str = "eval_results",
+    eval_results_dir: str | None = None,
     price_loader: Optional[Callable[[str, str, Optional[str]], pd.DataFrame]] = None,
     window_bars: int = 63,
     **backtest_kwargs,
 ) -> WalkForwardResult:
     """Walk-forward evaluation of this deployment's recorded decisions."""
-    signals = load_recorded_signals(symbol, eval_results_dir=eval_results_dir)
+    results_root = validate_app_path(
+        eval_results_dir or default_results_dir(), field="results_dir"
+    )
+    signals = load_recorded_signals(symbol, eval_results_dir=results_root)
     if not signals:
         raise ValueError(
             f"No recorded completed runs with final signals found for {symbol} "
-            f"under {eval_results_dir}/."
+            f"under {results_root}/."
         )
 
     start = start_date or min(signals)

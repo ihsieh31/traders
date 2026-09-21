@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any, Generator
 
 from tradingagents.dataflows.utils import safe_ticker_component
+from tradingagents.app_identity import validate_app_path
 
 
 def _db_path(data_dir: str | Path, ticker: str) -> Path:
     safe = safe_ticker_component(ticker).upper()
-    cp_dir = Path(data_dir) / "checkpoints"
+    cp_dir = validate_app_path(data_dir, field="data_cache_dir") / "checkpoints"
     cp_dir.mkdir(parents=True, exist_ok=True)
     return cp_dir / f"{safe}.db"
 

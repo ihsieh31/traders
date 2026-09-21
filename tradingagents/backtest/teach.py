@@ -13,6 +13,7 @@ import pandas as pd
 
 from .engine import normalize_price_frame
 from .signals import load_recorded_signals, load_recorded_runs
+from tradingagents.app_identity import default_results_dir, validate_app_path
 
 _REPORT_KEYS = (
     "market_report",
@@ -142,7 +143,7 @@ def teach_memories_from_history(
     price_loader: Optional[Callable[[str, str, Optional[str]], pd.DataFrame]] = None,
     reflector=None,
     horizon_bars: int = 5,
-    eval_results_dir: str = "eval_results",
+    eval_results_dir: str | None = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> dict:
@@ -151,7 +152,10 @@ def teach_memories_from_history(
     The reflector parameter remains for API compatibility and is not invoked.
     Raises ValueError if no eligible forward decisions are available.
     """
-    signals = load_recorded_signals(symbol, eval_results_dir=eval_results_dir)
+    results_root = validate_app_path(
+        eval_results_dir or default_results_dir(), field="results_dir"
+    )
+    signals = load_recorded_signals(symbol, eval_results_dir=results_root)
     if start_date:
         signals = {d: a for d, a in signals.items() if d >= start_date}
     if end_date:
@@ -159,7 +163,7 @@ def teach_memories_from_history(
     if not signals:
         raise ValueError(
             f"No recorded completed runs with final signals found for {symbol} "
-            f"under {eval_results_dir}/."
+            f"under {results_root}/."
         )
 
     if price_loader is None:
@@ -168,7 +172,7 @@ def teach_memories_from_history(
         price_loader = AlpacaUtils.get_stock_data
 
     prices = price_loader(symbol, min(signals), end_date)
-    runs = load_recorded_runs(symbol, eval_results_dir)
+    runs = load_recorded_runs(symbol, results_root)
     positions = {day: ((run.get("snapshots") or {}).get("final_state") or {}).get("current_position")
                  for day, run in runs.items()}
     outcomes = compute_decision_outcomes(prices, signals, horizon_bars=horizon_bars, positions=positions)

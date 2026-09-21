@@ -21,15 +21,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from tradingagents.app_identity import app_home, get_env, validate_app_path
+
 
 TERMINAL_ROUND_STATUSES = ("COMPLETED", "MISSED", "STOPPED")
 
 
 def base_dir() -> Path:
-    override = os.getenv("TRADINGAGENTS_LONG_RUN_DIR")
+    override = get_env("LONG_RUN_DIR")
     if override:
-        return Path(override).expanduser()
-    return Path(os.path.expanduser("~")) / ".tradingagents" / "long_run"
+        return validate_app_path(override, field="long_run_dir")
+    return app_home() / "long_run"
 
 
 def config_path(*, base_dir: Callable[[], Path]) -> Path:

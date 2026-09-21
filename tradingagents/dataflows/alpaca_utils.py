@@ -20,6 +20,7 @@ from alpaca.trading.requests import (
 from alpaca.trading.enums import AssetClass, AssetStatus, QueryOrderStatus
 from alpaca.common.enums import Sort
 from .config import get_api_key, get_alpaca_use_paper, get_config
+from tradingagents.app_identity import get_env
 from .ticker_utils import TickerUtils
 # Imported lazily inside execute_trade_intent: a module-level import would
 # create a circular import (dataflows -> agents -> dataflows.interface).
@@ -252,7 +253,7 @@ def get_alpaca_stock_client() -> StockHistoricalDataClient:
     api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")
     if not api_key or not api_secret:
         print(f"Warning: Missing Alpaca API credentials. API key: {'present' if api_key else 'missing'}, Secret: {'present' if api_secret else 'missing'}")
-        raise ValueError("Alpaca API key or secret not found. Please set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+        raise ValueError("Alpaca API key or secret not found. Please set TRADINGBUFFETT_ALPACA_API_KEY and TRADINGBUFFETT_ALPACA_SECRET_KEY.")
     try:
         client = StockHistoricalDataClient(api_key, api_secret)
     except Exception as e:
@@ -290,11 +291,9 @@ class PaperTradingEnforcementError(RuntimeError):
 
 
 def _resolve_paper_base_url(explicit_base_url: Optional[str] = None) -> Optional[str]:
-    import os as _os
-
     candidate = explicit_base_url
     if candidate is None:
-        candidate = _os.getenv("ALPACA_BASE_URL") or _os.getenv("ALPACA_PAPER_BASE_URL")
+        candidate = get_env("ALPACA_BASE_URL") or get_env("ALPACA_PAPER_BASE_URL")
     if candidate is None:
         return None
     return str(candidate).strip()
@@ -329,7 +328,7 @@ def get_alpaca_trading_client(base_url: Optional[str] = None) -> TradingClient:
     api_key = get_api_key("alpaca_api_key", "ALPACA_API_KEY")
     api_secret = get_api_key("alpaca_secret_key", "ALPACA_SECRET_KEY")
     if not api_key or not api_secret:
-        raise ValueError("Alpaca API key or secret not found. Please set ALPACA_API_KEY and ALPACA_SECRET_KEY.")
+        raise ValueError("Alpaca API key or secret not found. Please set TRADINGBUFFETT_ALPACA_API_KEY and TRADINGBUFFETT_ALPACA_SECRET_KEY.")
     raw_paper_flag = get_alpaca_use_paper()
     if isinstance(raw_paper_flag, bool):
         flag_text = "true" if raw_paper_flag else "false"

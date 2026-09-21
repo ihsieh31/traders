@@ -336,7 +336,7 @@ class ScreeningRoleConfigTests(unittest.TestCase):
         self.assertNotEqual(spec.model, config["decision_model"])
 
     def test_role_specific_api_key_env_wins(self):
-        with patch.dict(os.environ, {"SCREENING_GOOGLE_API_KEY": "screen-key"}):
+        with patch.dict(os.environ, {"TRADINGBUFFETT_SCREENING_GOOGLE_API_KEY": "screen-key"}):
             resolved = resolve_screening_config(
                 {
                     "auto_screening_enabled": True,
@@ -352,8 +352,8 @@ class ScreeningRoleConfigTests(unittest.TestCase):
         with patch("tradingagents.llm_clients.roles.get_llm_api_key", return_value=""):
             # Blank the role override too: patch.dict never removes ambient
             # keys, and a developer .env may carry SCREENING_OPENAI_API_KEY.
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "",
-                                         "SCREENING_OPENAI_API_KEY": ""}):
+            with patch.dict(os.environ, {"TRADINGBUFFETT_OPENAI_API_KEY": "",
+                                         "TRADINGBUFFETT_SCREENING_OPENAI_API_KEY": ""}):
                 resolved = resolve_screening_config(
                     {
                         "auto_screening_enabled": True,

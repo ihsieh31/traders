@@ -46,6 +46,7 @@ from tradingagents.screening.sessions import (
     eastern_now,
     is_fresh_utc_timestamp,
 )
+from tradingagents.app_identity import validate_app_path
 
 # Bumped to invalidate pre-remediation IEX-feed selections: R4 binds the
 # consolidated feed ("sip") into the fingerprint and payload, and old
@@ -311,9 +312,12 @@ class SelectionStore:
 def default_selection_cache_path(config: Dict[str, Any]) -> str:
     configured = config.get("screening_selection_cache_path")
     if configured:
-        return str(configured)
+        return str(validate_app_path(configured, field="screening_selection_cache_path"))
     cache_dir = config.get("data_cache_dir") or "dataflows/data_cache"
-    return str(Path(cache_dir) / "screening_selection.json")
+    return str(
+        validate_app_path(cache_dir, field="data_cache_dir")
+        / "screening_selection.json"
+    )
 
 
 def eastern_timestamp(now=None) -> str:

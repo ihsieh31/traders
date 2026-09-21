@@ -22,6 +22,7 @@ class DefaultPromptValues(dict):
 class PromptTemplateTests(unittest.TestCase):
     expected_groups = {
         "analysts",
+        "berkshire",
         "graph",
         "managers",
         "researchers",
@@ -116,7 +117,7 @@ class PromptTemplateTests(unittest.TestCase):
             load_prompt("../secrets")
 
     def test_prompt_dir_override(self):
-        original = os.environ.get("TRADINGAGENTS_PROMPT_DIR")
+        original = os.environ.get("TRADINGBUFFETT_PROMPT_DIR")
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 Path(temp_dir, "custom.md").write_text("Ticker: {ticker}", encoding="utf-8")
@@ -125,7 +126,7 @@ class PromptTemplateTests(unittest.TestCase):
                     "Custom analyst prompt for {ticker}",
                     encoding="utf-8",
                 )
-                os.environ["TRADINGAGENTS_PROMPT_DIR"] = temp_dir
+                os.environ["TRADINGBUFFETT_PROMPT_DIR"] = temp_dir
                 self.assertEqual(render_prompt("custom", ticker="BTC/USD"), "Ticker: BTC/USD")
                 self.assertEqual(
                     render_prompt("analysts/market_system", ticker="NVDA"),
@@ -134,9 +135,9 @@ class PromptTemplateTests(unittest.TestCase):
                 self.assertIn("investment decision", load_prompt("graph/signal_extraction_system"))
         finally:
             if original is None:
-                os.environ.pop("TRADINGAGENTS_PROMPT_DIR", None)
+                os.environ.pop("TRADINGBUFFETT_PROMPT_DIR", None)
             else:
-                os.environ["TRADINGAGENTS_PROMPT_DIR"] = original
+                os.environ["TRADINGBUFFETT_PROMPT_DIR"] = original
 
     # --- DMC-1 A03/C01: decision templates consume the heuristic guide and
     # stop asking agents to trust scores or expect trailing stops. ---
@@ -181,7 +182,7 @@ class PromptTemplateTests(unittest.TestCase):
 
     def test_a03_decision_templates_render_heuristic_guide(self):
         # Use the built-in templates: drop any external override for this test.
-        original = os.environ.pop("TRADINGAGENTS_PROMPT_DIR", None)
+        original = os.environ.pop("TRADINGBUFFETT_PROMPT_DIR", None)
         try:
             matrix, reports = self._guide_values()
             values = DefaultPromptValues(
@@ -225,9 +226,9 @@ class PromptTemplateTests(unittest.TestCase):
                         self.assertNotIn(phrase, rendered)
         finally:
             if original is None:
-                os.environ.pop("TRADINGAGENTS_PROMPT_DIR", None)
+                os.environ.pop("TRADINGBUFFETT_PROMPT_DIR", None)
             else:
-                os.environ["TRADINGAGENTS_PROMPT_DIR"] = original
+                os.environ["TRADINGBUFFETT_PROMPT_DIR"] = original
 
     def test_c01_capability_boundary_rendered_in_both_modes(self):
         from tradingagents.agents.utils.agent_trading_modes import (
@@ -235,7 +236,7 @@ class PromptTemplateTests(unittest.TestCase):
             get_trading_mode_context,
         )
 
-        original = os.environ.pop("TRADINGAGENTS_PROMPT_DIR", None)
+        original = os.environ.pop("TRADINGBUFFETT_PROMPT_DIR", None)
         try:
             matrix, reports = self._guide_values()
             modes = (
@@ -329,9 +330,9 @@ class PromptTemplateTests(unittest.TestCase):
                         self.assertIn("not a partial trim", prompt)
         finally:
             if original is None:
-                os.environ.pop("TRADINGAGENTS_PROMPT_DIR", None)
+                os.environ.pop("TRADINGBUFFETT_PROMPT_DIR", None)
             else:
-                os.environ["TRADINGAGENTS_PROMPT_DIR"] = original
+                os.environ["TRADINGBUFFETT_PROMPT_DIR"] = original
 
 
 if __name__ == "__main__":

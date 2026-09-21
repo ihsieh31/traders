@@ -5,6 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+from tradingagents.app_identity import env_name, get_env
 
 
 class NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
@@ -21,10 +22,10 @@ class GoogleClient(BaseLLMClient):
         api_key = (
             self.kwargs.get("api_key")
             or self.kwargs.get("google_api_key")
-            or os.environ.get("GOOGLE_API_KEY")
+            or get_env("GOOGLE_API_KEY")
         )
         if not api_key:
-            raise ValueError("Provider 'google' requires GOOGLE_API_KEY.")
+            raise ValueError(f"Provider 'google' requires {env_name('GOOGLE_API_KEY')}.")
         llm_kwargs["google_api_key"] = api_key
         thinking_level = self.kwargs.get("thinking_level")
         if thinking_level:

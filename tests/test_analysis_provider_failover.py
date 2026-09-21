@@ -118,7 +118,7 @@ class FallbackRoleResolutionTests(unittest.TestCase):
         # global provider to local_openai and would fail this assertion.
         with patch.dict(
             os.environ,
-            {"ANALYSIS_FALLBACK_OPENAI_API_KEY": "fb-key", "OPENAI_USE_LOCAL": ""},
+            {"TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENAI_API_KEY": "fb-key", "TRADINGBUFFETT_OPENAI_USE_LOCAL": ""},
         ):
             resolved = resolve_role_config(
                 _base_config(
@@ -253,9 +253,9 @@ class FallbackRoleResolutionTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENROUTER_API_KEY": "standard-openrouter",
-                "ANALYSIS_FALLBACK_OPENROUTER_API_KEY": "fallback-only",
-                "ANALYSIS_OPENAI_API_KEY": "analysis-primary",
+                "TRADINGBUFFETT_OPENROUTER_API_KEY": "standard-openrouter",
+                "TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENROUTER_API_KEY": "fallback-only",
+                "TRADINGBUFFETT_ANALYSIS_OPENAI_API_KEY": "analysis-primary",
             },
         ):
             resolved = resolve_role_config(
@@ -272,7 +272,7 @@ class FallbackRoleResolutionTests(unittest.TestCase):
 
     def test_fallback_credential_falls_back_to_provider_standard_key(self):
         with patch.dict(
-            os.environ, {"OPENROUTER_API_KEY": "standard-openrouter"}, clear=True
+            os.environ, {"TRADINGBUFFETT_OPENROUTER_API_KEY": "standard-openrouter"}, clear=True
         ):
             resolved = resolve_role_config(
                 _base_config(
@@ -590,7 +590,7 @@ class RunLogPersistenceTests(unittest.TestCase):
 
         logger.finish_run(symbol="NVDA", status="completed")
 
-        runs_dir = Path("eval_results") / "NVDA" / "TradingAgentsStrategy_logs" / "runs"
+        runs_dir = Path(os.environ["TRADINGBUFFETT_RESULTS_DIR"]) / "NVDA" / "TradingAgentsStrategy_logs" / "runs"
         files = sorted(runs_dir.glob("*.json"))
         self.assertTrue(files, "expected a run log file")
         payload = json.loads(files[-1].read_text(encoding="utf-8"))
@@ -678,7 +678,7 @@ class GraphWiringTests(unittest.TestCase):
 
     def test_fallback_config_builds_failover_wrapper_for_analysis_and_decision(self):
         with patch.dict(
-            os.environ, {"ANALYSIS_FALLBACK_OPENROUTER_API_KEY": "fb-secret"}
+            os.environ, {"TRADINGBUFFETT_ANALYSIS_FALLBACK_OPENROUTER_API_KEY": "fb-secret"}
         ):
             graph, captured = self._build(
                 _base_config(

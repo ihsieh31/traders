@@ -1,277 +1,184 @@
-# Traders：安全可靠執行的多代理 Alpaca Paper 交易框架
+# Traders
 
-> **Traders**（本機目錄 `tradingAlpaca`，公開 repo [ihsieh31/traders](https://github.com/ihsieh31/traders)）是一個以 LLM 多代理進行市場分析、並以「安全可靠的自動執行」為核心目標的交易框架。本專案保留 [AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) 的研究與策略系統，重做了最後一哩路：`TradeIntent → Alpaca Paper → broker 真實狀態`。
+以 LangGraph 多代理分析、Alpaca Paper 執行與可稽核安全邊界組成的交易研究框架。
+
+> **Paper-only**：程式固定使用 Alpaca Paper API。`TRADINGBUFFETT_ALPACA_USE_PAPER=False`、live endpoint 或無法證明為 paper 的設定都會 fail closed，零 broker mutation。
 >
-> **Paper-only**：交易客户端被寫死鎖定在 Alpaca Paper API（`paper=True`），整個程式不存在任何 live 下單路徑；設定 `ALPACA_USE_PAPER=False` 或指到非 paper endpoint 一律啟動失敗、零 broker 呼叫。
->
-> **免責聲明**：本專案僅供教育與研究用途，不構成任何金融、投資或交易建議。交易有風險，任何交易決策請自行審慎評估。
+> 本專案僅供研究與教育，不構成投資建議。
 
-快速上手請看 [QUICKSTART.md](QUICKSTART.md)；管線內部細節請看 [ARCHITECTURE.md](ARCHITECTURE.md)；目標、安全規則與完整驗收紀錄請看 [PROJECT_GOALS_AND_STATUS.md](PROJECT_GOALS_AND_STATUS.md)。
+## 目前用途
 
----
+- CLI 單次多代理研究：Market、Social、News、Fundamentals、Macro。
+- Bull／Bear 與 Risky／Safe／Neutral 雙層辯論。
+- 結構化 `TradeIntent` 與單一 Paper execution service。
+- 30 日無人值守 Paper observation。
+- Traders × Berkshire 雙 30 日 shadow-decision A/B。
+- 回測、決策記憶、每日報告、成本與完整 run audit log。
 
-## 一、專案內容
+WebUI 已移除。核心不再依賴 Dash、Flask、Plotly、Gradio 或任何 UI state。
 
-### 1.1 它是什麼
+## 安裝
 
-一支由 LangGraph 驅動的多代理交易系統：五個分析師 + 多空辯論 + 交易員 + 風險團隊共同產出結構化交易決策，再經過一道嚴格的執行層，把決策變成 Alpaca Paper 帳戶上的真實訂單。設計原則是 **fail-closed（出錯即停止，絕不猜測、絕不盲目重送）**——遇到重啟、重複 callback、部分成交、broker timeout、資料過期或本機與 broker 狀態不一致時，系統停止新增風險，而不是繼續交易。
-
-### 1.2 多代理分析流程
-
-```
-WebUI / CLI
-  → Market / Social / News / Fundamentals / Macro 五分析師（可平行執行）
-  → Bull / Bear 研究員辯論 → Research Manager
-  → Trader → Risky / Safe / Neutral 風險辯論 → Risk Manager
-  → 結構化 TradeIntent（BUY/HOLD/SELL 或 LONG/NEUTRAL/SHORT）
-  → 倉位 sizing + 安全護欄
-  → 單一執行入口 → Alpaca Paper 下單
-```
-
-- **資產支援**：美股與加密貨幣（加密貨幣使用 `BTC/USD`、`ETH/USD` 斜線格式），可混合輸入如 `NVDA, ETH/USD, AAPL`。
-- **LLM 多提供者**：OpenAI、本地 OpenAI 相容端點（LM Studio / Ollama / vLLM）、Google Gemini、Anthropic Claude、xAI、MiniMax、DeepSeek、Qwen、GLM、OpenRouter、Azure OpenAI；保留 GPT reasoning 控制、Gemini thinking level、Claude effort 等提供者專屬參數。
-- **記憶與反思**：完成的決策寫入 markdown 記憶檔，之後以已實現報酬回結；失敗的 LangGraph run 可用 SQLite checkpoint 斷點續跑。
-- **周邊完整**：WebUI 儀表板（多標的進度表、互動圖表、聊天式辯論、持倉管理）、CLI、回測、每日報告、Telegram/webhook 告警、chaos 測試與 CI。
-
-### 1.3 執行與風控架構（本專案的核心重做）
-
-所有下單都必須經過**單一執行入口** `ExecutionService.execute`，其他模組不得直接呼叫 broker API。執行層包含：
-
-- **兩層冪等**：分析層 `decision_id` 唯一（同一份分析只會建立一次執行 intent）＋ broker 層 deterministic `client_order_id` 唯一（重啟後沿用原 ID，不產生新邏輯訂單）。
-- **Durable outbox**：stdlib SQLite 三張表（`execution_intents` / `orders` / `fills`），先在同一個 transaction 內 commit intent 與 PENDING 訂單、commit 成功後才送單。三個 crash 點（commit 前／commit 後送單前／送單後回寫前）都有明確恢復語義，最後一種以 `client_order_id` 向 broker 查找後 adopt。
-- **訂單狀態機**：`PENDING → SUBMITTING → ACCEPTED → PARTIAL → FILLED`，含 `UNKNOWN`（timeout 下不明結果）的 bounded lookup 恢復；`UNKNOWN` 未解決前帳戶保持 `PAUSED`。
-- **固定 broker retry 政策**：唯讀 GET 最多 3 次短退避後 fail-closed；POST 被拒不重試；POST timeout 與任何 5xx（含 Cloudflare 520-527/530）屬模糊結果，先標 `UNKNOWN` 再查詢，不直接重送。
-- **最後 POST 前重驗**：任何新增曝險的訂單送出前，重新驗證 broker 市場時鐘（無法證明開盤視同收盤）、快照與報價新鮮度、entry 政策與裁切後規模；任一失敗即取消該筆（可證明零 POST），絕不重新整理事實後硬送。
-- **BrokerSnapshot 唯一權威**：account、positions、orders、fills、cash 一律以即時快照為準，本機 ledger、memory、checkpoint 都不能覆寫 broker 事實。只有 reconciliation `CLEAN` 才能新增風險；持倉不符、重複 ID、未解決部分成交等一律 `PAUSED`。已驗證的持倉不符可由**人工維護 API**（`Reconciler.rebase_baseline`，需非空理由、新鮮快照、無任何未解決本地單與 live broker 單）明確 rebase baseline，一般執行路徑絕不自動 rebase。
-- **新鮮度 gate 與單一執行鎖**：account/position/order/quote 有 TTL；以 Alpaca account ID 為 key 的 OS 層執行鎖，第二個 process 拿不到鎖立即退出。
-- **降風險平倉例外**：已驗證的減持 exit 在 broker 即時確認持倉後仍可執行（kill switch 仍優先於一切）。
-- **Short 曝險逐次 opt-in**：預設 investment 模式（BUY/HOLD/SELL）；明確開啟 `allow_shorts` 後才允許 LONG/NEUTRAL/SHORT（加密貨幣一律不接受 SHORT），由執行層 deterministic guard 強制。
-
-### 1.4 LLM 固定角色與有界重試
-
-- **Analysis / Decision / Screening 三角色分離**：設定任一 `analysis_*` / `decision_*` / `screening_*` key 後，Analysis provider/model 服務所有研究節點（五分析師、多空、research manager、trader、風險辯論），Decision 只服務 Risk Manager，Screening 只服務全市場選股。每個角色獨立解析 provider/model/endpoint/credential（如 `DECISION_OPENAI_API_KEY`），跨 provider 缺 model 為啟動期錯誤，機密不進 UI store 與 log。
-- **有界重試**：`llm_max_retries`（0–3）＝每個邏輯呼叫最多 N+1 次請求；暫時性錯誤（timeout/連線/429/所有 5xx 含 Cloudflare 520-527/530）封頂退避重試，永久性錯誤（401/403）立即停。provider 存取失敗整輪標記 `STOPPED` 並停止自動排程，絕不偽裝成正常 `NO_TRADE`。
-- **選配 provider failover**：設定 `analysis_fallback_provider/model` 後，Analysis、Decision、Screening 三個角色的暫時性失敗都可在**共享重試預算**內轉試同一條 Fallback 路由（Primary+Fallback 合計最多 N+1 次請求；不回彈、永久錯誤不 failover），切換記錄無機密 audit 事件；fallback 設定跨 round 持久。
-
-### 1.5 全市場自動選股（Screening → Top20）
-
-開啟 `auto_screening_enabled` 後，每個美股交易日：
-
-```
-Alpaca 全量 ACTIVE tradable US_EQUITY（分頁，無 fallback 名單）
-  → 61 根完整日 K 驗證（NY 交易日曆、無前補、單一 adjustment 政策）
-  → 確定性門檻：close ≥ $5、20 日均額 ≥ $20M
-  → 跨截面百分位公式（adv20/r20/r60/反波動/volume_ratio）→ Top40
-  → 獨立 Screening LLM 角色 → 嚴格 schema 驗證的 Top20
-  → Top20 ∪ 現有持股（每輪重取）→ 深度分析
-  → 只有當日已驗證 Top20 成員可開新倉（entry gate 內嵌於執行入口）
-```
-
-- Screening 角色只看 compact 因子表（看不到持倉、現金與新聞），必須回傳恰 20 筆、rank 1–20 連續唯一、輸出成員、有限 0–100 分數、基於因子的理由；任何不合法輸出整輪停止，零修補請求、零下游。
-- 每日選股結果存於小型 JSON cache（原子寫入、flock 防雙執行者、SHA-256 自雜湊完整性密封）；隔日/損毀/未來時間戳/設定變更的 cache 視同不存在。人工 refresh 失敗先刪 cache、絕不回退舊名單。
-- 交易日曆以 Alpaca 官方 `get_calendar` 為權威；bars 固定 SIP feed、無 IEX fallback。
-
-### 1.6 30 天無人值守 Paper 觀察（Phase D）
-
-單一指令：
-
-```bash
-python -m cli.main long-run
-```
-
-- 30 個日曆天、僅美股交易日（權威 Alpaca 日曆；early close 於收盤前 30 分鐘執行）；首次執行互動補齊設定（Analysis/Decision/Screening 三角色、選配 Analysis fallback、每日 notional、執行時刻、`allow_shorts` opt-in）、唯讀 preflight（每條 role 路徑一次 LLM probe、Alpaca 唯讀證明），並要求一次明確的 Paper-test 授權才進入 `RUNNING`；授權前零 broker mutation，授權後先執行一次要求 `CLEAN` 的 execution recovery 才建立觀察。
-- Crash/重啟後重跑同一指令即恢復原觀察窗口（單一 runner lock），不重複下單、每個 session 至多執行一次；process 離線期間錯過的 session 記為 `MISSED_PROCESS_DOWN`，絕不以過期分析或補單回填。calendar/scheduler 暫時性例外有 3 次 bounded retry（間隔 5 秒、injected sleep），耗盡仍 fail-closed；round 內普通例外會把觀察 finalize 為 `STOPPED/UNEXPECTED_ROUND_ERROR` 並保留 journal 證據，不再裸逃打斷無人值守行程。
-- 硬性安全/provider 失敗（recovery 不安全、帳戶暫停、kill switch、screening 停止、LLM 預算耗盡、模糊 broker 結果等）會停止觀察並產出部分報告；**停止即終局**（重跑 `long-run` 是全新 30 日窗口），中斷（Ctrl-C/SIGTERM）則可恢復原窗口。最終報告（`~/.tradingagents/long_run/runs/<run_id>/final_report.{md,json}`）涵蓋 coverage、帳戶權益序列、決策/screening/safety/execution/LLM 成本統計，並明列回報率口徑與限制。
-
-### 1.7 目錄導覽
-
-```
-tradingagents/
-  agents/            分析師、研究員、trader、risk 節點與結構化 schema
-  dataflows/         Alpaca/Finnhub/FRED/Reddit/SEC-IR/加密貨幣等資料源、市場日曆
-  graph/             LangGraph trading graph
-  llm_clients/       多提供者客戶端、固定角色（roles）、有界重試（retry）
-  execution/         單一執行入口、durable outbox、broker authority、auto-trade 準備
-  screening/         全市場 universe、指標公式、Top20 LLM 契約、cache、entry gate
-  risk/              exposure headroom、corporate-action quarantine
-  portfolio/         相關性、regime、倉位上限
-  long_run.py        Phase D 30 天觀察編排
-  prompts/templates/ 模型提示詞（可外部覆寫 TRADINGAGENTS_PROMPT_DIR）
-webui/               Dash WebUI；cli/ 互動式 CLI
-tests/               離線確定性測試套件（無網路、無真實金鑰）
-```
-
----
-
-## 二、當前成果
-
-開發採 **Gate 制 + 每次 fresh read-only 獨立驗收**（驗收不得修檔；修復後重新 fresh acceptance），每階段都有離線確定性測試、對抗 PoC 與真實 Paper E2E 證據分開報告。
-
-| 階段 | 內容 | 狀態 |
-|---|---|---|
-| Phase A（P1） | 安全可靠的 Paper 執行：paper-only hard lock、strict TradeIntent、兩層冪等、durable outbox、訂單狀態機與 UNKNOWN 恢復、BrokerSnapshot 權威、三段 reconciliation、新鮮度 gate、單一執行鎖 | **Accepted**（2026-09-04） |
-| Phase B（P2） | 策略與資料品質：SEC filing/公司 IR 第一手來源、corporate-action 隔離（quarantine）、sector 曝險上限、Analysis/Decision 雙角色、LLM 有界重試與 run-stop、Trader/Risk Manager 的 fresh broker 持股 context、exposure headroom 裁切 | **Accepted**（2026-09-05，B01–B24 全 Pass） |
-| Phase C（P3） | 全市場自動選股：ACTIVE US_EQUITY 全量 universe、確定性 Top40、獨立 Screening 角色與嚴格 Top20 契約、Top20 ∪ 持股深度分析、每日 selection cache（含完整性密封）、fail-closed entry gate、權威交易日曆與 SIP feed | **Accepted**（2026-09-05，C01–C23 全 Pass；F1、M1 修復後複驗通過） |
-| Phase D | 30 天無人值守 Paper 觀察編排（`long-run`） | 已實作（2026-09-06）並完成多輪審查修復（2026-09-08 全量審查 19 項修復、獨立驗收通過；2026-09-11 paper-readiness 審查 R01–R16 修復）；**30 日測試前最終修復 F-01/F-03/F-04 已於 2026-09-12 獨立驗收 Accepted**。尚未進行真實 30 日觀察 |
-
-**執行驗證證據**：Phase A.2 曾於一次性真實 Alpaca Paper 帳戶完成完整 E2E——paper endpoint 驗證 → durable commit → 真實送單 → broker 成交 → 本地 adopt 同一 broker_order_id → reconcile `CLEAN` → 已驗證平倉 → 帳戶 flat、零 open orders。
-
-**離線測試現況**（2026-09-12，commit `48f2419`）：
-
-```bash
-python -m pytest tests/
-# 1060 passed, 0 failed, 257 subtests passed
-```
-
-套件完全離線確定性（無網路、無真實金鑰），乾淨 clone 即可通過；CI（GitHub Actions，Python 3.11 + 3.12 矩陣）以 `requirements.lock`（222 個精確 pin）安裝並 `pip check` 驗證閉包。
-
-**尚未完成 / 已知限制**：
-
-- 真實 30 日 Paper observation 尚未開始；需使用者另行明確授權——已驗收的 build 不會自行啟用交易。
-- 離線驗收只證明 mock 鏈路與 fail-closed 語義；真實 Alpaca universe/bars 資料品質、真實 Screening vendor 輸出品質尚未驗證。
-- 已知未修項：F-02（recovery whitelist / `ACCEPTED` / `PARTIAL` recovery 行為，現行語意維持 fail-closed）及少量非阻擋維修項留待專門輪次。
-- Top40 權重是 research baseline，不是 validated alpha；尚未有任何統計驗證的前瞻收益證據。
-- 30 天無人值守 observation 屬於 operational observation（帳戶權益變化），不是 profitability proof：未調整入出金、可能含觀察期前既有部位、非純策略歸因，且未計入全部研究與交易成本（最終報告明列這些限制）。
-- Broker `last_equity` 作為 daily-loss baseline 仍可能受入出金影響；本版本未實作 cash-flow adjusted TWR。
-
----
-
-## 三、安裝與配置
-
-### 3.1 環境需求
-
-- Python **≥ 3.10**（建議 3.12；本專案以 3.12 venv 驗證）
-- 一組免費的 [Alpaca](https://alpaca.markets) Paper API 金鑰
-- 一個 LLM 提供者的 API 金鑰
-
-### 3.2 安裝
+需求：Python 3.10 以上；建議 3.11 或 3.12。
 
 ```bash
 git clone https://github.com/ihsieh31/traders.git
 cd traders
 python -m venv .venv
-# Windows: .venv\Scripts\activate   macOS/Linux:
 source .venv/bin/activate
 pip install -r requirements.txt
+cp env.sample .env
 ```
 
-### 3.3 配置 API 金鑰
+Windows 啟用環境：
+
+```powershell
+.venv\Scripts\activate
+```
+
+完整鎖定安裝：
 
 ```bash
-cp env.sample .env   # Windows: copy env.sample .env
+pip install --no-deps -r requirements.lock
+pip check
 ```
 
-編輯 `.env`。**最低可執行組合**只有兩項：
+## 最小設定
 
-| 金鑰 | 取得處 | 必要 |
-|---|---|---|
-| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | [alpaca.markets](https://alpaca.markets) 免費 Paper 帳戶（用 Paper key，不是 live key） | ✅ |
-| `OPENAI_API_KEY`（或改 `LLM_PROVIDER` 用其他提供者） | [platform.openai.com](https://platform.openai.com) | ✅ |
-| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io) — 股票新聞、內部人交易、財報日曆 | 選配 |
-| `FRED_API_KEY` | [FRED](https://fred.stlouisfed.org/docs/api/api_key.html) — 巨觀分析師 | 選配 |
-| `COINDESK_API_KEY` | [CryptoCompare](https://www.cryptocompare.com/cryptopian/api-keys) — 加密貨幣新聞 | 選配 |
-| `ALPHA_VANTAGE_API_KEY` | [Alpha Vantage](https://www.alphavantage.co/support/#api-key) — 選配 fallback 行情源 | 選配 |
-| `SEC_IR_USER_AGENT` | 填入姓名與聯絡方式 — SEC 第一手資料來源的存取政策要求 | 啟用基本面 SEC 來源時填 |
+編輯 `.env`：
 
-> **Paper-only**：保持 `ALPACA_USE_PAPER=True`。設為 `False` 或指到 live endpoint 會 fail-closed、零 broker 呼叫，系統不存在 live 下單路徑。
+```env
+TRADINGBUFFETT_ALPACA_API_KEY=your_paper_key
+TRADINGBUFFETT_ALPACA_SECRET_KEY=your_paper_secret
+TRADINGBUFFETT_ALPACA_USE_PAPER=True
 
-**LLM 提供者**：在 `.env` 設 `LLM_PROVIDER`（支援 `openai`、`local_openai`、`google`、`anthropic`、`xai`、`minimax`、`deepseek`、`qwen`、`glm`、`openrouter`、`ollama`、`azure`），並填對應金鑰（`GOOGLE_API_KEY`、`ANTHROPIC_API_KEY`、`DEEPSEEK_API_KEY`、`ZHIPU_API_KEY` 等，完整清單見 `env.sample`）。本地端點用 `OPENAI_USE_LOCAL=true` + `OPENAI_BASE_URL`（如 LM Studio `http://localhost:1234/v1`）。
+TRADINGBUFFETT_LLM_PROVIDER=openai
+TRADINGBUFFETT_OPENAI_API_KEY=your_openai_key
+```
 
-**角色與自動選股**：`analysis_*` / `decision_*` 與 screening 開關（`screening_provider` / `screening_model` / `screening_backend_url`）是 **config key，在 WebUI 或 CLI 設定**，環境變數只放角色專屬金鑰覆寫（如 `ANALYSIS_OPENAI_API_KEY`、`DECISION_OPENAI_API_KEY`、`SCREENING_<PROVIDER>_API_KEY`）。LLM 重試次數用 `LLM_MAX_RETRIES`（0–3）。
+所有環境變數使用 `TRADINGBUFFETT_` namespace，不讀取其他 fork 的未加前綴設定。支援 OpenAI、local OpenAI-compatible、Google、Anthropic、xAI、MiniMax、DeepSeek、Qwen、GLM、OpenRouter、Ollama 與 Azure。
 
-**執行緒與路徑**（皆選配）：`TRADINGAGENTS_RESULTS_DIR`（報告輸出，預設 `eval_results/`）、`TRADINGAGENTS_CACHE_DIR`、`TRADINGAGENTS_MEMORY_LOG_PATH`（決策記憶檔）、`TRADINGAGENTS_PROMPT_DIR`（外部提示詞覆寫）。
+## 執行
 
-### 3.4 執行
-
-**WebUI**（預設 `http://127.0.0.1:7860`，埠被占用會自動往後找）：
+查看 CLI：
 
 ```bash
-python run_webui_dash.py
-# 常用選項：--port / --share / --server-name / --debug / --max-threads
+python -m cli.main --help
 ```
 
-開啟頁面後：輸入標的（`NVDA, AAPL`、`BTC/USD` 或混合）→ 選擇 LLM 提供者/模型與研究深度 → 按 **Analyze** 觀看五分析師、多空辯論與風險團隊即時串流報告 → 手動執行建議，或開啟自動執行與定期排程分析。
-
-**CLI**：
+互動式單次分析：
 
 ```bash
-python -m cli.main              # 互動式單次分析
-python -m cli.main long-run     # Phase D：30 天無人值守 Paper 觀察
+python -m cli.main analyze
 ```
 
-**Docker**：
+30 日無人值守 Paper observation：
 
 ```bash
-cp env.sample .env   # 先填好提供者、行情與 Alpaca 憑證
-docker compose up -d --build   # 指定埠：HOST_PORT=7861 docker compose up -d --build
+python -m cli.main long-run
 ```
 
-### 3.5 驗證安裝與結果位置
+第一次啟動會收集缺少的非機密設定、執行唯讀 preflight，並要求明確 Paper-test 授權。授權前不會送出 broker mutation。中斷後重跑同一指令會恢復原 observation；已停止的 observation 不會被偷偷續跑。
+
+## 雙 30 日 Traders × Berkshire A/B
+
+A/B runner 只改變四個非技術 analyst 的研究 prompt。Market、工具、模型、Report Context、Bull/Bear、Trader、Risk 與所有下游節點完全共用。
 
 ```bash
-python -m pytest tests/   # 1060 passed, 257 subtests passed（離線、無網路）
+python scripts/run_analysis_ab.py \
+  --symbol NVDA \
+  --date 2026-09-21 \
+  --results-root ~/.tradingbuffett/results/ab
 ```
 
-| 產物 | 位置 |
-|---|---|
-| 報告與完整 audit trail（每個 prompt、tool call、LLM token 用量、最終狀態） | `eval_results/<symbol>/TradingAgentsStrategy_logs/runs/` |
-| 決策記憶檔（每筆最終決策，之後以已實現報酬回結） | `~/.tradingagents/memory/trading_memory.md` |
-| 30 天觀察設定與最終報告 | `~/.tradingagents/long_run/`（`final_report.{md,json}`） |
+彙總：
 
-### 3.6 Python API
-
-```python
-from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.default_config import DEFAULT_CONFIG
-
-ta = TradingAgentsGraph(debug=True, config=DEFAULT_CONFIG.copy())
-
-# 單一股票
-_, decision = ta.propagate("NVDA", "2024-05-10")
-print(decision)
-
-# 加密貨幣與混合標的
-for symbol in ["NVDA", "ETH/USD", "AAPL"]:
-    _, decision = ta.propagate(symbol, "2024-05-10")
-    print(f"{symbol}: {decision}")
+```bash
+python scripts/summarize_analysis_ab.py \
+  --root ~/.tradingbuffett/results/ab
 ```
 
-常用 config：`deep_think_llm` / `quick_think_llm`（模型）、`max_debate_rounds`（辯論輪數）、`online_tools`（即時資料）、`allow_shorts`（做空模式）、`parallel_analyst` 系列延遲（防 API 超載）、`checkpoint_enabled`（失敗 run 斷點續跑）。
+A/B 保護條件：
 
-### 3.7 常見問題
+- `memory_retrieval_enabled`、outcome reflection、memory maintenance 強制開啟。
+- Traders 與 Berkshire 各自使用持久且互斥的 memory、cache、audit、DB 與 lock。
+- 兩邊序列執行；順序依 `symbol + trade_date` 交錯，避免固定先跑同一邊。
+- `AB_CAMPAIGN.json` 固定整段測試的 config 與 analyst set；中途改設定會停止。
+- 同一 symbol/date 不可覆寫重跑。
+- Checkpoint 與 auto-trade 強制關閉：不借用舊答案，也不從 A/B runner 下單。
+- `pair_summary.json` 只在兩邊完成後寫入，任一 profile 看不到對方結果。
 
-| 症狀 | 解法 |
-|---|---|
-| `Alpaca API key or secret not found` | `.env` 未載入或金鑰為空——重查 3.3 步驟。 |
-| Alpaca 回 `unauthorized` | Paper 金鑰過期——重新產生 Paper 金鑰（不支援 live 金鑰）。 |
-| 分析卡在某個分析師 | 通常是 rate limit；降低研究深度或加大 analyst 啟動延遲。 |
-| 加密貨幣標的找不到 | 使用斜線格式 `BTC/USD`，不是 `BTCUSD`。 |
+外部即時來源可能在兩次序列查詢間改變，因此可保證狀態與設定隔離，但不聲稱網路回應逐 byte 相同。嚴格同輸入實驗仍需要 point-in-time record/replay。
 
-### 3.8 Paper 執行狀態與安全恢復
+## 執行安全
 
-WebUI 的 Alpaca 帳戶狀態顯示最近一次持久化執行狀態：`CLEAN` 才允許新增曝險；`PAUSED` 表示不會送出新單，常見原因包括 broker 快照過期/損毀、持倉不符、未知或重複的訂單識別、未解決的部分成交，或另一個 process 持有執行鎖。
+所有訂單只能經過 `ExecutionService.execute`：
 
-恢復方式：停止重複的 app process → 到 Alpaca 確認 Paper 帳戶與訂單 → 重新啟動自動交易。啟動時會沿用持久化的 `client_order_id` 重新 reconcile；**不要**刪除 SQLite 資料列或手改狀態來強迫 `CLEAN`。若發生已查證的外部事件（如 2:1 股票拆股）造成持倉不符，唯一合法路徑是人工維護 API `Reconciler.rebase_baseline(..., reason="...")`——它會驗證快照新鮮、帳戶已存在、唯一的異常就是持倉不符、且沒有任何未解決本地單或 live broker 單才會替換 baseline；一般執行與恢復路徑永不自動 rebase。快照 TTL 預設 30 秒、報價 TTL 15 秒，可用 `TRADINGAGENTS_SNAPSHOT_TTL_SECONDS` / `TRADINGAGENTS_QUOTE_TTL_SECONDS` 覆寫。
+- Durable SQLite outbox：先 commit intent／order，再允許 broker POST。
+- Deterministic `decision_id` 與 `client_order_id`，避免重啟重複送單。
+- POST timeout／5xx 視為模糊結果，進入 `UNKNOWN` 後 lookup/adopt，不直接重送。
+- `BrokerSnapshot` 是 account、positions、orders、fills 與 cash 的唯一權威。
+- Reconciliation 只有 `CLEAN` 才能增加曝險；任何不一致維持 `PAUSED`。
+- 最後 POST 前重新驗證 market clock、snapshot、quote、entry policy 與 size。
+- 帳戶層 OS lock 阻止雙 process 同時執行。
+- Kill switch、daily loss、drawdown、consecutive rejection、notional、concentration 與 token budget 均為 deterministic guardrail。
+- SHORT 需每次 run 明確 opt-in；crypto 永遠不允許 SHORT。
 
----
+## 全市場 Screening
 
-## 上游專案
+啟用 `auto_screening_enabled` 後：
 
-本專案為獨立強化版本，源於以下兩個上游專案，感謝原作者的開創性工作：
+1. 從 Alpaca 取得完整 ACTIVE tradable US-equity universe。
+2. 以權威交易日曆驗證 61 根完整日 K。
+3. 套用價格、流動性、報酬、波動與 volume ratio 確定性門檻。
+4. Top40 compact 因子表交給獨立 Screening role。
+5. 嚴格驗證恰 20 個排名後形成 Top20。
+6. 每輪重新取得 holdings；只有當日 Top20 可增加曝險，其他持股僅可檢視或減風險。
 
-- **[TradingAgents](https://github.com/TauricResearch/TradingAgents)**（Tauric Research）——多代理 LLM 金融交易框架的原始出處，本專案的代理架構（分析師 / 研究員 / 交易員 / 風險管理）承襲自此。
-- **[AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent)**（huygiatrng，本機目錄名 `tradingAlpaca` 的由來）——本專案的直接 fork 上游（fork 點 `8d9d770`），在其 Alpaca 整合、多資產支援與 WebUI 基礎上重做執行層。
+Selection cache 使用 atomic replace、flock、日期／設定指紋與 SHA-256 完整性封印；損毀、過期或人工 refresh 失敗不會沿用舊名單。
 
-若需引用原始 TradingAgents 研究：
+## 記憶與稽核
 
-```bibtex
-@misc{xiao2025tradingagentsmultiagentsllmfinancial,
-      title={TradingAgents: Multi-Agents LLM Financial Trading Framework},
-      author={Yijia Xiao and Edward Sun and Di Luo and Wei Wang},
-      year={2025},
-      eprint={2412.20138},
-      archivePrefix={arXiv},
-      primaryClass={q-fin.TR},
-      url={https://arxiv.org/abs/2412.20138},
-}
+- Decision log：`~/.tradingbuffett/memory/trading_memory.md`
+- Agent memory：`~/.tradingbuffett/memory/agent_memory/`
+- Run audit：`~/.tradingbuffett/results/<symbol>/TradingAgentsStrategy_logs/runs/`
+- Execution ledger：`~/.tradingbuffett/execution/execution.sqlite3`
+- Long-run state：`~/.tradingbuffett/long_run/`
+- A/B state：`~/.tradingbuffett/results/ab/_profiles/<profile>/`
+
+Run audit 記錄 prompts、tool calls、LLM usage、state snapshots、errors 與 final state。不得刪除 execution ledger 來強迫帳戶恢復 `CLEAN`。
+
+## Docker
+
+Docker image 現在是 CLI image：
+
+```bash
+docker build -t traders .
+docker run --rm --env-file .env traders --help
+docker run --rm -it --env-file .env \
+  -v "$HOME/.tradingbuffett:/app/.tradingbuffett" \
+  traders long-run
 ```
+
+## 驗證
+
+```bash
+python -m compileall -q tradingagents cli scripts
+python -m pytest -q
+```
+
+2026-09-21 最終基準：`1384 passed, 139 skipped, 284 subtests passed`。Skipped cases 是已移除 WebUI 的歷史回歸斷言。
+
+## 文件
+
+- [Quick Start](QUICKSTART.md)
+- [Architecture](ARCHITECTURE.md)
+- [Local LLM Guide](LOCAL_LLM_GUIDE.md)
+- [Project Goals and Status](PROJECT_GOALS_AND_STATUS.md)
+- [雙 30 日最終審查](docs/DUAL_30D_FINAL_REVIEW_2026-09-21.md)
+
+## 上游
+
+本專案由 [AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) 與 [TradingAgents](https://github.com/TauricResearch/TradingAgents) 衍生，執行、安全、長期 observation、screening、memory 與 A/B 邊界已在本 fork 重構。
+
+License: Apache-2.0

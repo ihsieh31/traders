@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from tradingagents.app_identity import app_home, get_env, validate_app_path
+
 
 GET_ATTEMPTS = 3
 GET_BACKOFF_SECONDS = 0.05
@@ -178,7 +180,7 @@ def validate_quote(quote: Any, symbol: str) -> BrokerQuote:
         raise BrokerAuthorityError("quote symbol does not match execution symbol")
     validate_freshness(
         quote.observed_at,
-        ttl_seconds=float(os.getenv("TRADINGAGENTS_QUOTE_TTL_SECONDS", QUOTE_TTL_SECONDS)),
+        ttl_seconds=float(get_env("QUOTE_TTL_SECONDS", QUOTE_TTL_SECONDS)),
         label="quote",
     )
     quote.price
@@ -459,7 +461,7 @@ def capture_broker_snapshot(
     )
     validate_freshness(
         snapshot.observed_at,
-        ttl_seconds=float(os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)),
+        ttl_seconds=float(get_env("SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)),
         label="broker snapshot",
     )
     return snapshot
@@ -478,7 +480,7 @@ def capture_quote(symbol: str) -> BrokerQuote:
         stamp = validate_freshness(
             raw.get("timestamp"),
             ttl_seconds=float(
-                os.getenv("TRADINGAGENTS_QUOTE_TTL_SECONDS", QUOTE_TTL_SECONDS)
+                get_env("QUOTE_TTL_SECONDS", QUOTE_TTL_SECONDS)
             ),
             label="quote",
         )
@@ -505,8 +507,8 @@ class AccountExecutionLock:
     """Non-blocking, crash-released process lock keyed by verified account ID.
 
     F08: the lock lives in ONE fixed same-host location (env
-    ``TRADINGAGENTS_EXECUTION_LOCK_DIR`` override, else
-    ``~/.tradingagents/execution-locks``), never beside the DB — two
+    ``TRADINGBUFFETT_EXECUTION_LOCK_DIR`` override, else
+    ``~/.tradingbuffett/execution-locks``), never beside the DB — two
     worktrees pointing at different DB paths but the same broker account
     must contend for the same lock file. Same host/filesystem only; no
     multi-host (distributed) claim is made. An unbuildable lock directory
@@ -515,10 +517,10 @@ class AccountExecutionLock:
 
     def __init__(self, db_path: str, account_id: str):
         digest = hashlib.sha256(account_id.encode()).hexdigest()[:20]
-        lock_dir = os.getenv("TRADINGAGENTS_EXECUTION_LOCK_DIR", "").strip()
+        lock_dir = str(get_env("EXECUTION_LOCK_DIR", "")).strip()
         if not lock_dir:
-            lock_dir = str(Path.home() / ".tradingagents" / "execution-locks")
-        lock_path = Path(lock_dir)
+            lock_dir = str(app_home() / "execution-locks")
+        lock_path = validate_app_path(lock_dir, field="execution_lock_dir")
         lock_path.mkdir(parents=True, exist_ok=True)
         self.path = lock_path / f"account-{digest}.lock"
         self._file: Any = None
@@ -562,7 +564,7 @@ class Reconciler:
         try:
             validate_freshness(
                 snapshot.observed_at,
-                ttl_seconds=float(os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)),
+                ttl_seconds=float(get_env("SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)),
                 label="broker snapshot",
             )
         except BrokerAuthorityError as exc:
@@ -738,7 +740,7 @@ class Reconciler:
         validate_freshness(
             snapshot.observed_at,
             ttl_seconds=float(
-                os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
+                get_env("SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
             ),
             label="broker snapshot",
         )

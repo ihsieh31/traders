@@ -2,6 +2,7 @@ import pandas as pd
 from stockstats import wrap
 from typing import Annotated
 import os
+from tradingagents.app_identity import validate_app_path
 from .config import get_config
 from .alpaca_utils import AlpacaUtils
 from .utils import safe_ticker_component
@@ -58,10 +59,11 @@ class StockstatsUtils:
 
             # Get config and ensure cache directory exists
             config = get_config()
-            os.makedirs(config["data_cache_dir"], exist_ok=True)
+            cache_dir = validate_app_path(config["data_cache_dir"], field="data_cache_dir")
+            os.makedirs(cache_dir, exist_ok=True)
 
             data_file = os.path.join(
-                config["data_cache_dir"],
+                cache_dir,
                 f"{safe_symbol}-Alpaca-data-{start_date_str}-{end_date_str}.csv",
             )
 

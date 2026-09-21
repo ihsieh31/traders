@@ -156,7 +156,7 @@ def test_load_env_never_returns_server_secret_and_clear_disables_fallback(monkey
     from webui.utils.state import app_state
     monkeypatch.setattr(config, "_runtime_api_keys", {})
     for flag in ("analysis_running", "loop_enabled", "market_hour_enabled"): monkeypatch.setattr(app_state, flag, False)
-    monkeypatch.setenv("OPENAI_API_KEY", "fixture-server-private-key")
+    monkeypatch.setenv("TRADINGBUFFETT_OPENAI_API_KEY", "fixture-server-private-key")
     mod, app = _register()
     result = _find(app, "load_from_env")(1)
     assert "fixture-server-private-key" not in str(result)

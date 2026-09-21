@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+from tradingagents.app_identity import default_results_dir, validate_app_path
 
 # USD per 1M tokens: {"input": ..., "output": ...}. Prefix-matched
 # (longest prefix wins), case-insensitive. Estimates — override via the
@@ -96,7 +98,7 @@ def estimate_cost_usd(
 
 
 def scan_run_costs(
-    eval_results_dir: str = "eval_results",
+    eval_results_dir: str | Path | None = None,
     overrides: Optional[Dict[str, Dict[str, float]]] = None,
     metadata_match: Optional[Dict[str, Any]] = None,
 ) -> List[dict]:
@@ -113,7 +115,9 @@ def scan_run_costs(
     filename prefix or a time window. With no filter the global-report
     behavior is unchanged.
     """
-    root = Path(eval_results_dir)
+    root = validate_app_path(
+        eval_results_dir or default_results_dir(), field="results_dir"
+    )
     if not root.is_dir():
         return []
 

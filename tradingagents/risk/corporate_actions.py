@@ -30,6 +30,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from tradingagents.app_identity import DEFAULT_RESULTS_DIR
+from tradingagents.app_identity import validate_app_path
+
 VALID_REASONS = ("split", "ticker_change", "delisting", "non_tradable")
 
 
@@ -333,7 +336,9 @@ def build_quarantine_gate(config: Optional[dict]) -> Optional[QuarantineGate]:
     if not config:
         return None
     try:
-        base_dir = Path(config.get("results_dir") or "eval_results")
+        base_dir = validate_app_path(
+            config.get("results_dir") or DEFAULT_RESULTS_DIR, field="results_dir"
+        )
         store = QuarantineStore(
             base_dir / "quarantine.json",
             initial_events=list(config.get("corporate_action_events") or []),

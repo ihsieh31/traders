@@ -23,7 +23,5 @@ output/
 *.db
 *.ipynb_checkpoints
 tradingagents/dataflows/data_cache/
-webui/__pycache__
 cli/__pycache__
 assets/
-

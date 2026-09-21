@@ -87,14 +87,13 @@ def build_position_context(symbol: str, snapshot: BrokerSnapshot) -> PositionCon
     Defense in depth: the snapshot's own freshness is re-validated here so a
     stale pre-built snapshot can never be rendered as current context.
     """
-    import os
-
+    from tradingagents.app_identity import get_env
     from tradingagents.execution.authority import SNAPSHOT_TTL_SECONDS
 
     validate_freshness(
         snapshot.observed_at,
         ttl_seconds=float(
-            os.getenv("TRADINGAGENTS_SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
+            get_env("SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)
         ),
         label="position context snapshot",
     )

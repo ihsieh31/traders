@@ -34,16 +34,16 @@ class LLMClientFactoryTests(unittest.TestCase):
 
     def test_missing_api_keys_raise_clear_errors(self):
         required_key_cases = {
-            "openai": ("gpt-4.1", "OPENAI_API_KEY"),
-            "google": ("gemini-2.5-flash", "GOOGLE_API_KEY"),
-            "anthropic": ("claude-sonnet-4-6", "ANTHROPIC_API_KEY"),
-            "xai": ("grok-4.5", "XAI_API_KEY"),
-            "minimax": ("MiniMax-M2.7", "MINIMAX_API_KEY"),
-            "deepseek": ("deepseek-chat", "DEEPSEEK_API_KEY"),
-            "qwen": ("qwen-plus", "DASHSCOPE_API_KEY"),
-            "glm": ("glm-5", "ZHIPU_API_KEY"),
-            "openrouter": ("custom/openrouter-model", "OPENROUTER_API_KEY"),
-            "azure": ("deployment-name", "AZURE_OPENAI_API_KEY"),
+            "openai": ("gpt-4.1", "TRADINGBUFFETT_OPENAI_API_KEY"),
+            "google": ("gemini-2.5-flash", "TRADINGBUFFETT_GOOGLE_API_KEY"),
+            "anthropic": ("claude-sonnet-4-6", "TRADINGBUFFETT_ANTHROPIC_API_KEY"),
+            "xai": ("grok-4.5", "TRADINGBUFFETT_XAI_API_KEY"),
+            "minimax": ("MiniMax-M2.7", "TRADINGBUFFETT_MINIMAX_API_KEY"),
+            "deepseek": ("deepseek-chat", "TRADINGBUFFETT_DEEPSEEK_API_KEY"),
+            "qwen": ("qwen-plus", "TRADINGBUFFETT_DASHSCOPE_API_KEY"),
+            "glm": ("glm-5", "TRADINGBUFFETT_ZHIPU_API_KEY"),
+            "openrouter": ("custom/openrouter-model", "TRADINGBUFFETT_OPENROUTER_API_KEY"),
+            "azure": ("deployment-name", "TRADINGBUFFETT_AZURE_OPENAI_API_KEY"),
         }
 
         home_env = {

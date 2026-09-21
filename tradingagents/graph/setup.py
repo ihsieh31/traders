@@ -169,21 +169,8 @@ class GraphSetup:
         return wrapped_node
 
     def _publish_ui_update(self, state, agent, status, *, report_field=None, report_content=None):
-        """Only WebUI dispatches with an immutable owner may publish UI state."""
-        config = self.config or {}
-        generation = config.get("_webui_run_generation")
-        symbol = state.get("company_of_interest")
-        if (config.get("_analysis_source") != "webui_stream" or generation is None
-                or symbol != config.get("_webui_symbol")):
-            return False
-        try:
-            from webui.utils.state import app_state
-        except ImportError:
-            return False
-        return app_state.publish_agent_update(
-            agent, status, symbol=symbol, run_generation=generation,
-            report_field=report_field, report_content=report_content,
-        )
+        """Legacy progress hook retained as a no-op for graph compatibility."""
+        return False
 
     def _create_parallel_analysts_coordinator(self, selected_analysts, analyst_nodes, tool_nodes, delete_nodes):
         """Create a coordinator that runs selected analysts in parallel"""

@@ -2,12 +2,13 @@
 (R1-R10 of TRADERS_30D_MINIMAL_REPAIR_IMPLEMENTATION_2026-09-12).
 
 Every transport is faked in-process: no real broker POST, no real LLM API,
-no network, no user ~/.tradingagents durable state.
+no network, no user ~/.tradingbuffett durable state.
 """
 
 import importlib.util
 import inspect
 import json
+import os
 import socket
 import sys
 from datetime import datetime, timedelta
@@ -49,9 +50,9 @@ def isolated(tmp_path, monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", Mock(side_effect=AssertionError("network forbidden")))
     monkeypatch.setattr(socket, "create_connection", Mock(side_effect=AssertionError("network forbidden")))
-    monkeypatch.setenv("TRADINGAGENTS_EXECUTION_LOCK_DIR", str(tmp_path / "locks"))
-    monkeypatch.setenv("TRADINGAGENTS_LONG_RUN_DIR", str(tmp_path / "long_run"))
-    monkeypatch.setenv("TRADINGAGENTS_EXECUTION_DB", str(tmp_path / "execution.db"))
+    monkeypatch.setenv("TRADINGBUFFETT_EXECUTION_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "long_run"))
+    monkeypatch.setenv("TRADINGBUFFETT_EXECUTION_DB", str(tmp_path / "execution.db"))
     monkeypatch.setattr(lr, "_stop_requested", False)
     config = {**DEFAULT_CONFIG, "auto_screening_enabled": False, "allow_shorts": False,
               "data_cache_dir": str(tmp_path / "cache"), "alerts_enabled": False,
@@ -427,7 +428,7 @@ def long_run_config(monkeypatch, tmp_path):
     from tradingagents.default_config import DEFAULT_CONFIG
     import tradingagents.long_run as lr
 
-    monkeypatch.setenv("TRADINGAGENTS_LONG_RUN_DIR", str(tmp_path / "long_run"))
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "long_run"))
     monkeypatch.setattr("tradingagents.safety.guardrails._SAFETY_HOME",
                         tmp_path / "safety_home")
     config = {**DEFAULT_CONFIG, "auto_screening_enabled": True,
@@ -684,7 +685,7 @@ def test_H11_run_log_flush_is_atomic(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     logger = RunAuditLogger()
     run_id = logger.start_run("AAPL", "2026-09-13")
-    path = next(Path("eval_results").glob("**/runs/*.json"))
+    path = next(Path(os.environ["TRADINGBUFFETT_RESULTS_DIR"]).glob("**/runs/*.json"))
     original = path.read_bytes()
 
     monkeypatch.setattr(

@@ -26,6 +26,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
+
+from tradingagents.app_identity import APP_HOME
 from typing import Any, Dict, List, Optional
 
 DEFAULT_SAFETY_CONFIG: Dict[str, Any] = {
@@ -41,7 +43,7 @@ DEFAULT_SAFETY_CONFIG: Dict[str, Any] = {
     "daily_llm_token_budget": 0,  # tokens/day across all runs; 0 = unlimited
 }
 
-_SAFETY_HOME = Path(os.path.expanduser("~")) / ".tradingagents" / "safety"
+_SAFETY_HOME = APP_HOME / "safety"
 
 
 class SafetyStateError(RuntimeError):
