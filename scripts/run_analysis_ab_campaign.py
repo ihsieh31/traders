@@ -34,6 +34,7 @@ from scripts.run_analysis_ab import (
     _campaign_fingerprint,
     _implementation_fingerprint,
     _load_config,
+    _paper_account_preflight,
     build_ab_configs,
     resolved_llm_route_snapshots,
     run_analysis_ab as run_single_pair,
@@ -275,6 +276,24 @@ def _broker_equity_snapshot() -> dict[str, dict[str, Any]]:
             "captured_at": _utc_now(),
         }
     return snapshots
+
+
+def _capture_initial_equity_from_preflight(trade_date: str) -> dict[str, dict[str, Any]]:
+    """Pin the baseline only after the existing first-session Paper gate passes."""
+
+    preflight = _paper_account_preflight(
+        trade_date=trade_date, require_matched_flat_start=True
+    )
+    captured_at = _utc_now()
+    return {
+        backend: {
+            "account": preflight[backend]["account"],
+            "account_ref": preflight[backend]["account_ref"],
+            "equity": float(preflight[backend]["equity"]),
+            "captured_at": captured_at,
+        }
+        for backend in BACKEND_ORDER
+    }
 
 
 def _new_state(
@@ -603,9 +622,15 @@ def _run_campaign_locked(
     state["current_date"] = next_date
     _save_state(state_path, state)
     if state.get("execute_paper") and state.get("starting_equity") is None:
-        # Persist the first official broker baseline before the pair runner
-        # can change either Paper account.  Resume never overwrites it.
-        starting = broker_snapshotter()
+        # The existing pair runner's initial preflight proves open market,
+        # distinct/flat A/B accounts and matched starting equity.  Persist its
+        # result before a pair can submit an order; retry only after failure.
+        try:
+            starting = _capture_initial_equity_from_preflight(next_date)
+        except RuntimeError as exc:
+            if "market is closed" in str(exc).lower():
+                return {"outcome": "market_closed", "state": state, "next_date": next_date}
+            raise
         _validate_equity_snapshot(starting, label="starting")
         state["starting_equity"] = starting
         _save_state(state_path, state)

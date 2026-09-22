@@ -57,6 +57,15 @@ def _equity_snapshot(traders, berkshire, *, captured_at):
     }
 
 
+def _preflight_snapshot(traders, berkshire):
+    return {
+        "traders": {"account": "A", "account_ref": "traders-ref", "equity": traders,
+                    "market_date": "2026-06-22"},
+        "berkshire": {"account": "B", "account_ref": "berkshire-ref", "equity": berkshire,
+                      "market_date": "2026-06-22"},
+    }
+
+
 class AnalysisABCampaignTests(unittest.TestCase):
     def _run(self, root, *, start="2026-06-20", days=2, now=None, **kwargs):
         pair_runner = kwargs.pop("pair_runner", _completed_pair)
@@ -210,22 +219,15 @@ class AnalysisABCampaignTests(unittest.TestCase):
             self.assertEqual(calls, sessions)
 
     def test_final_broker_equity_is_authoritative_and_accounts_stay_mapped(self):
-        snapshots = iter([
-            {
-                "traders": {"account": "A", "account_ref": "traders-ref", "equity": 100000.0, "captured_at": "start"},
-                "berkshire": {"account": "B", "account_ref": "berkshire-ref", "equity": 100000.0, "captured_at": "start"},
-            },
-            {
-                "traders": {"account": "A", "account_ref": "traders-ref", "equity": 103000.0, "captured_at": "end"},
-                "berkshire": {"account": "B", "account_ref": "berkshire-ref", "equity": 99000.0, "captured_at": "end"},
-            },
-        ])
+        ending = _equity_snapshot(103000.0, 99000.0, captured_at="end")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
-            result = self._run(
-                root, days=1, execute_paper=True, paper_notional_usd=500.0,
-                broker_snapshotter=lambda: next(snapshots),
-            )
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       return_value=_preflight_snapshot(100000.0, 100000.0)):
+                result = self._run(
+                    root, days=1, execute_paper=True, paper_notional_usd=500.0,
+                    broker_snapshotter=lambda: ending,
+                )
             performance = result["summary"]["performance"]
             self.assertEqual(performance["traders"]["pnl"], 3000.0)
             self.assertEqual(performance["traders"]["return_pct"], 3.0)
@@ -260,7 +262,6 @@ class AnalysisABCampaignTests(unittest.TestCase):
 
     def test_paper_starting_equity_is_persisted_before_first_pair(self):
         events = []
-        snapshots = iter([_equity_snapshot(100000.0, 100000.0, captured_at="start")])
 
         def runner(**kwargs):
             events.append("pair")
@@ -269,44 +270,92 @@ class AnalysisABCampaignTests(unittest.TestCase):
             return {"status": "PARTIAL"}
 
         with tempfile.TemporaryDirectory() as tmp:
-            result = self._run(
-                Path(tmp) / "campaign", execute_paper=True, paper_notional_usd=500.0,
-                pair_runner=runner,
-                broker_snapshotter=lambda: events.append("snapshot") or next(snapshots),
-            )
+            def preflight(**_kwargs):
+                events.append("preflight")
+                return _preflight_snapshot(100000.0, 100000.0)
+
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight", side_effect=preflight):
+                result = self._run(
+                    Path(tmp) / "campaign", execute_paper=True, paper_notional_usd=500.0,
+                    pair_runner=runner,
+                )
             self.assertEqual(result["outcome"], "pair_unfinished")
-            self.assertEqual(events, ["snapshot", "pair"])
+            self.assertEqual(events, ["preflight", "pair"])
+
+    def test_initial_preflight_market_closed_keeps_baseline_null(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       side_effect=RuntimeError("Alpaca Paper market is closed")):
+                result = self._run(
+                    Path(tmp) / "campaign", execute_paper=True, paper_notional_usd=500.0,
+                    pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(),
+                )
+            self.assertEqual(result["outcome"], "market_closed")
+            self.assertIsNone(result["state"]["starting_equity"])
+            self.assertEqual(calls, [])
+
+    def test_invalid_initial_preflight_keeps_baseline_null_and_fails_closed(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       side_effect=RuntimeError("Paper account A must start flat")):
+                with self.assertRaisesRegex(RuntimeError, "must start flat"):
+                    self._run(
+                        root, execute_paper=True, paper_notional_usd=500.0,
+                        pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(),
+                    )
+            state = json.loads((root / "campaign_state.json").read_text())
+            self.assertIsNone(state["starting_equity"])
+            self.assertEqual(calls, [])
+
+    def test_retry_after_failed_initial_preflight_pins_fresh_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       side_effect=RuntimeError("Paper account A must start flat")):
+                with self.assertRaisesRegex(RuntimeError, "must start flat"):
+                    self._run(root, execute_paper=True, paper_notional_usd=500.0)
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       return_value=_preflight_snapshot(120000.0, 120000.0)):
+                resumed = run_campaign(
+                    resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-22"),
+                    calendar_client=object(), session_fetcher=_sessions, pair_runner=_completed_pair,
+                    summarize_fn=_summary,
+                )
+            self.assertEqual(resumed["state"]["starting_equity"]["traders"]["equity"], 120000.0)
 
     def test_persisted_starting_equity_survives_restart_without_refresh(self):
-        snapshots = iter([_equity_snapshot(100000.0, 100000.0, captured_at="start")])
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
             with self.assertRaisesRegex(RuntimeError, "simulated crash"):
-                self._run(
-                    root, execute_paper=True, paper_notional_usd=500.0,
-                    pair_runner=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated crash")),
-                    broker_snapshotter=lambda: next(snapshots),
+                with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                           return_value=_preflight_snapshot(100000.0, 100000.0)):
+                    self._run(
+                        root, execute_paper=True, paper_notional_usd=500.0,
+                        pair_runner=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated crash")),
+                    )
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       side_effect=lambda **_kwargs: self.fail("starting preflight must not refresh")):
+                resumed = run_campaign(
+                    resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-22"),
+                    calendar_client=object(), session_fetcher=_sessions, pair_runner=_completed_pair,
+                    broker_snapshotter=lambda: self.fail("starting equity must not refresh"),
+                    summarize_fn=_summary,
                 )
-            resumed = run_campaign(
-                resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-22"),
-                calendar_client=object(), session_fetcher=_sessions, pair_runner=_completed_pair,
-                broker_snapshotter=lambda: self.fail("starting equity must not refresh"),
-                summarize_fn=_summary,
-            )
             self.assertEqual(resumed["outcome"], "session_completed")
             self.assertEqual(resumed["state"]["starting_equity"]["traders"]["equity"], 100000.0)
 
     def test_completed_ending_equity_is_immutable_on_resume(self):
-        snapshots = iter([
-            _equity_snapshot(100000.0, 100000.0, captured_at="start"),
-            _equity_snapshot(103000.0, 101500.0, captured_at="end"),
-        ])
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
-            completed = self._run(
-                root, days=1, execute_paper=True, paper_notional_usd=500.0,
-                broker_snapshotter=lambda: next(snapshots),
-            )
+            with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                       return_value=_preflight_snapshot(100000.0, 100000.0)):
+                completed = self._run(
+                    root, days=1, execute_paper=True, paper_notional_usd=500.0,
+                    broker_snapshotter=lambda: _equity_snapshot(103000.0, 101500.0, captured_at="end"),
+                )
             self.assertEqual(completed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
             resumed = run_campaign(
                 resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-23"),
@@ -318,18 +367,16 @@ class AnalysisABCampaignTests(unittest.TestCase):
             self.assertEqual(resumed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
 
     def test_crash_after_ending_snapshot_reuses_persisted_snapshot(self):
-        snapshots = iter([
-            _equity_snapshot(100000.0, 100000.0, captured_at="start"),
-            _equity_snapshot(103000.0, 101500.0, captured_at="end"),
-        ])
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
             with self.assertRaisesRegex(RuntimeError, "summary crash"):
-                self._run(
-                    root, days=1, execute_paper=True, paper_notional_usd=500.0,
-                    broker_snapshotter=lambda: next(snapshots),
-                    summarize_fn=lambda _root: (_ for _ in ()).throw(RuntimeError("summary crash")),
-                )
+                with patch("scripts.run_analysis_ab_campaign._paper_account_preflight",
+                           return_value=_preflight_snapshot(100000.0, 100000.0)):
+                    self._run(
+                        root, days=1, execute_paper=True, paper_notional_usd=500.0,
+                        broker_snapshotter=lambda: _equity_snapshot(103000.0, 101500.0, captured_at="end"),
+                        summarize_fn=lambda _root: (_ for _ in ()).throw(RuntimeError("summary crash")),
+                    )
             state = json.loads((root / "campaign_state.json").read_text())
             self.assertEqual(state["status"], "COMPLETED")
             self.assertEqual(state["ending_equity"]["traders"]["equity"], 103000.0)
