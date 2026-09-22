@@ -1,97 +1,158 @@
 # Traders
 
-以 LangGraph 多代理分析、Alpaca Paper 執行與可稽核安全邊界組成的交易研究框架。
+> 以多代理研究、可稽核決策與 **Alpaca Paper-only** 執行組成的交易研究框架。它用來研究與驗證策略流程，**不是投資建議，也不支援實盤交易**。
 
-> **Paper-only**：程式固定使用 Alpaca Paper API。`TRADINGBUFFETT_ALPACA_USE_PAPER=False`、live endpoint 或無法證明為 paper 的設定都會 fail closed，零 broker mutation。
->
-> 本專案僅供研究與教育，不構成投資建議。
+## 這個專案在做什麼？
 
-## 目前用途
+Traders 把「取得市場資訊 → 多角度研究 → 辯論 → 風險決策 → 模擬下單 → 稽核」放進同一個 Python 專案。它的目標不是讓 LLM 直接決定交易，而是讓 LLM 的研究結論必須通過結構化、可重播、具安全限制的執行邊界。
 
-- CLI 單次多代理研究：Market、Social、News、Fundamentals、Macro。
-- Bull／Bear 與 Risky／Safe／Neutral 雙層辯論。
-- 結構化 `TradeIntent` 與單一 Paper execution service。
-- 30 日無人值守 Paper observation。
-- Traders × Berkshire 雙 30 日 A/B（shadow 或雙帳戶 Alpaca Paper 執行）。
-- 回測、決策記憶、每日報告、成本與完整 run audit log。
+目前提供三種工作模式：
 
-WebUI 已移除。核心不再依賴 Dash、Flask、Plotly、Gradio 或任何 UI state。
+| 模式 | 用途 | 執行入口 |
+| --- | --- | --- |
+| 單次分析 | 互動式研究單一標的並產出決策報告 | `python -m cli.main analyze` |
+| 30 日 Paper observation | 以每日排程執行單一策略的觀察流程，可中斷後恢復 | `python -m cli.main long-run` |
+| Traders × Berkshire A/B | 用相同凍結證據比較兩種分析團隊，可跑 shadow 或隔離的 Paper 帳戶 | `scripts/run_analysis_ab.py` |
 
-## 安裝
+所有券商寫入都被限制為 Alpaca Paper API。偵測到 live endpoint、`TRADINGBUFFETT_ALPACA_USE_PAPER=False` 或無法證明為 Paper 的設定時，程式應直接停止，而不是退回到實盤。
 
-需求：Python 3.10 以上；建議 3.11 或 3.12。
+## 它如何運作？
 
-```bash
-git clone https://github.com/ihsieh31/traders.git
-cd traders
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp env.sample .env
+```text
+市場資料、新聞、社群、財報、總經
+              │
+              ▼
+Market / Social / News / Fundamentals / Macro analysts
+              │  （平行研究）
+              ▼
+       Bull / Bear researchers → Research Manager
+              │
+              ▼
+           Trader → Risky / Safe / Neutral debate
+              │
+              ▼
+       Risk Manager → 結構化 TradeIntent
+              │
+              ▼
+ExecutionService：持久化 outbox、券商快照、對帳與安全閘門
+              │
+              ▼
+              Alpaca Paper
 ```
 
-Windows 啟用環境：
+### 研究與決策層
 
-```powershell
-.venv\Scripts\activate
-```
+- 五位分析師各自負責市場技術面、社群情緒、新聞、基本面與總經；再由 Bull/Bear 研究員辯論，Research Manager 彙整。
+- Trader 提出行動方案；Risky、Safe、Neutral 三方再審視風險；Risk Manager 最後輸出 typed `TradeIntent`。
+- 支援 OpenAI、OpenAI-compatible local endpoint、Google、Anthropic、xAI、MiniMax、DeepSeek、Qwen、GLM、OpenRouter、Ollama 與 Azure。可把 Analysis、Decision、Screening 拆成固定角色與不同模型。
+- 記憶、反思與記憶維護可跨執行保存；prompt 可用 `TRADINGBUFFETT_PROMPT_DIR` 覆寫。
 
-完整鎖定安裝：
+### 資料與選股層
 
-```bash
-pip install --no-deps -r requirements.lock
-pip check
-```
+- 資料來源包含 Alpaca、Finnhub、Google News、Reddit、FRED、SEC/IR，以及加密資產相關來源；部分情境可啟用 yfinance fallback。
+- 手動模式以選定 watchlist 分析；啟用 `auto_screening_enabled` 時，會從可交易美股 universe 篩出當日 Top20。
+- 篩選流程先以完整交易日、價格、成交額、報酬、波動與量能作確定性過濾，再讓獨立 Screening role 對 Top40 排名選出嚴格驗證的 Top20。
+- 當日選股快取會記錄日期、設定指紋與 SHA-256 完整性封印；過期、損毀或不合法時不沿用舊結果。
 
-## 最小設定
+### 執行與安全層
 
-編輯 `.env`：
+`TradeIntent` 不是訂單。只有通過所有 deterministic 檢查後，才可能變成 Paper order：
 
-```env
-TRADINGBUFFETT_ALPACA_API_KEY=your_paper_key
-TRADINGBUFFETT_ALPACA_SECRET_KEY=your_paper_secret
-TRADINGBUFFETT_ALPACA_USE_PAPER=True
+- 唯一 `ExecutionService.execute` 入口與 strict schema；無效或模糊的模型輸出不會從文字猜測成訂單。
+- SQLite durable outbox：先寫入 intent/order 並 commit，才可呼叫券商。
+- `decision_id` 與 `client_order_id` 雙重冪等；timeout 或 5xx 會進入 `UNKNOWN`，先查詢/認領，不盲目重送。
+- Alpaca `BrokerSnapshot` 是帳戶、持倉、訂單、成交與現金的權威；只有 reconciliation 為 `CLEAN` 才能增加曝險。
+- 送單前重新檢查市場時鐘、帳戶、持倉、報價、entry policy 與部位大小；帳戶層 OS lock 防止兩個程序同時操作。
+- kill switch、每日虧損、drawdown、連續拒單、單筆名目金額、集中度、部位/產業曝險與 LLM token budget 都由非 LLM 的 guardrail 管理。
+- SHORT 必須逐次明確 opt-in，crypto 永不允許 SHORT；保護性的停損/停利可使用 broker-side bracket/OTO order。
 
-TRADINGBUFFETT_LLM_PROVIDER=openai
-TRADINGBUFFETT_OPENAI_API_KEY=your_openai_key
-```
+## 快速開始
 
-所有環境變數使用 `TRADINGBUFFETT_` namespace，不讀取其他 fork 的未加前綴設定。支援 OpenAI、local OpenAI-compatible、Google、Anthropic、xAI、MiniMax、DeepSeek、Qwen、GLM、OpenRouter、Ollama 與 Azure。
+需求：Python 3.10+；建議 Python 3.11 或 3.12。以下範例以 macOS/Linux 為例。
 
-## 執行
+1. 安裝專案與相依套件。
 
-查看 CLI：
+   ```bash
+   git clone https://github.com/ihsieh31/traders.git
+   cd traders
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install --no-deps -r requirements.lock
+   pip check
+   ```
 
-```bash
-python -m cli.main --help
-```
+   Windows 啟用虛擬環境：
 
-互動式單次分析：
+   ```powershell
+   .venv\Scripts\activate
+   ```
 
-```bash
-python -m cli.main analyze
-```
+   `requirements.lock` 是 CI/Docker 使用的完整鎖定依賴；若只進行開發，也可用 `pip install -r requirements.txt`。
 
-30 日無人值守 Paper observation：
+2. 建立本機設定檔並填入最小必要金鑰。
+
+   ```bash
+   cp env.sample .env
+   ```
+
+   ```dotenv
+   TRADINGBUFFETT_ALPACA_API_KEY=your_paper_key
+   TRADINGBUFFETT_ALPACA_SECRET_KEY=your_paper_secret
+   TRADINGBUFFETT_ALPACA_USE_PAPER=True
+   TRADINGBUFFETT_ALPACA_READ_ONLY=True
+
+   TRADINGBUFFETT_LLM_PROVIDER=openai
+   TRADINGBUFFETT_OPENAI_API_KEY=your_openai_key
+   ```
+
+   `.env` 的金鑰一律使用 `TRADINGBUFFETT_` 前綴。保留 `ALPACA_READ_ONLY=True` 可做分析與唯讀 probe；只有在明確授權的 Paper observation 或 A/B Paper 執行前，才將它設為 `False`。
+
+3. 確認可用指令，然後做互動式單次分析。
+
+   ```bash
+   python -m cli.main --help
+   python -m cli.main analyze
+   ```
+
+   `analyze` 會在終端機詢問標的、模型、研究深度與策略設定，並輸出研究報告。第一次執行前，先閱讀 [Quick Start](QUICKSTART.md) 和 [本機 LLM 設定](LOCAL_LLM_GUIDE.md) 可減少設定時間。
+
+## 常見操作
+
+### 30 日單策略 Paper observation
 
 ```bash
 python -m cli.main long-run
 ```
 
-第一次啟動會收集缺少的非機密設定、執行唯讀 preflight，並要求明確 Paper-test 授權。授權前不會送出 broker mutation。中斷後重跑同一指令會恢復原 observation；已停止的 observation 不會被偷偷續跑。
+第一次啟動會收集非機密的模型、分析師、每日 ET 執行時間、名目金額等設定，並把 secrets 留在 `.env`、把 observation 設定留在 `~/.tradingbuffett/long_run/config.json`。啟動前會進行唯讀 preflight；在取得明確 Paper 授權前不會執行 broker mutation。
 
-## 雙 30 日 Traders × Berkshire A/B
+同一指令會：
 
-A/B runner 的唯一研究變因是 `analysis_backend`：Traders 使用原生五 analyst，Berkshire 使用 Berkshire Analysis Team；兩邊的 LLM 預算、凍結證據、Report Context、Bull/Bear、Trader、Risk 與所有下游節點相同。
+1. 建立 30 個日曆天的 observation（只在美股交易日執行）。
+2. 為每一日保存 round journal、帳戶快照、事件與報告。
+3. 遭遇 crash 時使用同一 observation state 安全恢復，而不是建立新 run。
+4. 遇到 provider、安全或對帳無法證明正確的情況時停止，不會靜默繼續。
+5. 結束後輸出 `final_report.md` 與 `final_report.json`。
+
+此模式不是背景服務，不會安裝 OS autostart；需要保留程序運行，或在中斷後重新執行同一指令來恢復。最後報告是觀察報告，不代表自動清倉或獲利證明。
+
+### Traders × Berkshire A/B
 
 ```bash
+# shadow：不送出 broker order
 python scripts/run_analysis_ab.py \
   --symbol NVDA \
   --date 2026-09-21 \
   --results-root ~/.tradingbuffett/results/ab
+
+# 匯總既有結果
+python scripts/summarize_analysis_ab.py \
+  --root ~/.tradingbuffett/results/ab
 ```
 
-要實際送到兩個隔離的 Alpaca Paper 帳戶，必須另外設定 account A/B keys、令 `TRADINGBUFFETT_ALPACA_READ_ONLY=False`，並明確給定每臂上限：
+此實驗只應改變 `analysis_backend`：Traders 使用原生五 analyst；Berkshire 使用 Berkshire Analysis Team。兩臂應共享同一份 frozen `EvidencePacket`，而下游的 Report Context、Bull/Bear、Trader、Risk 與安全執行邊界維持相同；記憶、cache、audit、execution DB、Safety state、broker lock 與（Paper 模式下）Alpaca 帳戶則應各自隔離。
+
+若要嘗試兩個隔離 Alpaca Paper 帳戶的執行，需要 A/B 專用 credentials、`TRADINGBUFFETT_ALPACA_READ_ONLY=False`、明確的 `--execute-paper` 與每臂上限，例如：
 
 ```bash
 python scripts/run_analysis_ab.py \
@@ -102,97 +163,73 @@ python scripts/run_analysis_ab.py \
   --paper-notional-usd 500
 ```
 
-彙總：
+**請先閱讀下方「目前進度與限制」。** A/B 的程式與契約修復已通過；正式 30 日雙帳戶實驗目前只剩「交易時段內的真實 Paper recovery」驗證 gate。完成該 gate 前，仍應先以 shadow 或受控驗收方式使用 `--execute-paper`。
 
-```bash
-python scripts/summarize_analysis_ab.py \
-  --root ~/.tradingbuffett/results/ab
-```
+## 產物在哪裡？
 
-A/B 保護條件：
+| 產物 | 預設位置 | 用途 |
+| --- | --- | --- |
+| 單次 run audit | `~/.tradingbuffett/results/<symbol>/TradingAgentsStrategy_logs/runs/` | prompts、tool calls、LLM usage、state、錯誤與最終狀態 |
+| 決策記憶 | `~/.tradingbuffett/memory/trading_memory.md` | 歷史決策紀錄 |
+| agent memory | `~/.tradingbuffett/memory/agent_memory/` | 反思與檢索記憶 |
+| execution ledger | `~/.tradingbuffett/execution/execution.sqlite3` | intent、order、fill、帳戶對帳狀態 |
+| long-run state | `~/.tradingbuffett/long_run/` | observation 設定、active state、journals、最終報告 |
+| A/B 實驗結果 | `~/.tradingbuffett/results/ab/` | campaign、frozen evidence、pair state、兩臂記錄與 summary |
 
-- `memory_retrieval_enabled`、outcome reflection、memory maintenance 強制開啟。
-- Traders 與 Berkshire 各自使用持久且互斥的 memory、cache、audit、execution DB、Safety state 與 kill switch；broker lock 固定在同一主機目錄，並以已驗證的不同 account ID 分鍵。
-- 兩邊序列執行；順序依 `symbol + trade_date` 交錯，避免固定先跑同一邊。
-- 每組先建立同一份 frozen EvidencePacket；五個 section 都必須至少有一筆可用資料，且使用 campaign pin 的 SHA-256 驗證。
-- `AB_CAMPAIGN.json` 固定整段測試的 config、完整 analyst set、程式與 prompt fingerprint；中途漂移會停止。
-- 同一 symbol/date 不可覆寫重跑。
-- Checkpoint 強制關閉；未給 `--execute-paper` 時為 shadow，明確開啟時 Traders 固定 account A、Berkshire 固定 account B。
-- Paper 執行要求兩個不同帳戶、第一組開始前持倉與 open orders 為空且 equity 誤差在 0.1%／US$1 內，並要求 Alpaca 當日且 regular session 開市。
-- endpoint 必須是 `paper-api.alpaca.markets` 且 SDK 永遠使用 `paper=True`；live 或未知 endpoint 直接拒絕。
-- `pair_summary.json` 只在兩邊完成後寫入，任一 profile 看不到對方結果。
+不要刪除 execution ledger 或 active state 來「恢復」帳戶。這會破壞冪等與對帳證據；若狀態異常，應依 audit 與明確的維護流程處理。
 
-兩臂分析讀取同一份 point-in-time EvidencePacket，不在各自執行時重新查外部資料。
-
-## 執行安全
-
-所有訂單只能經過 `ExecutionService.execute`：
-
-- Durable SQLite outbox：先 commit intent／order，再允許 broker POST。
-- Deterministic `decision_id` 與 `client_order_id`，避免重啟重複送單。
-- POST timeout／5xx 視為模糊結果，進入 `UNKNOWN` 後 lookup/adopt，不直接重送。
-- `BrokerSnapshot` 是 account、positions、orders、fills 與 cash 的唯一權威。
-- Reconciliation 只有 `CLEAN` 才能增加曝險；任何不一致維持 `PAUSED`。
-- 最後 POST 前重新驗證 market clock、snapshot、quote、entry policy 與 size。
-- 帳戶層 OS lock 阻止雙 process 同時執行。
-- Kill switch、daily loss、drawdown、consecutive rejection、notional、concentration 與 token budget 均為 deterministic guardrail。
-- SHORT 需每次 run 明確 opt-in；crypto 永遠不允許 SHORT。
-
-## 全市場 Screening
-
-啟用 `auto_screening_enabled` 後：
-
-1. 從 Alpaca 取得完整 ACTIVE tradable US-equity universe。
-2. 以權威交易日曆驗證 61 根完整日 K。
-3. 套用價格、流動性、報酬、波動與 volume ratio 確定性門檻。
-4. Top40 compact 因子表交給獨立 Screening role。
-5. 嚴格驗證恰 20 個排名後形成 Top20。
-6. 每輪重新取得 holdings；只有當日 Top20 可增加曝險，其他持股僅可檢視或減風險。
-
-Selection cache 使用 atomic replace、flock、日期／設定指紋與 SHA-256 完整性封印；損毀、過期或人工 refresh 失敗不會沿用舊名單。
-
-## 記憶與稽核
-
-- Decision log：`~/.tradingbuffett/memory/trading_memory.md`
-- Agent memory：`~/.tradingbuffett/memory/agent_memory/`
-- Run audit：`~/.tradingbuffett/results/<symbol>/TradingAgentsStrategy_logs/runs/`
-- Execution ledger：`~/.tradingbuffett/execution/execution.sqlite3`
-- Long-run state：`~/.tradingbuffett/long_run/`
-- A/B state：`~/.tradingbuffett/results/ab/_profiles/<profile>/`
-
-Run audit 記錄 prompts、tool calls、LLM usage、state snapshots、errors 與 final state。不得刪除 execution ledger 來強迫帳戶恢復 `CLEAN`。
-
-## Docker
-
-Docker image 現在是 CLI image：
-
-```bash
-docker build -t traders .
-docker run --rm --env-file .env traders --help
-docker run --rm -it --env-file .env \
-  -v "$HOME/.tradingbuffett:/app/.tradingbuffett" \
-  traders long-run
-```
-
-## 驗證
+## 驗證與開發
 
 ```bash
 python -m compileall -q tradingagents cli scripts
 python -m pytest -q
 ```
 
-2026-09-22 最終基準：`1414 passed, 139 skipped, 294 subtests passed`。Skipped cases 是已移除 WebUI 的歷史回歸斷言。
+最新完整基準（2026-09-22）為 **1,414 passed、139 skipped、294 subtests passed**。其中 139 個 skipped 多屬已移除 WebUI 的歷史測試；這個基準表示既有回歸測試通過，**不等於**正式 A/B 或真實 Paper recovery 已完全驗證。
 
-## 文件
+主要程式區域如下：
 
-- [Quick Start](QUICKSTART.md)
-- [Architecture](ARCHITECTURE.md)
-- [Local LLM Guide](LOCAL_LLM_GUIDE.md)
-- [Project Goals and Status](PROJECT_GOALS_AND_STATUS.md)
-- [雙 30 日最終審查](docs/DUAL_30D_FINAL_REVIEW_2026-09-21.md)
+| 路徑 | 職責 |
+| --- | --- |
+| `cli/` | Typer CLI 與終端機互動流程 |
+| `tradingagents/graph/` | LangGraph 編排、節點連線、signal extraction、reflection |
+| `tradingagents/agents/` | analysts、researchers、managers、trader、risk roles 與 schemas |
+| `tradingagents/dataflows/` | 市場/新聞/總經/SEC 資料介面與交易日曆 |
+| `tradingagents/screening/` | 美股 universe、確定性排名、Top20 與 entry gate |
+| `tradingagents/execution/` | durable execution、broker authority、recovery、保護單與 exit |
+| `tradingagents/long_run*.py` | 30 日 observation 的設定、排程、state、恢復與報告 |
+| `tradingagents/analysis_backends/berkshire/` | Berkshire Analysis Team backend |
+| `scripts/run_analysis_ab.py` | frozen-evidence A/B pair runner |
+| `tests/` | 離線 mock、故障注入與回歸測試 |
 
-## 上游
+## 目前進度與限制（2026-09-22）
 
-本專案由 [AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) 與 [TradingAgents](https://github.com/TauricResearch/TradingAgents) 衍生，執行、安全、長期 observation、screening、memory 與 A/B 邊界已在本 fork 重構。
+### 已完成且可供開發/研究使用
 
-License: Apache-2.0
+- Paper-only hard lock、strict `TradeIntent`、durable SQLite outbox、券商快照與 reconciliation、UNKNOWN lookup/adopt、帳戶 lock、風險與安全 guardrail。
+- Phase B 的角色化 LLM、重試/停止語意、持倉/曝險限制、SEC/IR、corporate-action quarantine。
+- Phase C 的全市場 Top20 screening 與執行 entry gate。
+- Phase D 的 30 日單策略 observation：設定、preflight、journal、crash/resume、排程與最終報告。
+- Traders/Berkshire frozen-evidence A/B runner、雙帳戶設定與 shadow smoke；2026-09-22 shadow A/B smoke 成功，兩臂皆產出有效 HOLD，且零 broker mutation。
+
+### 剩餘驗證 gate
+
+- **真實 Paper recovery 驗證：尚未完成。** 必須在交易時段內，透過未修改的 production execution path 完成安全的 Paper submit/cancel，以及中斷後以原本的 `decision_id`、`client_order_id` 與 broker order 恢復/認領，並證明不會重複下單。
+- 2026-09-22 的 pre-30-day acceptance 當時因市場收盤，無法安全建立 production path 所需的測試訂單；驗收正確地沒有繞過市場時鐘或送出不受控訂單。這是待補的實盤驗證，不是已知程式 blocker。
+
+其餘 A/B 契約修復、隔離與驗收已通過。完成並記錄這個 Paper recovery gate 後，才可將 30 日雙帳戶 A/B 視為已完成啟動前驗證。訊號一致率與 telemetry 仍不等同報酬率或投資建議。
+
+## 延伸文件
+
+- [Quick Start](QUICKSTART.md)：更精簡的安裝與疑難排解
+- [Architecture Guide](ARCHITECTURE.md)：模組、資料流與執行邊界細節
+- [Local LLM Guide](LOCAL_LLM_GUIDE.md)：local/OpenAI-compatible 模型設定
+- [Project Goals and Status](PROJECT_GOALS_AND_STATUS.md)：完整階段歷史與驗收紀錄（含歷史狀態）
+- [2026-09-22 最終深度審查](docs/FINAL_30D_DEEP_REVIEW_2026-09-22.md)：修復前的審查與重現基準
+- [2026-09-22 Pre-30-Day Acceptance](docs/PRE_30D_SMOKE_RECOVERY_ACCEPTANCE.md)：最近一次 shadow、broker preflight 與待補的 Paper recovery 驗收
+
+## 沿革與授權
+
+本 fork 源自 [AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) 與 [TradingAgents](https://github.com/TauricResearch/TradingAgents)，並在 Paper execution、安全、長期 observation、screening、memory 與 A/B 邊界上重構。
+
+License: [Apache-2.0](LICENSE)

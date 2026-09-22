@@ -2,7 +2,7 @@
 
 版本：3.0
 
-最後更新：2026-09-21
+最後更新：2026-09-22
 
 GitHub：[ihsieh31/traders](https://github.com/ihsieh31/traders)
 
@@ -10,7 +10,7 @@ GitHub：[ihsieh31/traders](https://github.com/ihsieh31/traders)
 
 上游：[huygiatrng/AlpacaTradingAgent](https://github.com/huygiatrng/AlpacaTradingAgent) @ `8d9d770da9ecc108d70fd8a97caae032c53caad0`
 
-> **2026-09-21 運作狀態**：WebUI 已移除，目前只保留 CLI、Phase-D long-run 與 Traders×Berkshire shadow A/B。A/B 的 retrieval/reflection/maintenance 記憶全開且按 profile 持久隔離，中途 config 漂移與同 pair 覆寫都 fail closed。本段以下對 WebUI 的描述為歷史實作與驗收記錄，不代表當前 runtime surface。
+> **2026-09-22 運作狀態**：WebUI 已移除，目前只保留 CLI、Phase-D long-run 與 Traders×Berkshire A/B。A/B 的 retrieval/reflection/maintenance 記憶全開且按 profile 持久隔離，中途 config 漂移與同 pair 覆寫都 fail closed。修復前審查列出的 P1/P2 已完成修復並通過驗收；目前唯一啟動前 gate 是交易時段內的真實 Alpaca Paper recovery 驗證（submit/cancel、crash/restart、原始訂單身分與零重複下單）。本段以下對 WebUI 的描述為歷史實作與驗收記錄，不代表當前 runtime surface。
 
 ## 1. 唯一目標
 
@@ -444,13 +444,11 @@ A6 通過後即可實作；Paper observation 不屬於 P2／P3 實作與離線�
 - [x] 2026-09-15（第二項，啟運行後）：**screening 唯讀 GET 有界重試修復**。窗口 `lr-20260915T035942Z-41038e` 第一場實戰 round 開跑 2 分鐘即硬停：SIP 日K 批量取回的第一個 100-symbol 批次發生一次 `HTTPSConnectionPool(data.alpaca.markets) Read timed out (10s)`，資料層「任何傳輸失敗立即 BARS_UNAVAILABLE」的零重試設計讓單次網路瞬間失敗以 SCREENING_STOPPED 終結整場（finalize STOPPED、零 broker 曝險；與同日 schema 修復屬不同缺陷，模型層全程正常）。修復：`alpaca_utils.py` 新增 `is_transient_fetch_error`／`fetch_with_bounded_retry`（至多 3 次、0.5s 起指數退避上限 4s；僅超時/連線復位/408/409/429/5xx 可重試，401/403/404 與未知形狀立即停；耗盡原樣再拋，呼叫點語義不變、絕不換資料來源），套用 `fetch_daily_bars_batch`（此路徑讀取逾時並放寬為 20s）、`universe._consume_pages` 分頁、holdings `_default_positions`／`_default_asset`——與 broker 層「唯讀 GET 至多 3 次短退避後 fail-closed」同一教條。新增 `tests/test_screening_bounded_get_retry.py` 12 項（403 永不重試、耗盡仍帶 SIP context、原例外不被掩蓋、端到端重試後成功）。全 suite `1215 passed, 0 failed, 268 subtests`、compileall／whitespace 綠。
 - [~] 2026-09-16（凌晨，進行中）：修復後的新窗口啟動目前受阻於**備援路徑外部因素**——本機 proxy 的 `gemini-3.8-flash` 上游持續 503 high-demand（proxy 本身正常、models 端點 200、主模型 Agnes 正常；preflight 按設計驗證全部已配置路徑，三次嘗試均未建立窗口、零副作用）。已設每 30 分鐘自動重試啟動的有界排程；9/16 台北 23:00 前任何時刻啟動即不損失當日 session。
 
-### 12.1 尚未完成 / 已知未修項
+### 12.1 現行啟動前 gate
 
-- [ ] **D4：真實 30 日 Paper observation 進行中**——窗口 `lr-20260915T035942Z-41038e`（2026-09-15 使用者明確授權啟動，22 sessions 至 10/14 ET）；屬帳戶權益變化紀錄的 operation observation，非 profitability proof；每日排程健康檢查至窗口結束。
-- [ ] **需要真實 broker 資料才能決策**：F-02 recovery whitelist / `ACCEPTED` / `PARTIAL`（現行維持 fail-closed、不重放）；H-01 sector cap 需要完整可靠的 sector mapping；真實 Alpaca universe/bars 與 Screening vendor 輸出品質仍未驗證。
-- [ ] **刻意不改的非缺陷／架構債**：A2b 獨立 long-run budget key、A4a 共用 analyst tool loop、A6a request-builder injection、A8 corrupt-journal quarantine/reconciliation、M-05 risk-reducing bypass、M-07/M-09 broker typed adapter、M-08/M-16 persistent path migration。現況均有安全語意或相容性成本，沒有重現中的錯誤行為，依 ponytail 原則不預先重構。
-- [ ] **資訊不足，未猜測修改**：M-11 portfolio multiplier、M-12 legacy parser、M-13 memory concurrency、M-14 n>1；原清單沒有精確 location/reproduction，需先取得失敗樣本或測試案例。
+- [ ] **真實 Paper recovery 驗證**：在正常交易時段，以未修改的 production execution path 驗證安全 submit/cancel；模擬中斷後以原 `decision_id`、`client_order_id` 與 broker order 恢復/認領，並證明零重複下單。收盤時的驗收沒有弱化 market-clock 或送出不受控訂單，因此此項仍待完成。
+- [~] 其餘列為歷史架構債或資料品質觀察，不是 P1/P2 或啟動 blocker；依 ponytail 原則，未有精確重現前不預先重構。
 
 ## 13. 下一個具體行動
 
-P1（A0–A6）、P2（Phase B）、P3（Phase C）全部 Accepted；P4（Phase D）實作、審查修復與 2026-09-15 schema 穿透修復完成。使用者已於 2026-09-15 明確授權並啟動 30 日 Paper observation（窗口 `lr-20260915T035942Z-41038e`）；後續動作是每日排程健康檢查、12.1 所列真實 broker 樣本的累積，與窗口到期時的最終報告判讀。
+P1（A0–A6）、P2（Phase B）、P3（Phase C）及修復前 A/B 審查列出的 P1/P2 均已 Accepted；P4（Phase D）實作與審查修復完成。下一個具體行動是於正常交易時段完成並保存 12.1 的真實 Paper recovery 驗證；通過後才開始正式 30 日雙帳戶 A/B campaign。

@@ -1,5 +1,7 @@
 # 30 日交易與 A/B 最終深度審查
 
+> **修復後狀態更新（2026-09-22）**：本文件以下保留的是修復前的審查基準與 finding 證據，不是目前 release 狀態。列出的 P1/P2 已完成修復並通過後續驗收；正式 30 日雙帳戶 A/B 的唯一剩餘 gate 是交易時段內，以未修改 production execution path 完成真實 Alpaca Paper submit/cancel 與 crash/restart recovery，並證明使用原 `decision_id`／`client_order_id` 時不會重複下單。R12 的原始 endpoint-pinning reproduction 仍保留在審查案例中，因該項採用已接受的延後策略，不可把它的歷史紅燈解讀為目前 P1/P2 blocker。
+
 審查日期：2026-09-22（Asia/Taipei）。結論：**目前不宜啟動正式 30 日雙帳戶 A/B；存在 8 項 P1、8 項 P2 問題。** P1 代表會破壞實驗有效性、執行狀態判斷或恢復能力，應在正式收集樣本前修正；P2 是需修正的可靠性、排程及驗證缺口。這不是對交易收益的判斷。
 
 本次依 ponytail 原則審查：優先調整既有邊界、重用現有持久化／執行／日曆機制，不建議重寫系統、增加服務或引入新依賴。未使用 Codex Security。只新增審查資料，未修改交易程式，也未啟動交易或以新增案例呼叫真實模型／券商。
@@ -25,7 +27,7 @@ PYTHONPATH=. .venv-p2/bin/python -m pytest docs/review_2026_09_22/test_final_rev
 PYTHONPATH=. .venv-p2/bin/python docs/review_2026_09_22/run_skipped_core_checks.py
 ```
 
-第二條目前預期 exit 1；修正後應轉為通過。案例留在審查目錄，未混入正常 `tests/` 發現範圍。兩個警告來自既有 websockets／LangGraph 依賴的棄用提示。
+第二條是修復前的歷史契約基準；其中 R12 assertion 與目前「已接受、延後」的路由策略不同，仍會以該 assertion 失敗。它不屬於目前 release gate。案例留在審查目錄，未混入正常 `tests/` 發現範圍。兩個警告來自既有 websockets／LangGraph 依賴的棄用提示。
 
 ## 確認問題總表
 

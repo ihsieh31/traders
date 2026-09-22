@@ -1,5 +1,7 @@
 # True Traders vs AI-Berkshire analysis A/B implementation
 
+> **Campaign readiness（2026-09-22）**：本文件的 A/B P1/P2 修復與驗收均已通過。開始正式 30 日雙帳戶 campaign 前，僅剩交易時段內的真實 Alpaca Paper recovery gate：production execution path 的 submit/cancel 與 crash/restart recovery 必須保留原訂單身分且零重複下單。
+
 ## Scope and control variable
 
 The formal experiment compares `analysis_backend=traders` with
