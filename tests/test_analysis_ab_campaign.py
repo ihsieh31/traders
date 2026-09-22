@@ -44,7 +44,29 @@ def _summary(_root):
     }
 
 
-def _completed_pair(**_kwargs):
+def _summary_with(pair_count):
+    def _fn(_root):
+        return {**_summary(_root), "pair_count": pair_count}
+    return _fn
+
+
+def _completed_pair(**kwargs):
+    # Real finalization now proves on-disk pair state, so the fixture writes
+    # the pair_state.json the campaign runner would persist.
+    symbol = str(kwargs.get("symbol") or "AAPL").upper()
+    trade_date = str(kwargs.get("trade_date") or "")
+    root = Path(kwargs.get("results_root"))
+    pair_dir = root / trade_date / symbol
+    pair_dir.mkdir(parents=True, exist_ok=True)
+    (pair_dir / "pair_state.json").write_text(json.dumps({
+        "schema_version": 2,
+        "pair_id": "fixture-pair",
+        "campaign_fingerprint": "0" * 64,
+        "evidence_sha256": "0" * 64,
+        "symbol": symbol,
+        "trade_date": trade_date,
+        "status": "COMPLETED",
+    }), encoding="utf-8")
     return {"status": "COMPLETED"}
 
 
@@ -69,7 +91,7 @@ def _preflight_snapshot(traders, berkshire):
 class AnalysisABCampaignTests(unittest.TestCase):
     def _run(self, root, *, start="2026-06-20", days=2, now=None, **kwargs):
         pair_runner = kwargs.pop("pair_runner", _completed_pair)
-        summarize_fn = kwargs.pop("summarize_fn", _summary)
+        summarize_fn = kwargs.pop("summarize_fn", _summary_with(days))
         return run_campaign(
             symbol="AAPL",
             start_date=start,
@@ -111,7 +133,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
 
         def runner(**kwargs):
             calls.append(kwargs["trade_date"])
-            return _completed_pair()
+            return _completed_pair(**kwargs)
 
         with tempfile.TemporaryDirectory() as tmp:
             result = self._run(Path(tmp) / "campaign", pair_runner=runner)
@@ -152,7 +174,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
             resumed = run_campaign(
                 resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-22"),
                 calendar_client=object(), session_fetcher=_sessions,
-                pair_runner=lambda **kwargs: calls.append(kwargs["trade_date"]) or _completed_pair(),
+                pair_runner=lambda **kwargs: calls.append(kwargs["trade_date"]) or _completed_pair(**kwargs),
                 summarize_fn=_summary,
             )
             self.assertEqual(resumed["outcome"], "session_completed")
@@ -164,7 +186,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
 
         def runner(**kwargs):
             calls.append(kwargs["trade_date"])
-            return _completed_pair()
+            return _completed_pair(**kwargs)
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
@@ -201,7 +223,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
 
         def runner(**kwargs):
             calls.append(kwargs["trade_date"])
-            return _completed_pair()
+            return _completed_pair(**kwargs)
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
@@ -238,7 +260,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
         calls = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
-            self._run(root, days=1, pair_runner=lambda **kwargs: calls.append(1) or _completed_pair())
+            self._run(root, days=1, pair_runner=lambda **kwargs: calls.append(1) or _completed_pair(**kwargs))
             (root / "campaign_summary.md").unlink()
             result = run_campaign(
                 resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-23"),
@@ -289,7 +311,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
                        side_effect=RuntimeError("Alpaca Paper market is closed")):
                 result = self._run(
                     Path(tmp) / "campaign", execute_paper=True, paper_notional_usd=500.0,
-                    pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(),
+                    pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(**kwargs),
                 )
             self.assertEqual(result["outcome"], "market_closed")
             self.assertIsNone(result["state"]["starting_equity"])
@@ -304,7 +326,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "must start flat"):
                     self._run(
                         root, execute_paper=True, paper_notional_usd=500.0,
-                        pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(),
+                        pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(**kwargs),
                     )
             state = json.loads((root / "campaign_state.json").read_text())
             self.assertIsNone(state["starting_equity"])

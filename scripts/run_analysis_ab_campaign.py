@@ -425,6 +425,80 @@ def _render_summary(summary: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _unsettled_primary_orders(root: Path, symbol: str) -> list[dict[str, Any]]:
+    """Read-only settlement check across both arms' durable execution DBs.
+
+    A campaign can only be finalized when every campaign-owned primary order
+    has reached a broker terminal state.  Protective children (stop-loss /
+    take-profit / bracket legs) are broker-managed coverage and are allowed
+    to stay live; they never block finalization.
+    """
+
+    from tradingagents.execution.store import ExecutionStore
+
+    settled = {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+    found: list[dict[str, Any]] = []
+    for backend in BACKEND_ORDER:
+        db_path = root / "_profiles" / backend / "execution.sqlite3"
+        if not db_path.exists():
+            continue
+        store = ExecutionStore(db_path)
+        for order in store.list_all_orders():
+            if store.protective_parent(order["order_id"]) is not None:
+                continue
+            if str(order.get("symbol") or "").upper() != str(symbol).upper():
+                continue
+            if (order.get("status") or "").upper() not in settled:
+                found.append(
+                    {
+                        "backend": backend,
+                        "order_id": order["order_id"],
+                        "client_order_id": order["client_order_id"],
+                        "status": order["status"],
+                    }
+                )
+    return found
+
+
+def _expected_pair_dirs(root: Path, state: Mapping[str, Any]) -> list[Path]:
+    """The frozen campaign sessions+symbol fully determine its pair paths."""
+
+    from tradingagents.dataflows.utils import safe_ticker_component
+
+    pair_symbol = safe_ticker_component(str(state["symbol"]))
+    return [root / session / pair_symbol for session in state["sessions"]]
+
+
+def _assert_pair_integrity(
+    root: Path, state: Mapping[str, Any], expected_dirs: Sequence[Path]
+) -> None:
+    """Fail closed unless every frozen session has its own COMPLETED pair."""
+
+    symbol = str(state["symbol"]).upper()
+    for pair_dir in expected_dirs:
+        state_path = pair_dir / "pair_state.json"
+        if not state_path.exists():
+            raise RuntimeError(
+                f"campaign finalization requires a completed pair state: {state_path}"
+            )
+        try:
+            pair = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"pair_state.json is unreadable: {state_path}") from exc
+        if not isinstance(pair, dict) or pair.get("status") != "COMPLETED":
+            raise RuntimeError(
+                f"campaign finalization requires pair status COMPLETED: {state_path}"
+            )
+        if str(pair.get("symbol") or "").upper() != symbol:
+            raise RuntimeError(
+                f"campaign finalization pair symbol mismatch: {state_path}"
+            )
+        if str(pair.get("trade_date") or "") != state_path.parent.parent.name:
+            raise RuntimeError(
+                f"campaign finalization pair date mismatch: {state_path}"
+            )
+
+
 def finalize_campaign(
     root: Path,
     state: Mapping[str, Any],
@@ -433,7 +507,20 @@ def finalize_campaign(
 ) -> dict[str, Any]:
     """Idempotently produce final reports; never runs another pair."""
 
-    analysis = summarize_fn(root)
+    expected_dirs = _expected_pair_dirs(root, state)
+    _assert_pair_integrity(root, state, expected_dirs)
+    # Only the campaign's own frozen session+symbol pairs may contribute to
+    # the final report; unrelated pairs under the root are never counted.
+    if summarize_fn is summarize:
+        analysis = summarize_fn(root, expected_pair_dirs=expected_dirs)
+    else:
+        analysis = summarize_fn(root)
+    pair_count = analysis.get("pair_count")
+    if pair_count is not None and int(pair_count) != len(state["sessions"]):
+        raise RuntimeError(
+            "campaign final report requires exactly "
+            f"{len(state['sessions'])} pairs; summarizer observed {pair_count}"
+        )
     performance = (
         _performance(state, state["ending_equity"]) if state.get("execute_paper") else None
     )
@@ -473,6 +560,21 @@ def _complete_campaign(
 ) -> dict[str, Any]:
     """Durably pin ending equity before rendering derived report files."""
 
+    if state.get("status") != "COMPLETED":
+        # Final settlement gate: never pin ending equity while a
+        # campaign-owned primary order has not reached a broker terminal
+        # state.  The next --resume re-checks settlement only; it never
+        # reruns analysis or creates new orders.
+        unsettled = _unsettled_primary_orders(root, str(state["symbol"]))
+        if unsettled:
+            state["status"] = "RUNNING"
+            state["current_date"] = None
+            _save_state(state_path, state)
+            return {
+                "outcome": "awaiting_final_settlement",
+                "state": state,
+                "unsettled_orders": unsettled,
+            }
     if state.get("execute_paper"):
         if state.get("starting_equity") is None:
             raise RuntimeError("Paper campaign cannot complete without starting equity")

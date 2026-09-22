@@ -190,6 +190,15 @@ campaign 會以 Alpaca calendar 固定 30 個 NYSE sessions，未完成前一日
 
 完成第 30 個 pair 後，`campaign_summary.json` 與 `campaign_summary.md` 會比較兩個 Paper 帳戶。起始與結束 equity 都直接讀取 Alpaca broker，報告包含 starting equity、ending equity、absolute P&L、return%，以及既有 analysis/execution telemetry；它不會宣告「贏家」。結束 broker snapshot 會在 completion 時 durable pin，之後 resume 不會因帳戶後續變動而刷新它。若 final report 寫入中斷，重新執行 `--resume` 只會重新產生報告，不會再次交易。
 
+### 30 日 A/B campaign 的 launch-blocker 防護（已 code-complete）
+
+- **Terminal replay 語意**：同一 `decision_id` 重放時，若 primary 訂單處於 REJECTED/CANCELED/EXPIRED（保留失敗語意）或 SUBMITTING/UNKNOWN/ACCEPTED/PARTIAL（交由 recovery/reconciliation 處理），一律 fail closed、零新 POST、不會被誤報為成功；只有 FILLED（已驗證 identity）與 PENDING（沿用原 deterministic client_order_id 重送）走既有路徑。
+- **Day-30 final settlement gate**：第 30 個 pair 完成後，最終結算前會檢查兩個 backend 執行 DB 中 campaign symbol 的 primary 訂單（protective children 不算）是否都到 broker terminal state；有未結算訂單時不 pin ending equity、不寫 final report，state 維持 RUNNING 並回報 `awaiting_final_settlement`，下次 `--resume` 只重查結算。
+- **一鍵 auto launcher**：`scripts/run_analysis_ab_campaign_auto.py` 對 `awaiting_final_settlement` 做有界重試（`MAX_SAME_DAY_RETRIES` 次、間隔 `RETRY_DELAY_SECONDS`，resume-only，不重跑分析、不建新倉），超過預算後交還人工。
+- **Final report 完整性 gate**：finalization 會逐一驗證每個 frozen session 的 on-disk `pair_state.json`（COMPLETED、symbol/date 相符），且最終報告只計入 campaign 自己的 session+symbol pairs（`expected_pair_dirs` 過濾）；pair 數不符時 fail closed，不產出報告。
+
+- Real Alpaca Paper recovery gate: **PENDING**（需 market-hours 對真實 Paper API 驗證 recovery/reconciliation 行為）。
+
 ## 產物在哪裡？
 
 | 產物 | 預設位置 | 用途 |

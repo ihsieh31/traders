@@ -449,15 +449,38 @@ def _execute_core(
             "error": f"durable commit failed: {exc}",
             "trade_intent": intent_dict,
         }
-    # Idempotent replay: same decision_id returns the existing intent
-    # without new broker calls when its orders are already non-PENDING.
+    # Idempotent replay: a re-execution of the same decision_id must never
+    # POST again.  Only a proven completed replay (handled by
+    # _completed_replay_result above) may claim success.  A primary order in
+    # a terminal failure state keeps its failure semantics: fail closed with
+    # the durable existing orders and zero new broker calls.  Non-terminal
+    # states (ACCEPTED/PARTIAL/SUBMITTING/UNKNOWN) stay owned by the existing
+    # recovery/reconciliation path: the loop below only dedupes non-PENDING
+    # rows and resubmits PENDING rows under their original client_order_id.
     if not created:
         existing = self._store.list_orders_for_intent(intent_row["intent_id"])
-        if existing and all(
-            (o.get("status") or "").upper() != "PENDING" for o in existing
-        ):
+        # Fail-closed replay: only a PENDING row (resubmitted under its
+        # original deterministic client_order_id) or all-FILLED primaries
+        # (proven by _completed_replay_result above) may fall through.
+        # REJECTED/CANCELED/EXPIRED keep their failure semantics;
+        # SUBMITTING/UNKNOWN/ACCEPTED/PARTIAL stay owned by the existing
+        # recovery/reconciliation path: no new client order id, no new
+        # POST, and never reinterpreted as success here.
+        fail_closed_states = {
+            "REJECTED", "CANCELED", "EXPIRED",
+            "SUBMITTING", "UNKNOWN", "ACCEPTED", "PARTIAL",
+        }
+        primary_rows = [
+            o for o in existing
+            if self._store.protective_parent(o["order_id"]) is None
+        ]
+        fail_closed_primary = any(
+            (o.get("status") or "").upper() in fail_closed_states
+            for o in primary_rows
+        )
+        if primary_rows and fail_closed_primary:
             return {
-                "success": True,
+                "success": False,
                 "deduped": True,
                 "broker_attempted": False,
                 "broker_calls": 0,

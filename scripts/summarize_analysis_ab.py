@@ -22,10 +22,15 @@ from tradingagents.experiments.evidence_snapshot import (
 )
 
 
-def _load_pairs(root: Path) -> list[dict[str, Any]]:
+def _load_pairs(
+    root: Path, expected_pair_dirs: list[Path] | set[Path] | None = None
+) -> list[dict[str, Any]]:
     summary_paths = sorted(root.glob("*/**/pair_summary.json"))
     state_paths = sorted(root.glob("*/**/pair_state.json"))
     pair_dirs = {path.parent for path in summary_paths} | {path.parent for path in state_paths}
+    if expected_pair_dirs is not None:
+        expected = {Path(path) for path in expected_pair_dirs}
+        pair_dirs = {pair_dir for pair_dir in pair_dirs if pair_dir in expected}
     if not pair_dirs:
         return []
     manifest_path = root / "AB_CAMPAIGN.json"
@@ -200,10 +205,18 @@ def _empty_profile_stats() -> dict[str, Any]:
     }
 
 
-def summarize(root: str | Path) -> dict[str, Any]:
-    """Return a JSON-safe aggregate without interpreting heuristic scores."""
+def summarize(
+    root: str | Path,
+    expected_pair_dirs: list[Path] | set[Path] | None = None,
+) -> dict[str, Any]:
+    """Return a JSON-safe aggregate without interpreting heuristic scores.
 
-    pairs = _load_pairs(Path(root))
+    ``expected_pair_dirs`` optionally restricts the aggregate to the exact
+    frozen campaign session+symbol pair directories, so unrelated pairs
+    under the root never pollute a formal final report.
+    """
+
+    pairs = _load_pairs(Path(root), expected_pair_dirs)
     by_profile = defaultdict(_empty_profile_stats)
     agreement = 0
     disagreement = 0
