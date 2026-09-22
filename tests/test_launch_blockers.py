@@ -652,6 +652,9 @@ class AutoStateMechineTests(unittest.TestCase):
     def _run(self, runner, clock, **kwargs):
         from scripts.run_analysis_ab_campaign_auto import run_auto
 
+        # A dummy calendar client keeps the wait paths hermetic; only Test G
+        # exercises the lazy campaign-client build (calendar_client=None).
+        kwargs.setdefault("calendar_client", object())
         with _patched_auto_targets():
             return run_auto(
                 results_root=kwargs.pop("results_root", "/tmp/ab-auto"),
@@ -785,7 +788,8 @@ class AutoStateMechineTests(unittest.TestCase):
         sentinel = object()
         with patch.object(auto_mod, "_campaign_calendar_client",
                           return_value=sentinel) as calendar_factory:
-            self._run(runner, clock, symbol="AAPL", start_date="2026-06-22")
+            self._run(runner, clock, symbol="AAPL", start_date="2026-06-22",
+                      calendar_client=None)
         calendar_factory.assert_called_once_with(execute_paper=True, supplied=None)
 
 
