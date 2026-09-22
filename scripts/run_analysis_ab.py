@@ -37,6 +37,7 @@ from tradingagents.experiments.evidence_snapshot import (
 )
 from tradingagents.app_identity import default_results_dir, validate_app_path
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.long_run_support.state import atomic_write_json
 
 
 _SAFE_TICKER_RE = re.compile(r"^[A-Za-z0-9._\-/\^]+$")
@@ -417,11 +418,7 @@ def _ensure_campaign_manifest(
             "commit": "81123b6e7abe6526147bc79b469f68ee8a9c5e64",
         },
     }
-    temp_path = manifest_path.with_suffix(".tmp")
-    temp_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    os.replace(temp_path, manifest_path)
+    atomic_write_json(manifest_path, payload)
     return fingerprint
 
 
@@ -770,10 +767,7 @@ def _new_pair_state(
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_write_json(path, payload)
 
 
 def _load_pair_state(path: Path) -> dict[str, Any] | None:
@@ -786,6 +780,50 @@ def _load_pair_state(path: Path) -> dict[str, Any] | None:
     if not isinstance(value, dict) or value.get("schema_version") != 2:
         raise RuntimeError("pair_state.json has an unsupported schema")
     return value
+
+
+def _assert_no_prior_unfinished_pairs(results_root: Path, requested_trade_date: str) -> None:
+    """Reject a new trading date while any earlier campaign pair is unfinished."""
+
+    requested = date.fromisoformat(requested_trade_date)
+    legal_statuses = {"NEW", "IN_PROGRESS", "PARTIAL", "COMPLETED", "FAILED_TERMINAL"}
+    for state_path in sorted(results_root.glob("*/*/pair_state.json")):
+        state = _load_pair_state(state_path)
+        if state is None:
+            raise RuntimeError(f"pair_state.json disappeared during continuity check: {state_path}")
+
+        state_trade_date = state.get("trade_date")
+        if not isinstance(state_trade_date, str):
+            raise RuntimeError(f"pair_state.json is missing trade_date: {state_path}")
+        try:
+            parsed_trade_date = date.fromisoformat(state_trade_date)
+        except ValueError as exc:
+            raise RuntimeError(f"pair_state.json has invalid trade_date: {state_path}") from exc
+
+        status = state.get("status")
+        if status not in legal_statuses:
+            raise RuntimeError(f"pair_state.json has invalid status: {state_path}")
+        if state_path.parent.parent.name != state_trade_date:
+            raise RuntimeError(
+                f"pair_state.json trade_date conflicts with its directory: {state_path}"
+            )
+        for field in ("pair_id", "campaign_fingerprint", "evidence_sha256", "symbol"):
+            if not isinstance(state.get(field), str) or not state[field]:
+                raise RuntimeError(f"pair_state.json is missing {field}: {state_path}")
+
+        # Validate the complete persisted shape before trusting even a completed
+        # state.  A malformed old state must never be treated as completed.
+        _validate_pair_state(
+            state,
+            pair_id=state.get("pair_id"),
+            fingerprint=state.get("campaign_fingerprint"),
+            evidence_sha256=state.get("evidence_sha256"),
+        )
+        if parsed_trade_date < requested and status != "COMPLETED":
+            raise RuntimeError(
+                "A/B campaign continuity violation: prior pair is unfinished "
+                f"({state_trade_date}, status={status})"
+            )
 
 
 def _recover_completed_analysis(
@@ -970,6 +1008,8 @@ def run_analysis_ab(
             raise RuntimeError(
                 f"A/B pair already completed; refusing to overwrite: {summary_path}"
             )
+
+        _assert_no_prior_unfinished_pairs(root, str(trade_date))
 
         new_campaign = not (root / "AB_CAMPAIGN.json").exists()
         account_preflight = (

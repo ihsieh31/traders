@@ -11,12 +11,12 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
 from tradingagents.agents.utils.agent_utils import Toolkit
+from tradingagents.long_run_support.state import atomic_write_json
 
 
 class EvidenceIntegrityError(RuntimeError):
@@ -400,12 +400,7 @@ def build_or_load_evidence_packet(
         )
         if has_invalid_response:
             validate_evidence_completeness(packet)
-        packet_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = packet_path.with_suffix(packet_path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(packet, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        os.replace(temporary, packet_path)
+        atomic_write_json(packet_path, packet)
 
     configured_hash = (config or {}).get("evidence_packet_sha256")
     if configured_hash and configured_hash != packet["sha256"]:

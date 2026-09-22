@@ -11,12 +11,14 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from scripts.run_analysis_ab import (
     FORMAL_ANALYSTS,
     _paper_account_preflight,
+    _ensure_campaign_manifest,
     assert_ab_invariants,
     build_ab_configs,
     run_analysis_ab,
 )
 from scripts.summarize_analysis_ab import summarize
 from tradingagents.experiments.evidence_snapshot import evidence_packet_sha256
+from tradingagents.long_run_support.state import atomic_write_json
 
 
 class FakeGraph:
@@ -216,6 +218,99 @@ class AnalysisABRunnerTests(unittest.TestCase):
             self.assertEqual(FlakyGraph.attempts["traders"], 1)
             self.assertEqual(FlakyGraph.attempts["berkshire"], 2)
             self.assertTrue((root / "2026-09-21" / "NVDA" / "pair_summary.json").exists())
+
+    def test_campaign_blocks_next_date_when_prior_pair_partial(self):
+        calls = []
+
+        class FlakyGraph(FakeGraph):
+            def propagate(self, symbol, trade_date):
+                calls.append((self.config["analysis_backend"], trade_date))
+                if self.config["analysis_backend"] == "berkshire":
+                    raise TimeoutError("provider outage")
+                return super().propagate(symbol, trade_date)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ab"
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence), patch(
+                "scripts.run_analysis_ab._execution_order", return_value=["traders", "berkshire"]
+            ):
+                first = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FlakyGraph,
+                )
+                self.assertEqual(first["status"], "PARTIAL")
+                with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence) as evidence:
+                    with self.assertRaisesRegex(RuntimeError, "continuity"):
+                        run_analysis_ab(
+                            symbol="AAPL", trade_date="2026-09-22", base_config=DEFAULT_CONFIG,
+                            results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FlakyGraph,
+                        )
+                    evidence.assert_not_called()
+            self.assertEqual(calls, [("traders", "2026-09-21"), ("berkshire", "2026-09-21")])
+
+    def test_campaign_allows_resuming_same_partial_pair(self):
+        attempts = {"traders": 0, "berkshire": 0}
+
+        class ResumingGraph(FakeGraph):
+            def propagate(self, symbol, trade_date):
+                backend = self.config["analysis_backend"]
+                attempts[backend] += 1
+                if backend == "berkshire" and attempts[backend] == 1:
+                    raise TimeoutError("provider outage")
+                return super().propagate(symbol, trade_date)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ab"
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
+                first = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=ResumingGraph,
+                )
+                second = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=ResumingGraph,
+                )
+            self.assertEqual(first["status"], "PARTIAL")
+            self.assertEqual(second["status"], "COMPLETED")
+            self.assertEqual(attempts, {"traders": 1, "berkshire": 2})
+
+    def test_campaign_allows_next_date_after_prior_pair_completed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ab"
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
+                first = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
+                )
+                second = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-22", base_config=DEFAULT_CONFIG,
+                    results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
+                )
+            self.assertEqual(first["status"], "COMPLETED")
+            self.assertEqual(second["status"], "COMPLETED")
+
+    def test_campaign_fails_closed_on_malformed_prior_pair_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ab"
+            state_path = root / "2026-09-21" / "AAPL" / "pair_state.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text("{not-json", encoding="utf-8")
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence) as evidence:
+                with self.assertRaisesRegex(RuntimeError, "unreadable"):
+                    run_analysis_ab(
+                        symbol="AAPL", trade_date="2026-09-22", base_config=DEFAULT_CONFIG,
+                        results_root=root, selected_analysts=FORMAL_ANALYSTS, graph_cls=FakeGraph,
+                    )
+                evidence.assert_not_called()
+
+    def test_campaign_manifest_uses_durable_atomic_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ab"
+            with patch("scripts.run_analysis_ab.atomic_write_json", wraps=atomic_write_json) as durable:
+                _ensure_campaign_manifest(root, DEFAULT_CONFIG, FORMAL_ANALYSTS)
+            durable.assert_called_once()
+            self.assertEqual(durable.call_args.args[0], root / "AB_CAMPAIGN.json")
+            self.assertTrue((root / "AB_CAMPAIGN.json").exists())
 
     def test_paper_mode_routes_both_arms_through_isolated_accounts(self):
         class PaperGraph(FakeGraph):
