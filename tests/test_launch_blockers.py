@@ -8,6 +8,7 @@ Fix 4: final report completeness/integrity gate.
 All broker/model/network interaction is mocked; no secrets involved.
 """
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -18,6 +19,11 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from tradingagents.default_config import DEFAULT_CONFIG
+
+
+def _paper_account_ref(backend):
+    owner = f"paper-account-{backend}"
+    return hashlib.sha256(owner.encode("utf-8")).hexdigest()[:16]
 
 
 def _ready_entry_policy():
@@ -239,7 +245,7 @@ def _seed_order(db_path, decision_id, status, *, symbol="AAPL", side="buy"):
 
     store = ExecutionStore(str(db_path))
     # Bind ownership while the DB is brand-new (legacy unbound DBs refuse).
-    store.ensure_account_binding("paper-account-1")
+    store.ensure_account_binding(f"paper-account-{Path(db_path).parent.name}")
     _, orders, _ = store.create_outbox(
         decision_id=decision_id,
         run_id="run-1",
@@ -904,9 +910,9 @@ class AutoRootResolutionTests(unittest.TestCase):
 
 def _equity_snapshot(captured_at):
     return {
-        "traders": {"account": "A", "account_ref": "ref-A",
+        "traders": {"account": "A", "account_ref": _paper_account_ref("traders"),
                     "equity": "100000", "captured_at": captured_at},
-        "berkshire": {"account": "B", "account_ref": "ref-B",
+        "berkshire": {"account": "B", "account_ref": _paper_account_ref("berkshire"),
                       "equity": "100000", "captured_at": captured_at},
     }
 
@@ -933,6 +939,10 @@ class SettlementRefreshTests(unittest.TestCase):
             store, order = _seed_order(
                 root / "_profiles" / backend / "execution.sqlite3",
                 "dec-refresh", "ACCEPTED",
+            )
+            _seed_order(
+                root / "_profiles" / "berkshire" / "execution.sqlite3",
+                "dec-refresh-berkshire", "FILLED",
             )
             _write_pairs(root, sessions)
             state = _paper_state(sessions)
@@ -969,6 +979,10 @@ class SettlementRefreshTests(unittest.TestCase):
                 root / "_profiles" / backend / "execution.sqlite3",
                 "dec-stuck", "ACCEPTED",
             )
+            _seed_order(
+                root / "_profiles" / "berkshire" / "execution.sqlite3",
+                "dec-stuck-berkshire", "FILLED",
+            )
             _write_pairs(root, sessions)
             state = _paper_state(sessions)
             refresh_calls: list = []
@@ -1000,7 +1014,7 @@ class SettlementRefreshTests(unittest.TestCase):
             ) as service_cls, patch(
                 "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client"
             ) as client_factory:
-                cam._refresh_broker_settlement(root, _campaign_state(sessions))
+                cam._refresh_broker_settlement(root, _paper_state(sessions))
             self.assertEqual(service_cls.call_count, 2)
             db_paths = [c.kwargs["db_path"] for c in service_cls.call_args_list]
             self.assertEqual(
@@ -1030,6 +1044,10 @@ class SettlementRefreshTests(unittest.TestCase):
             store, order = _seed_order(
                 root / "_profiles" / "traders" / "execution.sqlite3",
                 "dec-default-refresh", "ACCEPTED",
+            )
+            _seed_order(
+                root / "_profiles" / "berkshire" / "execution.sqlite3",
+                "dec-default-refresh-berkshire", "FILLED",
             )
             _write_pairs(root, sessions)
             state = _paper_state(sessions)

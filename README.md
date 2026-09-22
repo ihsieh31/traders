@@ -170,7 +170,7 @@ python scripts/run_analysis_ab.py \
   --paper-notional-usd 500
 ```
 
-**請先閱讀下方「目前進度與限制」。** A/B 的程式與契約修復已通過；正式 30 日雙帳戶實驗目前只剩「交易時段內的真實 Paper recovery」驗證 gate。完成該 gate 前，仍應先以 shadow 或受控驗收方式使用 `--execute-paper`。
+**請先閱讀下方「目前進度與限制」。** [2026-09-23 修復驗收](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md) 的 C01–C04 離線驗收已通過（聚焦 suite `84 passed`；完整 suite `1614 passed`）。正式 30 日雙帳戶實驗仍須在交易時段完成真實 Paper recovery gate；目前應限於 shadow 或受控驗收方式。
 
 #### 正式 30-Day A/B campaign
 
@@ -212,10 +212,11 @@ campaign 會以 Alpaca calendar 固定 30 個 NYSE sessions，未完成前一日
 ### 30 日 A/B campaign 的 launch-blocker 防護（已 code-complete）
 
 - **Terminal replay 語意**：同一 `decision_id` 重放時，若 primary 訂單處於 REJECTED/CANCELED/EXPIRED（保留失敗語意）或 SUBMITTING/UNKNOWN/ACCEPTED/PARTIAL（交由 recovery/reconciliation 處理），一律 fail closed、零新 POST、不會被誤報為成功；只有 FILLED（已驗證 identity）與 PENDING（沿用原 deterministic client_order_id 重送）走既有路徑。
-- **Day-30 final settlement gate**：第 30 個 pair 完成後，最終結算前會檢查兩個 backend 執行 DB 中 campaign symbol 的 primary 訂單（protective children 不算）是否都到 broker terminal state；有未結算訂單時不 pin ending equity、不寫 final report，state 維持 RUNNING 並回報 `awaiting_final_settlement`，下次 `--resume` 會先用既有 `ExecutionService.startup_recover`（traders→Account A、berkshire→Account B，各自 execution DB）做 recovery/reconciliation/lookup-adopt 刷新本地訂單狀態後再重查結算；refresh 只讀取/採納 broker 狀態，不重新分析、不建新 decision_id、不開新倉。
+- **Day-30 final settlement gate**：第 30 個 pair 完成後，最終結算前要求兩個 backend 執行 DB 都存在，且 DB 帳戶綁定符合 campaign 起始帳戶；再檢查 campaign symbol 的 primary 訂單（protective children 不算）是否都到 broker terminal state。有未結算訂單時不 pin ending equity、不寫 final report，state 維持 RUNNING 並回報 `awaiting_final_settlement`，下次 `--resume` 會先用既有 `ExecutionService.startup_recover`（traders→Account A、berkshire→Account B，各自 execution DB）做 recovery/reconciliation/lookup-adopt 刷新本地訂單狀態後再重查結算；refresh 只讀取/採納 broker 狀態，不重新分析、不建新 decision_id、不開新倉。
 - **一鍵 auto launcher（unattended 30 sessions）**：`scripts/run_analysis_ab_campaign_auto.py` 逐日 resume 同一 campaign root：`session_completed` 後等待下一個 frozen session 的 effective target 再繼續（沿用 `state["sessions"]`，不自算交易日）；`not_due` 以 ≤300 秒 bounded polling 跨日等待；`market_closed` 是 schedule wait（直接等到當日 effective target，早開盤前啟動不會耗用 retry 預算，early close 由 calendar authority 自動調整）；calendar 讀取使用 campaign Account A read-only credentials；`pair_unfinished` 才使用 `MAX_SAME_DAY_RETRIES` 次有界同日重試；`awaiting_final_settlement` 走有界 settlement 重試，超過預算後交還人工；未指定 `--results-root` 時，create 與後續 resume 都與 coordinator 一致使用 `~/.tradingbuffett/results/ab`（不會落到 CWD），CLI 要求 create 必須同時提供 `--symbol` 與 `--start-date`，且 `--resume` 不得與兩者混用。
 - **Final report 完整性 gate**：finalization 會逐一驗證每個 frozen session 的 on-disk `pair_state.json`（COMPLETED、symbol/date 相符），且最終報告只計入 campaign 自己的 session+symbol pairs（`expected_pair_dirs` 過濾）；pair 數不符時 fail closed，不產出報告。
 
+- 2026-09-23 審查缺陷修復驗收：**離線通過**（詳見 [驗收報告](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md)）。
 - Real Alpaca Paper recovery gate: **PENDING**（需 market-hours 對真實 Paper API 驗證 recovery/reconciliation 行為）。
 
 ## 產物在哪裡？
@@ -256,7 +257,7 @@ python -m pytest -q
 | `scripts/run_analysis_ab_campaign.py` | 30 NYSE-session A/B campaign coordinator 與 broker-equity finalizer |
 | `tests/` | 離線 mock、故障注入與回歸測試 |
 
-## 目前進度與限制（2026-09-22）
+## 目前進度與限制（2026-09-23）
 
 ### 已完成且可供開發/研究使用
 
@@ -264,14 +265,15 @@ python -m pytest -q
 - Phase B 的角色化 LLM、重試/停止語意、持倉/曝險限制、SEC/IR、corporate-action quarantine。
 - Phase C 的全市場 Top20 screening 與執行 entry gate。
 - Phase D 的 30 日單策略 observation：設定、preflight、journal、crash/resume、排程與最終報告。
-- Traders/Berkshire frozen-evidence A/B runner、雙帳戶設定、30 NYSE-session crash-resumable campaign coordinator 與 shadow smoke；2026-09-22 shadow A/B smoke 成功，兩臂皆產出有效 HOLD，且零 broker mutation。30 日 final equity comparison 以 broker account 為權威，不以 local DB、fills 或 signals 推算。
+- Traders/Berkshire frozen-evidence A/B runner、雙帳戶設定、30 NYSE-session campaign coordinator 與 shadow smoke；2026-09-22 shadow A/B smoke 成功，兩臂皆產出有效 HOLD，且零 broker mutation。30 日 final equity comparison 以 broker account 為權威，不以 local DB、fills 或 signals 推算；2026-09-23 C01–C04 離線修復驗收已通過。
 
 ### 剩餘驗證 gate
 
+- **2026-09-23 修復驗收：離線通過。** C01 的 state-only 中斷恢復與 C02–C04 獨立重現均通過；聚焦 suite `84 passed`，完整 suite `1614 passed`。詳見 [驗收報告](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md)。
 - **真實 Paper recovery 驗證：尚未完成。** 必須在交易時段內，透過未修改的 production execution path 完成安全的 Paper submit/cancel，以及中斷後以原本的 `decision_id`、`client_order_id` 與 broker order 恢復/認領，並證明不會重複下單。
-- 2026-09-22 的 pre-30-day acceptance 當時因市場收盤，無法安全建立 production path 所需的測試訂單；驗收正確地沒有繞過市場時鐘或送出不受控訂單。這是待補的實盤驗證，不是已知程式 blocker。
+- 2026-09-22 的 pre-30-day acceptance 當時因市場收盤，無法安全建立 production path 所需的測試訂單；驗收正確地沒有繞過市場時鐘或送出不受控訂單。
 
-其餘 A/B 契約修復、隔離與驗收已通過。完成並記錄這個 Paper recovery gate 後，才可將 30 日雙帳戶 A/B 視為已完成啟動前驗證。訊號一致率與 telemetry 仍不等同報酬率或投資建議。
+完成並記錄真實 Paper recovery gate 後，才可將 30 日雙帳戶 A/B 視為已完成啟動前驗證。訊號一致率與 telemetry 仍不等同報酬率或投資建議。
 
 ## 延伸文件
 
@@ -280,6 +282,8 @@ python -m pytest -q
 - [Local LLM Guide](LOCAL_LLM_GUIDE.md)：local/OpenAI-compatible 模型設定
 - [Project Goals and Status](PROJECT_GOALS_AND_STATUS.md)：完整階段歷史與驗收紀錄（含歷史狀態）
 - [2026-09-22 最終深度審查](docs/FINAL_30D_DEEP_REVIEW_2026-09-22.md)：修復前的審查與重現基準
+- [2026-09-23 連續 30 日審查](docs/CONTINUOUS_30D_FINAL_AUDIT_2026-09-23.md)：修復前缺陷證據與離線重現結果
+- [2026-09-23 修復驗收](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md)：C01–C04 離線再次驗收與前次失敗紀錄
 - [2026-09-22 Pre-30-Day Acceptance](docs/PRE_30D_SMOKE_RECOVERY_ACCEPTANCE.md)：最近一次 shadow、broker preflight 與待補的 Paper recovery 驗收
 
 ## 沿革與授權

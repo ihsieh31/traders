@@ -89,6 +89,7 @@ def _load_pairs(
             )
             payload = {
                 "schema_version": 2,
+                "status": state.get("status"),
                 "pair_id": state.get("pair_id"),
                 "campaign_fingerprint": state.get("campaign_fingerprint"),
                 "symbol": state.get("symbol", ""),

@@ -30,6 +30,8 @@ def main():
     dirs = {name: artifacts / name for name in ('home', 'tmp', 'state', 'locks', 'results', 'cache')}
     for path in dirs.values():
         path.mkdir()
+    app_state = dirs['home'] / '.tradingbuffett'
+    app_state.mkdir()
     env = {
         'PATH': str(Path(options.python).absolute().parent) + ':/usr/bin:/bin:/usr/sbin:/sbin',
         'LANG': 'en_US.UTF-8', 'LC_ALL': 'en_US.UTF-8',
@@ -40,13 +42,13 @@ def main():
         'PYTHONHASHSEED': '0', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1',
         'PYTHONPATH': os.pathsep.join((str(Path(__file__).resolve().parent), str(ROOT))),
         'REFACTOR_OFFLINE': '1', 'REFACTOR_ARTIFACTS': str(artifacts),
-        'TRADINGBUFFETT_LONG_RUN_DIR': str(dirs['state'] / 'long_run'),
-        'TRADINGBUFFETT_EXECUTION_DB': str(dirs['state'] / 'execution.sqlite3'),
-        'TRADINGBUFFETT_EXECUTION_LOCK_DIR': str(dirs['locks']),
-        'TRADINGBUFFETT_RESULTS_DIR': str(dirs['results']),
-        'TRADINGBUFFETT_CACHE_DIR': str(dirs['cache']),
-        'TRADINGBUFFETT_MEMORY_LOG_PATH': str(dirs['state'] / 'memory.md'),
-        'TRADINGBUFFETT_AGENT_MEMORY_DIR': str(dirs['state'] / 'agent_memory'),
+        'TRADINGBUFFETT_LONG_RUN_DIR': str(app_state / 'long_run'),
+        'TRADINGBUFFETT_EXECUTION_DB': str(app_state / 'execution' / 'execution.sqlite3'),
+        'TRADINGBUFFETT_EXECUTION_LOCK_DIR': str(app_state / 'execution' / 'locks'),
+        'TRADINGBUFFETT_RESULTS_DIR': str(app_state / 'results'),
+        'TRADINGBUFFETT_CACHE_DIR': str(app_state / 'cache'),
+        'TRADINGBUFFETT_MEMORY_LOG_PATH': str(app_state / 'memory' / 'trading_memory.md'),
+        'TRADINGBUFFETT_AGENT_MEMORY_DIR': str(app_state / 'memory' / 'agent_memory'),
         'PIP_NO_INDEX': '1', 'PIP_DISABLE_PIP_VERSION_CHECK': '1',
         'PIP_CONFIG_FILE': os.devnull,
     }

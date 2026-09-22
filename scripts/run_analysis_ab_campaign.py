@@ -35,6 +35,7 @@ from scripts.run_analysis_ab import (
     _implementation_fingerprint,
     _load_config,
     _paper_account_preflight,
+    _validate_pair_state,
     build_ab_configs,
     resolved_llm_route_snapshots,
     run_analysis_ab as run_single_pair,
@@ -348,6 +349,159 @@ def _pair_completed(result: Mapping[str, Any]) -> bool:
     )
 
 
+def _completed_pair_checkpoint(
+    root: Path, state: Mapping[str, Any], trade_date: str
+) -> dict[str, Any] | None:
+    """Return a verified on-disk pair that can repair a lost campaign checkpoint.
+
+    The durable pair state, its pinned campaign fingerprint, and the frozen
+    evidence packet must agree before a date is adopted.  The derived summary
+    may be absent because the pair runner writes it after the terminal state;
+    the campaign summarizer can aggregate a verified state-only pair.  This
+    is read-only: it never calls the pair runner or broker.
+    """
+
+    from tradingagents.dataflows.utils import safe_ticker_component
+    from tradingagents.experiments.evidence_snapshot import (
+        EvidenceIntegrityError,
+        load_evidence_packet,
+        validate_evidence_completeness,
+    )
+
+    symbol = str(state["symbol"]).strip().upper()
+    pair_dir = root / trade_date / safe_ticker_component(symbol)
+    state_path = pair_dir / "pair_state.json"
+    summary_path = pair_dir / "pair_summary.json"
+    if not state_path.exists() and not summary_path.exists():
+        return None
+    if not state_path.is_file() or (summary_path.exists() and not summary_path.is_file()):
+        raise RuntimeError(
+            f"pair checkpoint artifacts are invalid for {trade_date}: "
+            f"expected {state_path} and an optional regular file at {summary_path}"
+        )
+
+    try:
+        pair_state = json.loads(state_path.read_text(encoding="utf-8"))
+        pair_summary = (
+            json.loads(summary_path.read_text(encoding="utf-8"))
+            if summary_path.is_file()
+            else None
+        )
+        manifest = json.loads((root / "AB_CAMPAIGN.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"completed pair checkpoint is unreadable for {trade_date}") from exc
+    if (
+        not isinstance(pair_state, dict)
+        or (pair_summary is not None and not isinstance(pair_summary, dict))
+        or not isinstance(manifest, dict)
+    ):
+        raise RuntimeError(f"completed pair checkpoint has an invalid JSON shape for {trade_date}")
+
+    fingerprint = manifest.get("config_fingerprint")
+    if (
+        manifest.get("schema_version") != 2
+        or manifest.get("backends") != list(BACKEND_ORDER)
+        or manifest.get("auto_trade") != bool(state.get("execute_paper"))
+        or fingerprint != state.get("config_fingerprint")
+        or not isinstance(fingerprint, str)
+    ):
+        raise RuntimeError("A/B campaign manifest does not match the resumable campaign")
+    if state.get("execute_paper"):
+        _validate_equity_snapshot(state.get("starting_equity"), label="starting")
+        expected_refs = {
+            backend: state["starting_equity"][backend]["account_ref"]
+            for backend in BACKEND_ORDER
+        }
+    else:
+        expected_refs = None
+    if manifest.get("account_refs") != expected_refs:
+        raise RuntimeError("A/B campaign manifest account identities do not match campaign state")
+
+    pair_id = hashlib.sha256(f"{symbol}|{trade_date}".encode("utf-8")).hexdigest()[:16]
+    evidence_path = (
+        root / "evidence" / trade_date / safe_ticker_component(symbol)
+        / "evidence_packet.json"
+    )
+    recorded_evidence_path = pair_state.get("evidence_packet_path")
+    if (
+        not isinstance(recorded_evidence_path, str)
+        or Path(recorded_evidence_path).resolve() != evidence_path.resolve()
+    ):
+        raise RuntimeError(f"pair state evidence path does not match {trade_date}")
+    evidence_sha256 = pair_state.get("evidence_sha256")
+    if not isinstance(evidence_sha256, str) or not evidence_sha256:
+        raise RuntimeError(f"pair state has no evidence hash for {trade_date}")
+    try:
+        evidence = load_evidence_packet(
+            evidence_path,
+            symbol=symbol,
+            trade_date=trade_date,
+            expected_sha256=evidence_sha256,
+        )
+        validate_evidence_completeness(evidence)
+    except EvidenceIntegrityError as exc:
+        raise RuntimeError(f"frozen evidence does not verify for {trade_date}: {exc}") from exc
+
+    try:
+        _validate_pair_state(
+            pair_state,
+            pair_id=pair_id,
+            fingerprint=fingerprint,
+            evidence_sha256=evidence["sha256"],
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(f"pair state does not verify for {trade_date}: {exc}") from exc
+    if pair_state.get("symbol") != symbol or pair_state.get("trade_date") != trade_date:
+        raise RuntimeError(f"pair state identity does not match {symbol} on {trade_date}")
+    if pair_state.get("paper_notional_usd") != state.get("paper_notional_usd"):
+        raise RuntimeError(f"pair state Paper notional does not match campaign for {trade_date}")
+    if pair_state.get("status") != "COMPLETED":
+        if pair_summary is not None:
+            raise RuntimeError(f"pair summary exists without a completed pair state for {trade_date}")
+        return None
+    if any(
+        pair_state["arms"][backend]["result"].get("decision_valid") is not True
+        for backend in BACKEND_ORDER
+    ):
+        raise RuntimeError(f"pair state contains an invalid analysis decision for {trade_date}")
+    if pair_summary is None:
+        # The pair runner writes COMPLETED state before its derived summary.
+        # Adopt the durable results directly without calling the runner or broker.
+        return {
+            "status": "COMPLETED",
+            "pair_id": pair_id,
+            "campaign_fingerprint": fingerprint,
+            "evidence_sha256": evidence["sha256"],
+            "symbol": symbol,
+            "trade_date": trade_date,
+            **{
+                backend: dict(pair_state["arms"][backend]["result"])
+                for backend in BACKEND_ORDER
+            },
+        }
+    expected = {
+        "schema_version": 2,
+        "status": "COMPLETED",
+        "pair_id": pair_id,
+        "campaign_fingerprint": fingerprint,
+        "evidence_sha256": evidence["sha256"],
+        "symbol": symbol,
+        "trade_date": trade_date,
+    }
+    if any(pair_summary.get(key) != value for key, value in expected.items()):
+        raise RuntimeError(f"pair summary does not match its completed state for {trade_date}")
+    if any(
+        not isinstance(pair_summary.get(backend), Mapping)
+        or pair_summary[backend].get("status") != "completed"
+        or pair_summary[backend].get("decision_valid") is not True
+        for backend in BACKEND_ORDER
+    ):
+        raise RuntimeError(
+            f"pair summary has incomplete or invalid analysis arms for {trade_date}"
+        )
+    return pair_summary
+
+
 def _performance(
     state: Mapping[str, Any], ending: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     output: dict[str, Any] = {}
@@ -428,7 +582,12 @@ def _render_summary(summary: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _unsettled_primary_orders(root: Path, symbol: str) -> list[dict[str, Any]]:
+def _unsettled_primary_orders(
+    root: Path,
+    symbol: str,
+    *,
+    expected_account_refs: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Read-only settlement check across both arms' durable execution DBs.
 
     A campaign can only be finalized when every campaign-owned primary order
@@ -443,9 +602,25 @@ def _unsettled_primary_orders(root: Path, symbol: str) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     for backend in BACKEND_ORDER:
         db_path = root / "_profiles" / backend / "execution.sqlite3"
-        if not db_path.exists():
+        if not db_path.is_file():
+            if expected_account_refs is not None:
+                raise RuntimeError(
+                    f"Paper campaign cannot finalize: {backend} execution DB is missing: {db_path}"
+                )
             continue
         store = ExecutionStore(db_path)
+        if expected_account_refs is not None:
+            owner = store.account_binding_owner()
+            if not owner:
+                raise RuntimeError(
+                    f"Paper campaign cannot finalize: {backend} execution DB has no account binding"
+                )
+            owner_ref = hashlib.sha256(str(owner).encode("utf-8")).hexdigest()[:16]
+            if owner_ref != expected_account_refs.get(backend):
+                raise RuntimeError(
+                    f"Paper campaign cannot finalize: {backend} execution DB account "
+                    "binding does not match the frozen starting account"
+                )
         for order in store.list_all_orders():
             if store.protective_parent(order["order_id"]) is not None:
                 continue
@@ -480,11 +655,19 @@ def _refresh_broker_settlement(root: Path, state: Mapping[str, Any]) -> dict[str
     from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
     from tradingagents.execution.service import ExecutionService
 
+    _validate_equity_snapshot(state.get("starting_equity"), label="starting")
+    expected_account_refs = {
+        backend: str(state["starting_equity"][backend]["account_ref"])
+        for backend in BACKEND_ORDER
+    }
+    # Verify both durable ledgers and their frozen account ownership before
+    # any broker recovery calls are made.
+    _unsettled_primary_orders(
+        root, str(state["symbol"]), expected_account_refs=expected_account_refs
+    )
     results: dict[str, Any] = {}
     for backend in BACKEND_ORDER:
         db_path = root / "_profiles" / backend / "execution.sqlite3"
-        if not db_path.exists():
-            continue
         service = ExecutionService(
             db_path=db_path,
             broker_factory=(
@@ -598,6 +781,35 @@ def _complete_campaign(
 ) -> dict[str, Any]:
     """Durably pin ending equity before rendering derived report files."""
 
+    expected_account_refs = None
+    paper_unsettled: list[dict[str, Any]] | None = None
+    if state.get("execute_paper"):
+        _validate_equity_snapshot(state.get("starting_equity"), label="starting")
+        expected_account_refs = {
+            backend: str(state["starting_equity"][backend]["account_ref"])
+            for backend in BACKEND_ORDER
+        }
+        # Validate ledger presence and account ownership on every finalization
+        # path, including resume of a state already marked COMPLETED.  Older
+        # versions could pin equity while silently skipping a missing DB.
+        try:
+            paper_unsettled = _unsettled_primary_orders(
+                root, str(state["symbol"]), expected_account_refs=expected_account_refs
+            )
+        except Exception:
+            if state.get("status") == "COMPLETED":
+                state["status"] = "RUNNING"
+                state["current_date"] = None
+                _save_state(state_path, state)
+            raise
+        if state.get("status") == "COMPLETED" and paper_unsettled:
+            state["status"] = "RUNNING"
+            state["current_date"] = None
+            _save_state(state_path, state)
+            raise RuntimeError(
+                "completed Paper campaign has unsettled primary orders; "
+                "refusing to regenerate its final report"
+            )
     if state.get("status") != "COMPLETED":
         if state.get("execute_paper"):
             # The local DB may lag the broker (e.g. local ACCEPTED while the
@@ -608,9 +820,11 @@ def _complete_campaign(
             # --resume (CLI or auto launcher) really refreshes; tests inject a
             # stub.  It only runs when something looks unsettled.
             refresh = settlement_refresh_fn or _refresh_broker_settlement
-            if _unsettled_primary_orders(root, str(state["symbol"])):
+            if paper_unsettled:
                 refresh(root, state)
-        unsettled = _unsettled_primary_orders(root, str(state["symbol"]))
+        unsettled = _unsettled_primary_orders(
+            root, str(state["symbol"]), expected_account_refs=expected_account_refs
+        )
         if unsettled:
             state["status"] = "RUNNING"
             state["current_date"] = None
@@ -621,8 +835,6 @@ def _complete_campaign(
                 "unsettled_orders": unsettled,
             }
     if state.get("execute_paper"):
-        if state.get("starting_equity") is None:
-            raise RuntimeError("Paper campaign cannot complete without starting equity")
         if state.get("ending_equity") is None:
             ending = broker_snapshotter()
             _validate_equity_snapshot(ending, label="ending")
@@ -821,6 +1033,26 @@ def _run_campaign_locked(
 
     next_date = state["sessions"][len(state["completed_dates"])]
     today = _eastern_date(now)
+    recovered_pair = _completed_pair_checkpoint(root, state, next_date)
+    if recovered_pair is not None:
+        # The pair runner durably completed before the campaign coordinator
+        # advanced its date prefix.  Repair only that checkpoint; never replay
+        # analysis or Paper execution for an already completed pair.
+        state["completed_dates"].append(next_date)
+        state["current_date"] = None
+        state["status"] = "RUNNING"
+        _save_state(state_path, state)
+        if len(state["completed_dates"]) != state["target_days"]:
+            return {"outcome": "session_completed", "state": state, "pair": recovered_pair}
+        finished = _extend_or_complete(
+            root, state_path, state,
+            calendar_client=calendar_client, session_fetcher=session_fetcher,
+            broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
+            settlement_refresh_fn=settlement_refresh_fn,
+        )
+        if finished is not None:
+            return finished
+        return {"outcome": "session_completed", "state": state, "pair": recovered_pair}
     if date.fromisoformat(next_date) > today:
         state["status"] = "RUNNING"
         state["current_date"] = None

@@ -420,6 +420,18 @@ class ShouldExtendProofTests(_LongRunIsolatedTestCase):
         }
 
     def _should(self, state, ends_at, now, **kwargs):
+        if "calendar_client" not in kwargs and "calendar_rows" not in kwargs:
+            chunk_sessions = [
+                session for session in state.get("expected_sessions", [])
+                if session < ends_at.astimezone(ET).date().isoformat()
+            ]
+            if chunk_sessions:
+                # Keep this proof test hermetic: the target is 11:00 ET on a
+                # regular session, so supply the calendar row it needs rather
+                # than resolving a live Alpaca client during an offline run.
+                kwargs["calendar_rows"] = [
+                    {"date": chunk_sessions[-1], "close": "16:00"}
+                ]
         return lr.should_extend_continuous_window(
             state=state, ends_at=ends_at, now=now,
             run_time_et=RUN_TIME_ET, **kwargs)

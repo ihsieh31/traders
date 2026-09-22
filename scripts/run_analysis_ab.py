@@ -956,16 +956,28 @@ def _recover_completed_analysis(
         final_state = (payload.get("snapshots") or {}).get("final_state")
         if not isinstance(final_state, Mapping):
             continue
-        return {
-            "status": "completed",
+        risk_invalid_reason = final_state.get("risk_invalid_reason")
+        invalid = bool(risk_invalid_reason)
+        result = {
+            "status": "failed_terminal" if invalid else "completed",
             "analysis_backend": backend,
             "signal": _signal_text((payload.get("summary") or {}).get("final_signal")),
             "elapsed_seconds": 0.0,
             "run_log": str(path),
             "final_state_keys": sorted(final_state),
-            "trade_intent": _jsonable_intent(final_state.get("final_trade_intent")),
+            "trade_intent": (
+                None if invalid else _jsonable_intent(final_state.get("final_trade_intent"))
+            ),
             "recovered_from_completed_run_log": True,
+            "decision_valid": not invalid,
         }
+        if invalid:
+            result.update({
+                "risk_invalid_reason": str(risk_invalid_reason),
+                "error_type": "InvalidRiskDecision",
+                "error": f"invalid risk decision: {risk_invalid_reason}",
+            })
+        return result
     return None
 
 
@@ -990,7 +1002,10 @@ def _recover_interrupted_arms(
             if recovered is not None:
                 arm["result"] = recovered
                 arm.setdefault("attempt_history", []).append(recovered)
-                arm["status"] = "analysis_completed" if execute_paper else "completed"
+                if recovered.get("status") == "failed_terminal":
+                    arm["status"] = "failed_terminal"
+                else:
+                    arm["status"] = "analysis_completed" if execute_paper else "completed"
                 continue
             arm["status"] = "failed_retryable"
             arm.setdefault("attempt_history", []).append(
@@ -1000,7 +1015,9 @@ def _recover_interrupted_arms(
                     "error": "previous process exited during arm",
                 }
             )
-    if any(
+    if any(arm.get("status") == "failed_terminal" for arm in state.get("arms", {}).values()):
+        state["status"] = "FAILED_TERMINAL"
+    elif any(
         arm.get("status") in {"failed_retryable", "analysis_completed"}
         for arm in state.get("arms", {}).values()
     ):
@@ -1198,6 +1215,9 @@ def run_analysis_ab(
                 evidence_sha256=evidence["sha256"],
                 execute_paper=execute_paper,
             )
+            if state.get("status") == "FAILED_TERMINAL":
+                _write_json_atomic(state_path, state)
+                return state
         state["status"] = "IN_PROGRESS"
         _write_json_atomic(state_path, state)
 

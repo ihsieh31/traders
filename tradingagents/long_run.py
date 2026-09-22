@@ -1307,10 +1307,11 @@ def extend_continuous_window(
         old_ends = old_ends.replace(tzinfo=timezone.utc)
     chunk = int(long_cfg.get("duration_calendar_days") or DEFAULT_DURATION_CALENDAR_DAYS)
     expected = list(state.get("expected_sessions") or [])
+    old_end_date = old_ends.astimezone(eastern_tz).date()
     last_session = (
         date.fromisoformat(expected[-1])
         if expected
-        else old_ends.astimezone(eastern_tz).date()
+        else old_end_date - timedelta(days=1)
     )
     new_ends = old_ends + timedelta(days=chunk)
     # Keep the initial window's half-open [start, end) semantics: the

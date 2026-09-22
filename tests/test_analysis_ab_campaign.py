@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import json
 import tempfile
 import unittest
@@ -8,10 +9,19 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.experiments.evidence_snapshot import evidence_packet_sha256
 from scripts.run_analysis_ab_campaign import _campaign_lock, run_campaign
 
 
 ET = ZoneInfo("America/New_York")
+PAPER_ACCOUNT_IDS = {
+    "traders": "campaign-fixture-account-a",
+    "berkshire": "campaign-fixture-account-b",
+}
+
+
+def _account_ref(account_id):
+    return hashlib.sha256(account_id.encode("utf-8")).hexdigest()[:16]
 
 
 def _now(day: str) -> datetime:
@@ -67,23 +77,75 @@ def _completed_pair(**kwargs):
         "trade_date": trade_date,
         "status": "COMPLETED",
     }), encoding="utf-8")
+    if kwargs.get("execute_paper"):
+        from tradingagents.execution.store import ExecutionStore
+
+        for backend, account_id in PAPER_ACCOUNT_IDS.items():
+            store = ExecutionStore(root / "_profiles" / backend / "execution.sqlite3")
+            store.ensure_account_binding(account_id)
     return {"status": "COMPLETED"}
+
+
+def _seed_state_only_completed_pair(root, campaign_state, *, tamper_hash=False):
+    """Model a crash after durable pair completion, before derived summary."""
+    day = campaign_state["sessions"][0]
+    symbol = campaign_state["symbol"]
+    packet = {
+        "schema_version": 1, "symbol": symbol, "trade_date": day,
+        "captured_at": "2026-06-22T15:00:00Z",
+    }
+    for section in ("market", "fundamentals", "news", "macro", "social"):
+        packet[section] = {"offline": {"status": "available", "value": "frozen fixture"}}
+    packet["sha256"] = evidence_packet_sha256(packet)
+    evidence_path = root / "evidence" / day / symbol / "evidence_packet.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(json.dumps(packet), encoding="utf-8")
+    (root / "AB_CAMPAIGN.json").write_text(json.dumps({
+        "schema_version": 2,
+        "backends": ["traders", "berkshire"],
+        "auto_trade": False,
+        "account_refs": None,
+        "config_fingerprint": campaign_state["config_fingerprint"],
+    }), encoding="utf-8")
+    pair_id = hashlib.sha256(f"{symbol}|{day}".encode()).hexdigest()[:16]
+    arms = {}
+    for backend in ("traders", "berkshire"):
+        result = {
+            "status": "completed", "analysis_backend": backend,
+            "decision_valid": True, "signal": "HOLD", "trade_intent": None,
+        }
+        arms[backend] = {
+            "status": "completed", "attempts": 1,
+            "attempt_history": [result], "result": result,
+        }
+    pair_dir = root / day / symbol
+    pair_dir.mkdir(parents=True)
+    (pair_dir / "pair_state.json").write_text(json.dumps({
+        "schema_version": 2,
+        "pair_id": pair_id,
+        "campaign_fingerprint": campaign_state["config_fingerprint"],
+        "evidence_sha256": "0" * 64 if tamper_hash else packet["sha256"],
+        "evidence_packet_path": str(evidence_path),
+        "symbol": symbol, "trade_date": day,
+        "paper_notional_usd": None,
+        "status": "COMPLETED", "arms": arms,
+    }), encoding="utf-8")
 
 
 def _equity_snapshot(traders, berkshire, *, captured_at):
     return {
-        "traders": {"account": "A", "account_ref": "traders-ref", "equity": traders,
+        "traders": {"account": "A", "account_ref": _account_ref(PAPER_ACCOUNT_IDS["traders"]), "equity": traders,
                     "captured_at": captured_at},
-        "berkshire": {"account": "B", "account_ref": "berkshire-ref", "equity": berkshire,
+        "berkshire": {"account": "B", "account_ref": _account_ref(PAPER_ACCOUNT_IDS["berkshire"]), "equity": berkshire,
                       "captured_at": captured_at},
     }
 
 
 def _preflight_snapshot(traders, berkshire):
     return {
-        "traders": {"account": "A", "account_ref": "traders-ref", "equity": traders,
+        "traders": {"account": "A", "account_ref": _account_ref(PAPER_ACCOUNT_IDS["traders"]), "equity": traders,
                     "market_date": "2026-06-22"},
-        "berkshire": {"account": "B", "account_ref": "berkshire-ref", "equity": berkshire,
+        "berkshire": {"account": "B", "account_ref": _account_ref(PAPER_ACCOUNT_IDS["berkshire"]), "equity": berkshire,
                       "market_date": "2026-06-22"},
     }
 
@@ -199,6 +261,35 @@ class AnalysisABCampaignTests(unittest.TestCase):
             self.assertEqual(resumed["outcome"], "completed")
             self.assertEqual(calls, ["2026-06-22", "2026-06-23"])
 
+    def test_state_only_completed_pair_recovers_next_day_without_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            created = self._run(root, days=1, now=_now("2026-06-19"))
+            _seed_state_only_completed_pair(root, created["state"])
+            recovered = run_campaign(
+                resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-23"),
+                calendar_client=object(), session_fetcher=_sessions,
+                pair_runner=lambda **_kwargs: self.fail("completed pair must not replay"),
+            )
+            self.assertEqual(recovered["outcome"], "completed")
+            self.assertEqual(recovered["state"]["completed_dates"], ["2026-06-22"])
+            self.assertEqual(recovered["summary"]["analysis_statistics"]["pair_count"], 1)
+            self.assertFalse((root / "2026-06-22" / "AAPL" / "pair_summary.json").exists())
+
+    def test_state_only_completed_pair_rejects_tampered_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            created = self._run(root, days=1, now=_now("2026-06-19"))
+            _seed_state_only_completed_pair(root, created["state"], tamper_hash=True)
+            with self.assertRaisesRegex(RuntimeError, "frozen evidence does not verify"):
+                run_campaign(
+                    resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-23"),
+                    calendar_client=object(), session_fetcher=_sessions,
+                    pair_runner=lambda **_kwargs: self.fail("tampered pair must not replay"),
+                )
+            state = json.loads((root / "campaign_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["completed_dates"], [])
+
     def test_config_and_environment_route_drift_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "campaign"
@@ -253,8 +344,14 @@ class AnalysisABCampaignTests(unittest.TestCase):
             performance = result["summary"]["performance"]
             self.assertEqual(performance["traders"]["pnl"], 3000.0)
             self.assertEqual(performance["traders"]["return_pct"], 3.0)
-            self.assertEqual(performance["traders"]["account_ref"], "traders-ref")
-            self.assertEqual(performance["berkshire"]["account_ref"], "berkshire-ref")
+            self.assertEqual(
+                performance["traders"]["account_ref"],
+                _account_ref(PAPER_ACCOUNT_IDS["traders"]),
+            )
+            self.assertEqual(
+                performance["berkshire"]["account_ref"],
+                _account_ref(PAPER_ACCOUNT_IDS["berkshire"]),
+            )
 
     def test_completed_finalizer_restart_regenerates_summary_without_pair(self):
         calls = []
