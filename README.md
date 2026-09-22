@@ -131,13 +131,17 @@ python -m cli.main long-run --backend berkshire    # 單臂分析 backend：trad
 
 同一指令會：
 
-1. 建立指定日曆天數（預設 30）的 observation（只在美股交易日執行）；`--continuous` 時，每完成一個 chunk 就由權威 Alpaca 日曆再凍結延伸相同天數的 session，run identity 與已完成前綴不變。
+1. 建立指定日曆天數（預設 30）的 observation（只在美股交易日執行）；`--continuous` 時，每完成一個 chunk 就由權威 Alpaca 日曆再凍結延伸相同天數的 session，run identity 與已完成前綴不變。延伸與初始 window 採相同半開區間語義 `[start, end)`：正好等於新 `ends_at` 的交易日屬於下一個 chunk，本 chunk 不會取得一個永遠排不到的 session 而被誤標 MISSED。
 2. 為每一日保存 round journal、帳戶快照、事件與報告。
 3. 遭遇 crash 時使用同一 observation state 安全恢復，而不是建立新 run。
 4. 遇到 provider、安全或對帳無法證明正確的情況時停止，不會靜默繼續。
 5. 結束後輸出 `final_report.md` 與 `final_report.json`。
 
-此模式不是背景服務，不會安裝 OS autostart；需要保留程序運行，或在中斷後重新執行同一指令來恢復。最後報告是觀察報告，不代表自動清倉或獲利證明。`--backend berkshire` 時，results、cache 與 execution DB 會隔離到 `~/.tradingbuffett/single/berkshire/`，Traders 則沿用既有共享路徑。
+此模式不是背景服務，不會安裝 OS autostart；需要保留程序運行，或在中斷後重新執行同一指令來恢復。最後報告是觀察報告，不代表自動清倉或獲利證明。
+
+`--backend berkshire` 時，所有會被寫入的執行期路徑都隔離到 `~/.tradingbuffett/single/berkshire/`（`results/`、`memory/trading_memory.md`、`memory/agent_memory/`、`data_cache/`、`screening_selection.json`、`execution/execution.sqlite3`、`execution/recovery_ledger.sqlite3`、`safety/state.json`、`safety/KILL_SWITCH`）；不會 copy、symlink 或 fallback 到 Traders 的 memory / safety 狀態。Traders 則沿用既有共享路徑完全不變。
+
+既有 active observation 的 config 是權威：resume 時可以重述相同值，但只要 `--backend`、`--continuous`、`--duration-days` 與 persisted state 不同，就會 fail closed（exit 2，不寫 state、不 bump restart_count、不做 recovery）。backend 與生命週期（finite/continuous、duration 天數）只能在新建 observation 時決定。
 
 ### Traders × Berkshire A/B
 

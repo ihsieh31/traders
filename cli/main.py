@@ -1773,6 +1773,41 @@ def _long_run_single_locked(overrides: dict) -> None:
                                   "it). Re-run the command.[/bold yellow]")
                     raise typer.Exit(code=2)
                 active = fresh
+                # Resume drift guard: the persisted observation is
+                # authoritative for its lifecycle identity. Backend,
+                # continuous mode and duration are create-time decisions;
+                # resume may only restate the same values. A mismatch fails
+                # closed BEFORE any state write (restart_count), broker
+                # recovery, or execution DB initialization.
+                active_cfg = active.get("config") or {}
+                active_backend = str(
+                    active_cfg.get("analysis_backend") or "traders"
+                ).strip().lower()
+                if (overrides.get("analysis_backend") is not None
+                        and overrides["analysis_backend"] != active_backend):
+                    console.print(
+                        f"[bold red]Active observation backend is {active_backend}; "
+                        f"refusing resume as {overrides['analysis_backend']}.[/bold red]"
+                    )
+                    raise typer.Exit(code=2)
+                if (overrides.get("continuous") is not None
+                        and bool(overrides["continuous"])
+                        != bool(active.get("continuous", False))):
+                    console.print(
+                        "[bold red]Active observation is finite; refusing "
+                        "resume with --continuous.[/bold red]"
+                    )
+                    raise typer.Exit(code=2)
+                if (overrides.get("duration_calendar_days") is not None
+                        and int(overrides["duration_calendar_days"])
+                        != int(active_cfg.get("duration_calendar_days") or 0)):
+                    console.print(
+                        f"[bold red]Active observation duration is "
+                        f"{active_cfg.get('duration_calendar_days')} calendar days; "
+                        f"refusing resume with --duration-days "
+                        f"{overrides['duration_calendar_days']}.[/bold red]"
+                    )
+                    raise typer.Exit(code=2)
                 active["restart_count"] = int(active.get("restart_count") or 0) + 1
                 lr.save_active_state(active)
                 long_cfg = dict(lr.default_long_run_config())

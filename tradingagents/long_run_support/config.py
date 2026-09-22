@@ -361,6 +361,29 @@ def apply_single_backend_runtime_paths(
             root / "execution" / "recovery_ledger.sqlite3", field="execution_db"
         )
     )
+    # Memory, safety and screening state are per-backend too: a Berkshire
+    # observation must never read or write the Traders memory log, agent
+    # memory store, safety state/kill switch, or screening selection cache.
+    # No copy/symlink/fallback: each backend starts with its own empty state.
+    runtime["memory_log_path"] = str(
+        validate_app_path(root / "memory" / "trading_memory.md", field="memory_log_path")
+    )
+    runtime["agent_memory_dir"] = str(
+        validate_app_path(root / "memory" / "agent_memory", field="agent_memory_dir")
+    )
+    runtime["safety_state_path"] = str(
+        validate_app_path(root / "safety" / "state.json", field="safety_state_path")
+    )
+    runtime["safety_kill_switch_path"] = str(
+        validate_app_path(
+            root / "safety" / "KILL_SWITCH", field="safety_kill_switch_path"
+        )
+    )
+    runtime["screening_selection_cache_path"] = str(
+        validate_app_path(
+            root / "screening_selection.json", field="screening_selection_cache_path"
+        )
+    )
     return runtime
 
 

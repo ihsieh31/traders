@@ -1258,11 +1258,20 @@ def extend_continuous_window(
         else old_ends.astimezone(eastern_tz).date()
     )
     new_ends = old_ends + timedelta(days=chunk)
-    new_sessions = fetch_session_dates(
-        last_session + timedelta(days=1),
-        new_ends.astimezone(eastern_tz).date(),
-        client=deps.calendar_client,
-    )
+    # Keep the initial window's half-open [start, end) semantics: the
+    # calendar query is inclusive, but a session ON the new ends_at date is
+    # not executable in this chunk (the scheduler only runs sessions with
+    # date < ends_at). Including it would settle it MISSED after the next
+    # extension without ever scheduling it.
+    new_end_date = new_ends.astimezone(eastern_tz).date()
+    new_sessions = [
+        d for d in fetch_session_dates(
+            last_session + timedelta(days=1),
+            new_end_date,
+            client=deps.calendar_client,
+        )
+        if d < new_end_date
+    ]
     for day in new_sessions:
         iso = day.isoformat()
         # Append only sessions strictly after the current last expected one.

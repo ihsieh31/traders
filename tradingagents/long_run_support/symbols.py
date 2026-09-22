@@ -40,6 +40,7 @@ def _prepare_symbol_graph_config(
 
     from tradingagents.dataflows.utils import safe_ticker_component
     from tradingagents.experiments.evidence_snapshot import (
+        EvidenceIntegrityError,
         build_or_load_evidence_packet,
     )
 
@@ -63,8 +64,18 @@ def _prepare_symbol_graph_config(
     config["evidence_packet_path"] = str(packet_path)
     if expected_sha256:
         config["evidence_packet_sha256"] = str(expected_sha256)
+        if not packet_path.exists():
+            # Fail closed BEFORE any capture: the journal already pinned this
+            # packet's hash, so a missing file means the frozen evidence
+            # boundary was broken. Never silently regenerate replacement
+            # evidence that would only fail the hash check after overwriting
+            # the audit location.
+            raise EvidenceIntegrityError(
+                f"pinned evidence packet missing: {packet_path} "
+                f"(journal sha256 {expected_sha256})"
+            )
     packet = build_or_load_evidence_packet(
-        packet_path, symbol, trade_date=session_date, config=config
+        packet_path, symbol=symbol, trade_date=session_date, config=config
     )
     config["evidence_packet_sha256"] = packet["sha256"]
     return config, {"path": str(packet_path), "sha256": str(packet["sha256"])}
