@@ -1233,6 +1233,61 @@ def _run_scheduler_operation_with_retry(
     )
 
 
+def should_extend_continuous_window(
+    *,
+    state: Dict[str, Any],
+    ends_at: datetime,
+    now: datetime,
+    run_time_et: str,
+    calendar_client: Any = None,
+    calendar_rows: Optional[List[Any]] = None,
+) -> bool:
+    """Continuous mode: prove the frozen chunk's scheduling horizon is spent.
+
+    The chunk boundary must be crossed BEFORE the boundary date's own target
+    when that date is a trading session: growing the window only once
+    ``now >= ends_at`` freezes the boundary session after its close, and the
+    scheduler then settles it MISSED without ever running it.
+
+    Only two situations authorize early growth:
+
+    * the chunk holds no session date at all (nothing schedulable inside it), or
+    * the chunk's LAST session date has already passed its own effective
+      target, so no opportunity inside this chunk can still open.
+
+    A weekend or holiday therefore cannot grow the window: growth waits for
+    the chunk's last session target, and an extension that appends no session
+    falls back to the normal bounded wait (see ``run_observation_loop``)
+    instead of spinning. An unprovable target (calendar authority down) never
+    grows the window; it returns False and the caller keeps waiting.
+    """
+    if not state.get("continuous", False):
+        return False
+    eastern = eastern_now(now)
+    tz = eastern.tzinfo
+    end_day = ends_at.astimezone(tz).date().isoformat()
+    chunk_sessions = [
+        s for s in (state.get("expected_sessions") or []) if s < end_day
+    ]
+    if not chunk_sessions:
+        return True
+    try:
+        info = effective_target_for_session(
+            date.fromisoformat(chunk_sessions[-1]),
+            run_time_et,
+            calendar_client=calendar_client,
+            calendar_rows=calendar_rows,
+        )
+        naive = datetime.strptime(
+            f"{info['session_date']} {info['effective_target']}", "%Y-%m-%d %H:%M"
+        )
+        effective = tz.localize(naive)
+    except Exception:
+        # Cannot prove the chunk is finished: never grow early on a guess.
+        return False
+    return effective <= eastern
+
+
 def extend_continuous_window(
     state: Dict[str, Any], long_cfg: Dict[str, Any], deps: "LongRunDeps"
 ) -> Dict[str, Any]:
@@ -1394,6 +1449,42 @@ def run_observation_loop(
                                         stop_code=stop.code, stop_detail=stop.detail)
 
         if target is None:
+            # Continuous mode: the next chunk's sessions — including a
+            # trading day exactly ON the boundary — must be frozen BEFORE
+            # that day's target, otherwise it is added post-close and settled
+            # MISSED. Grow the window as soon as the current chunk is
+            # provably spent (never merely because nothing is due now).
+            if should_extend_continuous_window(
+                state=state, ends_at=ends_at, now=now,
+                run_time_et=str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
+                calendar_client=deps.calendar_client,
+                calendar_rows=deps.calendar_rows,
+            ):
+                before = len(state.get("expected_sessions") or [])
+                try:
+                    extend_continuous_window(state, long_cfg, deps)
+                except Exception as exc:
+                    stop = LongRunStop(
+                        "CALENDAR_UNAVAILABLE",
+                        f"continuous window extension failed: {exc}",
+                    )
+                    return finalize_observation(
+                        state, long_cfg, runtime, deps,
+                        final_status="STOPPED",
+                        stop_code=stop.code, stop_detail=stop.detail,
+                    )
+                next_ends = datetime.fromisoformat(state["ends_at"])
+                if next_ends.tzinfo is None:
+                    next_ends = next_ends.replace(tzinfo=timezone.utc)
+                ends_at = next_ends
+                if len(state.get("expected_sessions") or []) > before:
+                    # A new session is schedulable: re-enter the scheduler
+                    # instead of sleeping, so the boundary date is frozen
+                    # well before its target.
+                    continue
+                # Nothing appended (a range with no session at all): never
+                # spin — fall through to the bounded wait and let the next
+                # pass grow the following chunk.
             # No session left before ends_at: wait out the window in chunks.
             remaining = (ends_at - now).total_seconds()
             deps.sleep_fn(min(60.0, max(1.0, remaining)))

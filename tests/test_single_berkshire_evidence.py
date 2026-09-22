@@ -8,6 +8,7 @@ actual call site that config-only tests never reached.
 """
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -57,7 +58,58 @@ def _runtime(tmp, backend="berkshire"):
     return {"analysis_backend": backend, "results_dir": str(Path(tmp) / "results")}
 
 
-class BerkshireFrozenEvidenceHelperTests(unittest.TestCase):
+class _TempLongRunStateTestCase(unittest.TestCase):
+    """Durable long-run state is confined to a TemporaryDirectory.
+
+    ``active.json``, ``runs/<run_id>/rounds/*.json``, ``manifest.json`` and
+    ``events.jsonl`` are all written through ``base_dir()`` / the
+    ``LONG_RUN_DIR`` override, so both are patched here: no test in this
+    module can create or read files under the operator's
+    ``~/.tradingbuffett/long_run``.
+    """
+
+    def setUp(self):
+        import tradingagents.long_run_support.state as lr_state
+
+        self._lr_state = lr_state
+        self._iso_tmp = tempfile.TemporaryDirectory(prefix="long-run-state-")
+        root = Path(self._iso_tmp.name)
+        self.iso_root = root
+        self.long_run_base = root / "long_run"
+        self.long_run_base.mkdir(parents=True, exist_ok=True)
+        self._iso_env = patch.dict(os.environ, {
+            "TRADINGBUFFETT_LONG_RUN_DIR": str(self.long_run_base),
+            "TRADINGBUFFETT_RESULTS_DIR": str(root / "results"),
+            "TRADINGBUFFETT_CACHE_DIR": str(root / "cache"),
+            "TRADINGBUFFETT_EXECUTION_DB": str(root / "execution.sqlite3"),
+            "TRADINGBUFFETT_EXECUTION_LOCK_DIR": str(root / "execution_locks"),
+        })
+        self._iso_env.start()
+        self._iso_patches = [
+            patch.object(lr, "base_dir", lambda: self.long_run_base),
+            patch.object(lr_state, "base_dir", lambda: self.long_run_base),
+        ]
+        for item in self._iso_patches:
+            item.start()
+
+    def tearDown(self):
+        for item in reversed(self._iso_patches):
+            item.stop()
+        self._iso_env.stop()
+        self._iso_tmp.cleanup()
+
+    def _operator_long_run_files(self):
+        """Best-effort snapshot of the real operator long-run state."""
+        root = Path.home() / ".tradingbuffett" / "long_run"
+        if not root.exists():
+            return None
+        return sorted(str(f.relative_to(root)) for f in root.rglob("*") if f.is_file())
+
+    def _run_dir(self, run_id):
+        return self.long_run_base / "runs" / run_id
+
+
+class BerkshireFrozenEvidenceHelperTests(_TempLongRunStateTestCase):
     """P1-1: the production helper really builds frozen evidence packets."""
 
     def test_berkshire_builds_real_packet_and_injects_identity(self):
@@ -100,7 +152,7 @@ class BerkshireFrozenEvidenceHelperTests(unittest.TestCase):
             self.assertNotIn("analysis_input_mode", config)
 
 
-class PinnedEvidenceIntegrityTests(unittest.TestCase):
+class PinnedEvidenceIntegrityTests(_TempLongRunStateTestCase):
     """P2-3: a pinned hash means the packet is authoritative evidence."""
 
     def _build(self, tmp, symbol="AAPL"):
@@ -223,14 +275,14 @@ def _plan(symbols):
     )
 
 
-class PerSymbolGraphTests(unittest.TestCase):
+class PerSymbolGraphTests(_TempLongRunStateTestCase):
     """Berkshire builds one graph per symbol; Traders reuses one round graph."""
 
     def setUp(self):
         from tradingagents.safety import SafetyGuard
 
-        self._tmp = tempfile.TemporaryDirectory()
-        tmp = Path(self._tmp.name)
+        super().setUp()
+        tmp = self.iso_root
         self.runtime = lr.build_runtime_config(lr.default_long_run_config())
         self.runtime["results_dir"] = str(tmp / "results")
         self._patches = [
@@ -247,9 +299,9 @@ class PerSymbolGraphTests(unittest.TestCase):
             p.start()
 
     def tearDown(self):
-        for p in reversed(self._patches):
-            p.stop()
-        self._tmp.cleanup()
+        for item in reversed(self._patches):
+            item.stop()
+        super().tearDown()
 
     def _run_round(self, backend, symbols=("AAPL", "MSFT")):
         graphs = []
@@ -315,9 +367,8 @@ class PerSymbolGraphTests(unittest.TestCase):
         def _boom(*args, **kwargs):
             raise AssertionError("pinned packet must never be recaptured")
 
-        with patch(
-            "tradingagents.experiments.evidence_snapshot._capture_packet",
-            side_effect=_boom,
+        with patch("tradingagents.experiments.evidence_snapshot._capture_packet",
+                   side_effect=_boom,
         ) as capture:
             journal2, _graphs2, service2 = self._run_round(
                 "berkshire", symbols=("AAPL",))
@@ -339,6 +390,37 @@ class PerSymbolGraphTests(unittest.TestCase):
             graphs[0].calls, [("AAPL", SESSION), ("MSFT", SESSION)])
 
 
+    def test_round_artifacts_stay_inside_the_temp_long_run_dir(self):
+        """P3: fixed run ids (run-traders / run-berkshire) must never write
+        into the operator's real ~/.tradingbuffett/long_run state."""
+        operator_before = self._operator_long_run_files()
+        journal, _graphs, _service = self._run_round("traders", symbols=("AAPL",))
+        run_id = "run-traders"
+
+        self.assertEqual(lr.base_dir(), self.long_run_base)
+        self.assertEqual(self._lr_state.base_dir(), self.long_run_base)
+        self.assertEqual(lr.run_dir(run_id), self._run_dir(run_id))
+        self.assertEqual(journal["session_date"], SESSION)
+        self.assertTrue(
+            (self._run_dir(run_id) / "rounds" / f"{SESSION}.json").is_file())
+        # Nothing appeared in the operator's long-run directory.
+        self.assertEqual(self._operator_long_run_files(), operator_before)
+
+    def test_active_state_and_events_stay_inside_the_temp_long_run_dir(self):
+        operator_before = self._operator_long_run_files()
+        state = lr.new_observation_state(
+            lr.default_long_run_config(), expected_sessions=[SESSION])
+        lr.save_active_state(state)
+        self.assertEqual(lr.active_path(), self.long_run_base / "active.json")
+        self.assertTrue((self.long_run_base / "active.json").is_file())
+        lr.log_event(state["run_id"], "isolation_probe", {"ok": True})
+        self.assertTrue(
+            (self._run_dir(state["run_id"]) / "events.jsonl").is_file())
+        lr.clear_active_state()
+        self.assertFalse((self.long_run_base / "active.json").exists())
+        self.assertEqual(self._operator_long_run_files(), operator_before)
+
+
 class _FakeCalendarClient:
     """Weekday NYSE-style calendar, inclusive [start, end] like Alpaca."""
 
@@ -353,12 +435,13 @@ class _FakeCalendarClient:
         return rows
 
 
-class ContinuousChunkBoundaryTests(unittest.TestCase):
+class ContinuousChunkBoundaryTests(_TempLongRunStateTestCase):
     """P2-2: chunk extension keeps half-open [start, end) window semantics."""
 
     def setUp(self):
         from tradingagents.dataflows.market_calendar import clear_calendar_cache
 
+        super().setUp()
         clear_calendar_cache()
         cfg = lr.default_long_run_config()
         cfg["duration_calendar_days"] = 7
@@ -373,6 +456,12 @@ class ContinuousChunkBoundaryTests(unittest.TestCase):
         )
         self.deps = lr.LongRunDeps(calendar_client=_FakeCalendarClient())
 
+    def tearDown(self):
+        from tradingagents.dataflows.market_calendar import clear_calendar_cache
+
+        clear_calendar_cache()
+        super().tearDown()
+
     def _extend(self):
         return lr.extend_continuous_window(self.state, self.long_cfg, self.deps)
 
@@ -381,6 +470,17 @@ class ContinuousChunkBoundaryTests(unittest.TestCase):
 
         ends = datetime.fromisoformat(self.state["ends_at"])
         return ends.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+
+    def test_extension_writes_state_only_under_the_temp_base(self):
+        operator_before = self._operator_long_run_files()
+        lr.save_active_state(self.state)
+        self._extend()
+        run_id = self.state["run_id"]
+        self.assertEqual(lr.base_dir(), self.long_run_base)
+        self.assertTrue((self.long_run_base / "active.json").is_file())
+        self.assertTrue((self._run_dir(run_id) / "manifest.json").is_file())
+        self.assertTrue((self._run_dir(run_id) / "events.jsonl").is_file())
+        self.assertEqual(self._operator_long_run_files(), operator_before)
 
     def test_boundary_session_not_added_until_next_chunk(self):
         # First extension: new ends_at is Monday 2026-06-29, itself a session.
