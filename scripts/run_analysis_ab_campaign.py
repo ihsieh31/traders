@@ -596,13 +596,17 @@ def _complete_campaign(
     """Durably pin ending equity before rendering derived report files."""
 
     if state.get("status") != "COMPLETED":
-        if state.get("execute_paper") and settlement_refresh_fn is not None:
+        if state.get("execute_paper"):
             # The local DB may lag the broker (e.g. local ACCEPTED while the
             # broker already FILLED).  Run the existing recovery/reconciliation
             # for both arms first so the settlement check below reads fresh
             # durable state; only a still-unsettled check blocks completion.
+            # _refresh_broker_settlement is the production default, so a plain
+            # --resume (CLI or auto launcher) really refreshes; tests inject a
+            # stub.  It only runs when something looks unsettled.
+            refresh = settlement_refresh_fn or _refresh_broker_settlement
             if _unsettled_primary_orders(root, str(state["symbol"])):
-                settlement_refresh_fn(root, state)
+                refresh(root, state)
         unsettled = _unsettled_primary_orders(root, str(state["symbol"]))
         if unsettled:
             state["status"] = "RUNNING"

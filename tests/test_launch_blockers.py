@@ -912,3 +912,57 @@ class SettlementRefreshTests(unittest.TestCase):
             self.assertTrue(
                 all(c.kwargs.get("read_only") is False for c in client_factory.call_args_list)
             )
+
+    def test_k_production_resume_without_injected_refresh_calls_real_refresh(self):
+        # No settlement_refresh_fn is passed here: the production entry point
+        # (CLI --resume / auto launcher) must still refresh broker state
+        # instead of silently skipping recovery.
+        import scripts.run_analysis_ab_campaign as cam
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store, order = _seed_order(
+                root / "_profiles" / "traders" / "execution.sqlite3",
+                "dec-default-refresh", "ACCEPTED",
+            )
+            _write_pairs(root, sessions)
+            state = _paper_state(sessions)
+            calls: list = []
+
+            def real_refresh(r, s):
+                calls.append((r, s))
+                ok, _ = store.transition_order(order["order_id"], "FILLED", filled_qty=5)
+                assert ok
+
+            with patch.object(cam, "_refresh_broker_settlement", real_refresh):
+                res = cam._complete_campaign(
+                    root, cam._campaign_state_path(root), state,
+                    broker_snapshotter=lambda: _equity_snapshot("2026-06-22T20:00:00Z"),
+                    summarize_fn=_summarize_stub(len(sessions)),
+                )
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(res["outcome"], "completed")
+            self.assertEqual(res["state"]["status"], "COMPLETED")
+            self.assertIsNotNone(res["state"]["ending_equity"])
+
+    def test_k2_analysis_only_state_never_touches_broker_refresh(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_order(
+                root / "_profiles" / "traders" / "execution.sqlite3",
+                "dec-analysis-only", "ACCEPTED",
+            )
+            _write_pairs(root, sessions)
+            state = _campaign_state(sessions)  # execute_paper is not set
+            with patch.object(cam, "_refresh_broker_settlement") as refresh:
+                res = cam._complete_campaign(
+                    root, cam._campaign_state_path(root), state,
+                    broker_snapshotter=unittest.mock.Mock(),
+                    summarize_fn=_summarize_stub(len(sessions)),
+                )
+            refresh.assert_not_called()
+            self.assertEqual(res["outcome"], "awaiting_final_settlement")
