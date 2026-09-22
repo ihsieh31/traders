@@ -12,7 +12,7 @@ Traders 把「取得市場資訊 → 多角度研究 → 辯論 → 風險決策
 | --- | --- | --- |
 | 單次分析 | 互動式研究單一標的並產出決策報告 | `python -m cli.main analyze` |
 | 30 日 Paper observation | 以每日排程執行單一策略的觀察流程，可中斷後恢復 | `python -m cli.main long-run` |
-| Traders × Berkshire A/B | 用相同凍結證據比較兩種分析團隊，可跑 shadow 或隔離的 Paper 帳戶 | `scripts/run_analysis_ab.py` |
+| Traders × Berkshire A/B | 用相同凍結證據比較兩種分析團隊，可跑單一 pair 或可續跑的 30 NYSE-session Paper campaign | `scripts/run_analysis_ab.py`、`scripts/run_analysis_ab_campaign.py` |
 
 所有券商寫入都被限制為 Alpaca Paper API。偵測到 live endpoint、`TRADINGBUFFETT_ALPACA_USE_PAPER=False` 或無法證明為 Paper 的設定時，程式應直接停止，而不是退回到實盤。
 
@@ -165,6 +165,31 @@ python scripts/run_analysis_ab.py \
 
 **請先閱讀下方「目前進度與限制」。** A/B 的程式與契約修復已通過；正式 30 日雙帳戶實驗目前只剩「交易時段內的真實 Paper recovery」驗證 gate。完成該 gate 前，仍應先以 shadow 或受控驗收方式使用 `--execute-paper`。
 
+#### 正式 30-Day A/B campaign
+
+30 日 campaign 是 Traders 與 Berkshire 的同一標的、30 個 **NYSE 有效交易日** 的雙帳戶 Paper 實驗。它重用單一 pair runner：兩臂保有隔離的 analysis、memory、execution DB、Safety state 與 Paper account，並共享每一日 frozen evidence。它不是常駐服務；在每個交易日市場開盤時由既有 cron/scheduler 呼叫一次即可。
+
+```bash
+# 首次建立 campaign；在當日市場開盤時會執行第一個 due pair。
+python -m scripts.run_analysis_ab_campaign \
+  --symbol AAPL \
+  --start-date 2026-09-23 \
+  --days 30 \
+  --execute \
+  --paper-notional-usd 500 \
+  --results-root ~/.tradingbuffett/results/ab-paper-aapl
+
+# 之後每天用同一個 campaign root 恢復；不會重跑 completed session。
+python -m scripts.run_analysis_ab_campaign \
+  --resume ~/.tradingbuffett/results/ab-paper-aapl
+```
+
+campaign 會以 Alpaca calendar 固定 30 個 NYSE sessions，未完成前一日 pair 時停止而不會跳到下一日；市場關閉時保留 state 供下次呼叫。它會固定 A/B config fingerprint 與解析後的非秘密 LLM/embedding provider、model、endpoint identity；變更即 fail closed。`campaign_state.json`、`AB_CAMPAIGN.json` 與 pair state 都不會寫入 API key、token、password 或 authorization header。
+
+首次使用 `--config-json` 時，resume 也必須提供相同檔案；否則 coordinator 會將它視為 config drift 而拒絕繼續。
+
+完成第 30 個 pair 後，`campaign_summary.json` 與 `campaign_summary.md` 會比較兩個 Paper 帳戶。起始與結束 equity 都直接讀取 Alpaca broker，報告包含 starting equity、ending equity、absolute P&L、return%，以及既有 analysis/execution telemetry；它不會宣告「贏家」。若 final report 寫入中斷，重新執行 `--resume` 只會重新產生報告，不會再次交易。
+
 ## 產物在哪裡？
 
 | 產物 | 預設位置 | 用途 |
@@ -185,7 +210,7 @@ python -m compileall -q tradingagents cli scripts
 python -m pytest -q
 ```
 
-最新完整基準（2026-09-22）為 **1,414 passed、139 skipped、294 subtests passed**。其中 139 個 skipped 多屬已移除 WebUI 的歷史測試；這個基準表示既有回歸測試通過，**不等於**正式 A/B 或真實 Paper recovery 已完全驗證。
+完整測試數量請以最新 GitHub Actions run 為準。測試通過表示既有回歸測試通過，**不等於**正式 A/B 或真實 Paper recovery 已完全驗證。
 
 主要程式區域如下：
 
@@ -200,6 +225,7 @@ python -m pytest -q
 | `tradingagents/long_run*.py` | 30 日 observation 的設定、排程、state、恢復與報告 |
 | `tradingagents/analysis_backends/berkshire/` | Berkshire Analysis Team backend |
 | `scripts/run_analysis_ab.py` | frozen-evidence A/B pair runner |
+| `scripts/run_analysis_ab_campaign.py` | 30 NYSE-session A/B campaign coordinator 與 broker-equity finalizer |
 | `tests/` | 離線 mock、故障注入與回歸測試 |
 
 ## 目前進度與限制（2026-09-22）
@@ -210,7 +236,7 @@ python -m pytest -q
 - Phase B 的角色化 LLM、重試/停止語意、持倉/曝險限制、SEC/IR、corporate-action quarantine。
 - Phase C 的全市場 Top20 screening 與執行 entry gate。
 - Phase D 的 30 日單策略 observation：設定、preflight、journal、crash/resume、排程與最終報告。
-- Traders/Berkshire frozen-evidence A/B runner、雙帳戶設定與 shadow smoke；2026-09-22 shadow A/B smoke 成功，兩臂皆產出有效 HOLD，且零 broker mutation。
+- Traders/Berkshire frozen-evidence A/B runner、雙帳戶設定、30 NYSE-session crash-resumable campaign coordinator 與 shadow smoke；2026-09-22 shadow A/B smoke 成功，兩臂皆產出有效 HOLD，且零 broker mutation。30 日 final equity comparison 以 broker account 為權威，不以 local DB、fills 或 signals 推算。
 
 ### 剩餘驗證 gate
 

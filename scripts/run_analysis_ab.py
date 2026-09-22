@@ -345,12 +345,109 @@ def _implementation_fingerprint() -> str:
     return digest.hexdigest()
 
 
+def _resolved_llm_route_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the effective, non-secret LLM and embedding route configuration.
+
+    The normal provider resolver is deliberately kept as the source of truth.
+    This is only a manifest snapshot: credentials are never copied from its
+    return value and endpoints use the resolver's display-safe form.
+    """
+
+    from tradingagents.dataflows.config import (
+        get_config,
+        get_embedding_client_config,
+        get_openai_base_url,
+        get_openai_embedding_model,
+        is_local_openai_enabled,
+        replace_config,
+    )
+    from tradingagents.llm_clients.roles import resolve_role_config
+
+    previous = get_config()
+    replace_config(dict(config))
+    try:
+        resolved = resolve_role_config(dict(config))
+        embedding_client = get_embedding_client_config()
+        embedding_endpoint = str(embedding_client.get("base_url") or "").strip()
+        embedding = {
+            "provider": (
+                str(config.get("embedding_provider") or "").strip()
+                or ("local_openai" if is_local_openai_enabled() else "openai")
+            ),
+            "model": get_openai_embedding_model(),
+            # ``RoleSpec.display_endpoint`` is the repository's existing
+            # endpoint sanitizer (query, fragment and userinfo removed).
+            "endpoint": _display_safe_endpoint(embedding_endpoint),
+        }
+        if resolved.get("mode") == "roles":
+            def route(spec: Any) -> dict[str, str]:
+                return {
+                    "provider": spec.provider,
+                    "model": spec.model,
+                    "endpoint": spec.display_endpoint() or "provider default",
+                }
+
+            snapshot: dict[str, Any] = {
+                "mode": "roles",
+                "analysis": route(resolved["analysis"]),
+                "decision": route(resolved["decision"]),
+                "embedding": embedding,
+            }
+            fallback = resolved.get("analysis_fallback")
+            if fallback is not None:
+                snapshot["analysis_fallback"] = route(fallback)
+            return snapshot
+
+        provider = str(config.get("llm_provider") or "openai").strip()
+        if provider == "openai" and is_local_openai_enabled():
+            provider = "local_openai"
+        endpoint = get_openai_base_url() or str(config.get("backend_url") or "").strip()
+        return {
+            "mode": "legacy",
+            "analysis": {
+                "provider": provider,
+                "quick_model": str(config.get("quick_think_llm") or ""),
+                "deep_model": str(config.get("deep_think_llm") or ""),
+                "endpoint": _display_safe_endpoint(endpoint),
+            },
+            "embedding": embedding,
+        }
+    finally:
+        replace_config(previous)
+
+
+def _display_safe_endpoint(endpoint: str) -> str:
+    """Use RoleSpec's established secret-safe endpoint display behavior."""
+
+    from tradingagents.llm_clients.roles import RoleSpec
+
+    return RoleSpec(
+        role="manifest",
+        provider="openai",
+        model="manifest",
+        backend_url=endpoint or None,
+        provider_explicit=False,
+    ).display_endpoint() or "provider default"
+
+
+def resolved_llm_route_snapshots(
+    configs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Snapshot each arm separately even when their routes are identical."""
+
+    return {
+        backend: _resolved_llm_route_snapshot(configs[backend])
+        for backend in BACKEND_ORDER
+    }
+
+
 def _ensure_campaign_manifest(
     root: Path,
     config: Mapping[str, Any],
     selected_analysts: Sequence[str],
     *,
     account_preflight: Mapping[str, Mapping[str, Any]] | None = None,
+    resolved_routes: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> str:
     """Pin experimental conditions across the full multi-day campaign."""
 
@@ -359,6 +456,9 @@ def _ensure_campaign_manifest(
         config, selected_analysts, implementation_fingerprint
     )
     manifest_path = root / "AB_CAMPAIGN.json"
+    routes = dict(resolved_routes or {"traders": _resolved_llm_route_snapshot(config), "berkshire": _resolved_llm_route_snapshot(config)})
+    if set(routes) != set(BACKEND_ORDER):
+        raise RuntimeError("A/B campaign resolved LLM routes must contain both arms")
     account_refs = (
         {
             backend: str((account_preflight or {}).get(backend, {}).get("account_ref") or "")
@@ -383,6 +483,7 @@ def _ensure_campaign_manifest(
             != implementation_fingerprint
             or existing.get("config_fingerprint") != fingerprint
             or existing.get("account_refs") != account_refs
+            or existing.get("resolved_llm_routes") != routes
         ):
             raise RuntimeError(
                 "A/B campaign invariant violation: configuration or analyst set changed"
@@ -400,6 +501,7 @@ def _ensure_campaign_manifest(
         "selected_analysts": list(selected_analysts),
         "implementation_fingerprint": implementation_fingerprint,
         "config_fingerprint": fingerprint,
+        "resolved_llm_routes": routes,
         "memory_policy": "enabled and isolated per profile",
         "execution_policy": (
             "serial, order-counterbalanced, isolated Alpaca Paper accounts A/B"
@@ -1057,6 +1159,7 @@ def run_analysis_ab(
             configs["traders"],
             selected_analysts,
             account_preflight=account_preflight,
+            resolved_routes=resolved_llm_route_snapshots(configs),
         )
         pair_dir.mkdir(parents=True, exist_ok=True)
         # Evidence collection is a shared phase, never an A/B arm.

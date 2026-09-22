@@ -128,10 +128,13 @@ class AnalysisABRunnerTests(unittest.TestCase):
             pair_summary = Path(tmp) / "ab" / "2026-09-21" / "NVDA" / "pair_summary.json"
             self.assertTrue(pair_summary.exists())
             persisted = json.loads(pair_summary.read_text(encoding="utf-8"))
+            manifest = json.loads((Path(tmp) / "ab" / "AB_CAMPAIGN.json").read_text(encoding="utf-8"))
             self.assertEqual(persisted["shared"]["checkpoint_enabled"], False)
             self.assertEqual(persisted["shared"]["memory_retrieval_enabled"], True)
             self.assertEqual(persisted["shared"]["auto_trade"], False)
             self.assertEqual(len(persisted["campaign_fingerprint"]), 64)
+            self.assertEqual(set(manifest["resolved_llm_routes"]), {"traders", "berkshire"})
+            self.assertIn("embedding", manifest["resolved_llm_routes"]["traders"])
 
     def test_runner_restores_process_global_config_after_profiles(self):
         from tradingagents.dataflows.config import get_config, replace_config, set_config
