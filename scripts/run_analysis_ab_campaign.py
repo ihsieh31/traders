@@ -307,6 +307,7 @@ def _new_state(
     config_fingerprint: str,
     resolved_routes: Mapping[str, Mapping[str, Any]],
     starting_equity: Mapping[str, Mapping[str, Any]] | None,
+    continuous: bool = False,
 ) -> dict[str, Any]:
     now = _utc_now()
     return {
@@ -321,6 +322,8 @@ def _new_state(
         "current_date": None,
         "execute_paper": bool(execute_paper),
         "paper_notional_usd": paper_notional_usd,
+        "continuous": bool(continuous),
+        "window_chunk_days": target_days,
         "config_fingerprint": config_fingerprint,
         "resolved_llm_routes": dict(resolved_routes),
         "starting_equity": dict(starting_equity) if starting_equity is not None else None,
@@ -640,6 +643,66 @@ def _complete_campaign(
     return {"outcome": "completed", "state": state, "summary": summary}
 
 
+def _extend_campaign_sessions(
+    state: dict[str, Any],
+    state_path: Path,
+    *,
+    calendar_client: Any,
+    session_fetcher: Callable[..., list[date]],
+) -> None:
+    """Continuous mode: grow the SAME campaign's frozen window by one chunk.
+
+    Run identity, baseline equity, fingerprint, and the completed prefix are
+    all preserved; only sessions/target_days grow.  The authoritative
+    calendar adapter stays the sole session authority and any calendar
+    failure propagates (fail-closed) without mutating state.
+    """
+    chunk = state.get("window_chunk_days")
+    if isinstance(chunk, bool) or not isinstance(chunk, int) or chunk <= 0:
+        raise RuntimeError("continuous campaign state has an invalid window_chunk_days")
+    last = date.fromisoformat(str(state["sessions"][-1]))
+    extra = _freeze_sessions(
+        last + timedelta(days=1), chunk,
+        calendar_client=calendar_client, session_fetcher=session_fetcher,
+    )
+    state["sessions"] = list(state["sessions"]) + extra
+    state["target_days"] = len(state["sessions"])
+    _save_state(state_path, state)
+
+
+def _extend_or_complete(
+    root: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    *,
+    calendar_client: Any,
+    session_fetcher: Callable[..., list[date]],
+    broker_snapshotter: Callable[[], dict[str, dict[str, Any]]],
+    summarize_fn: Callable[[str | Path], dict[str, Any]],
+    settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None,
+) -> dict[str, Any] | None:
+    """Finite campaigns finalize; continuous campaigns extend instead.
+
+    Returns the completed-campaign result, or None after the same campaign's
+    window grew by one frozen chunk (the caller then proceeds to / waits for
+    the next session's effective target).
+    """
+    if not state.get("continuous"):
+        return _complete_campaign(
+            root, state_path, state,
+            broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
+            settlement_refresh_fn=settlement_refresh_fn,
+        )
+    client = _calendar_client(
+        execute_paper=bool(state["execute_paper"]), supplied=calendar_client
+    )
+    _extend_campaign_sessions(
+        state, state_path,
+        calendar_client=client, session_fetcher=session_fetcher,
+    )
+    return None
+
+
 def _run_campaign_locked(
     *,
     symbol: str | None = None,
@@ -658,6 +721,7 @@ def _run_campaign_locked(
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
     settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
+    continuous: bool = False,
 ) -> dict[str, Any]:
     """Create/resume a campaign and run at most its earliest due pair."""
 
@@ -724,6 +788,7 @@ def _run_campaign_locked(
             config_fingerprint=fingerprint,
             resolved_routes=routes,
             starting_equity=None,
+            continuous=continuous,
         )
         _save_state(state_path, state)
     else:
@@ -745,11 +810,14 @@ def _run_campaign_locked(
             raise RuntimeError("campaign paper_notional_usd changed; refusing resume")
 
     if len(state["completed_dates"]) == state["target_days"]:
-        return _complete_campaign(
+        finished = _extend_or_complete(
             root, state_path, state,
+            calendar_client=calendar_client, session_fetcher=session_fetcher,
             broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
             settlement_refresh_fn=settlement_refresh_fn,
         )
+        if finished is not None:
+            return finished
 
     next_date = state["sessions"][len(state["completed_dates"])]
     today = _eastern_date(now)
@@ -811,11 +879,17 @@ def _run_campaign_locked(
     if len(state["completed_dates"]) != state["target_days"]:
         return {"outcome": "session_completed", "state": state, "pair": result}
 
-    return _complete_campaign(
+    finished = _extend_or_complete(
         root, state_path, state,
+        calendar_client=calendar_client, session_fetcher=session_fetcher,
         broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
         settlement_refresh_fn=settlement_refresh_fn,
     )
+    if finished is not None:
+        return finished
+    # Continuous mode: the window just grew by one frozen chunk; the caller
+    # waits for the next session's effective target and resumes this root.
+    return {"outcome": "session_completed", "state": state, "pair": result}
 
 
 def run_campaign(
@@ -836,6 +910,7 @@ def run_campaign(
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
     settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
+    continuous: bool = False,
 ) -> dict[str, Any]:
     """Serialize the entire campaign lifecycle before touching its state."""
 
@@ -862,6 +937,7 @@ def run_campaign(
             broker_snapshotter=broker_snapshotter,
             summarize_fn=summarize_fn,
             settlement_refresh_fn=settlement_refresh_fn,
+            continuous=continuous,
         )
 
 
@@ -878,19 +954,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--execute", "--execute-paper", dest="execute_paper", action="store_true", default=None
     )
     parser.add_argument("--paper-notional-usd", type=float)
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Never finalize: extend the same campaign by frozen chunks of --days sessions",
+    )
     args = parser.parse_args(argv)
+
+    from tradingagents.long_run import GlobalRunnerLockBusy, global_runner_lock
+
     try:
-        result = run_campaign(
-            symbol=args.symbol,
-            start_date=args.start_date,
-            days=args.days,
-            results_root=args.results_root,
-            resume=args.resume,
-            base_config=_load_config(args.config_json),
-            execute_paper=args.execute_paper,
-            paper_notional_usd=args.paper_notional_usd,
-            debug=args.debug,
-        )
+        # Outermost lock: exactly one Paper runner process application-wide.
+        with global_runner_lock():
+            result = run_campaign(
+                symbol=args.symbol,
+                start_date=args.start_date,
+                days=args.days,
+                results_root=args.results_root,
+                resume=args.resume,
+                base_config=_load_config(args.config_json),
+                execute_paper=args.execute_paper,
+                paper_notional_usd=args.paper_notional_usd,
+                debug=args.debug,
+                continuous=args.continuous,
+            )
+    except GlobalRunnerLockBusy as exc:
+        print(f"[AB campaign] ERROR: {exc}", file=sys.stderr)
+        return 2
     except (RuntimeError, ValueError) as exc:
         print(f"[AB campaign] ERROR: {exc}", file=sys.stderr)
         return 2

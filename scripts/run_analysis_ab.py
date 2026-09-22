@@ -1360,19 +1360,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    from tradingagents.long_run import GlobalRunnerLockBusy, global_runner_lock
+
     try:
-        summary = run_analysis_ab(
-            symbol=args.symbol,
-            trade_date=args.trade_date,
-            base_config=_load_config(args.config_json),
-            results_root=args.results_root,
-            selected_analysts=tuple(
-                analyst.strip() for analyst in args.analysts.split(",") if analyst.strip()
-            ),
-            debug=args.debug,
-            execute_paper=args.execute_paper,
-            paper_notional_usd=args.paper_notional_usd,
-        )
+        # Outermost lock: exactly one Paper runner process application-wide.
+        with global_runner_lock():
+            summary = run_analysis_ab(
+                symbol=args.symbol,
+                trade_date=args.trade_date,
+                base_config=_load_config(args.config_json),
+                results_root=args.results_root,
+                selected_analysts=tuple(
+                    analyst.strip() for analyst in args.analysts.split(",") if analyst.strip()
+                ),
+                debug=args.debug,
+                execute_paper=args.execute_paper,
+                paper_notional_usd=args.paper_notional_usd,
+            )
+    except GlobalRunnerLockBusy as exc:
+        print(f"[AB] ERROR: {exc}", file=sys.stderr)
+        return 2
     except (RuntimeError, ValueError) as exc:
         print(f"[AB] ERROR: {exc}", file=sys.stderr)
         return 2

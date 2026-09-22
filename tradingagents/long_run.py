@@ -1,4 +1,4 @@
-"""Phase D — 30-day unattended Alpaca Paper observation (single CLI command).
+"""Phase D — unattended Alpaca Paper observation (single CLI command).
 
 This module coordinates daily rounds, scheduling, crash/resume and
 finalization. Bounded responsibilities live in long_run_support; explicit
@@ -134,6 +134,21 @@ def runner_lock():
     )
 
 
+GlobalRunnerLockBusy = _state.GlobalRunnerLockBusy
+
+
+def global_runner_lock_path() -> Path:
+    return _state.global_runner_lock_path()
+
+
+@contextmanager
+def global_runner_lock():
+    """Application-wide runner lock: exactly one long-run or A/B Paper runner
+    per machine/user. Entrypoints acquire this BEFORE the mode-specific lock
+    (lock ordering: global runner lock -> runner_lock / campaign locks)."""
+    yield from _state.global_runner_lock(utc_now_iso=utc_now_iso)
+
+
 # ---------------------------------------------------------------------------
 # Non-secret Phase-D configuration
 # ---------------------------------------------------------------------------
@@ -225,6 +240,13 @@ def build_runtime_config(
 ) -> Dict[str, Any]:
     """Full graph/execution config for a round: Phase D forces full-system mode."""
     return _long_run_config.build_runtime_config(long_cfg, base)
+
+
+def apply_single_backend_runtime_paths(
+    runtime: Dict[str, Any], backend: str
+) -> Dict[str, Any]:
+    """Isolated results/cache/execution-DB paths for a non-Traders backend."""
+    return _long_run_config.apply_single_backend_runtime_paths(runtime, backend)
 
 
 def git_baseline_commit() -> str:
@@ -744,7 +766,6 @@ def run_daily_round(
     screening_fn = deps.screening_fn or _default_screening
     graph_factory = deps.graph_factory or _default_graph_factory
     broker_factory = deps.broker_client_factory or _default_broker_client
-    service = service_factory()
     if ends_at is not None and ends_at.tzinfo is None:
         ends_at = ends_at.replace(tzinfo=timezone.utc)
     # R02 Layer 1 — round precheck: a stop already requested or an already
@@ -800,6 +821,10 @@ def run_daily_round(
     # resubmit a gated opening without the Phase C entry gate.
     _apply_runtime_config(runtime)
     _validate_long_run_execution_config(runtime)
+    # The ExecutionService is constructed only AFTER the runtime became the
+    # installed global config, so the default factory resolves this backend's
+    # execution DB (Berkshire isolation) — never a stale or foreign one.
+    service = service_factory()
 
     # Step 1 — recover first; unsafe state stops the whole observation.
     # R02 Layer 2: the stop/window authority is re-checked inside recovery
@@ -1208,6 +1233,59 @@ def _run_scheduler_operation_with_retry(
     )
 
 
+def extend_continuous_window(
+    state: Dict[str, Any], long_cfg: Dict[str, Any], deps: "LongRunDeps"
+) -> Dict[str, Any]:
+    """Continuous mode: grow the SAME run's scheduling window by one chunk.
+
+    The run continues under the same run_id — journal, round history and
+    account history are preserved; only ends_at and expected_sessions grow.
+    A restart re-enters here and extends again, so a crash never forces a new
+    run and no fake "999999 days" horizon is ever persisted. Fail-closed: a
+    calendar-authority failure raises (the caller converts it to a hard stop)
+    rather than silently ending the observation.
+    """
+    run_id = state["run_id"]
+    eastern_tz = eastern_now(deps.now_fn()).tzinfo
+    old_ends = datetime.fromisoformat(state["ends_at"])
+    if old_ends.tzinfo is None:
+        old_ends = old_ends.replace(tzinfo=timezone.utc)
+    chunk = int(long_cfg.get("duration_calendar_days") or DEFAULT_DURATION_CALENDAR_DAYS)
+    expected = list(state.get("expected_sessions") or [])
+    last_session = (
+        date.fromisoformat(expected[-1])
+        if expected
+        else old_ends.astimezone(eastern_tz).date()
+    )
+    new_ends = old_ends + timedelta(days=chunk)
+    new_sessions = fetch_session_dates(
+        last_session + timedelta(days=1),
+        new_ends.astimezone(eastern_tz).date(),
+        client=deps.calendar_client,
+    )
+    for day in new_sessions:
+        iso = day.isoformat()
+        # Append only sessions strictly after the current last expected one.
+        if not expected or iso > expected[-1]:
+            expected.append(iso)
+    state["expected_sessions"] = expected
+    state["ends_at"] = new_ends.isoformat()
+    save_active_state(state)
+    # Keep the run manifest the durable mirror of the extended window.
+    manifest_path = run_dir(run_id) / "manifest.json"
+    manifest = read_json(manifest_path) or {}
+    manifest["ends_at"] = state["ends_at"]
+    manifest["expected_sessions"] = list(expected)
+    manifest["continuous"] = True
+    atomic_write_json(manifest_path, manifest)
+    log_event(run_id, "continuous_window_extended", {
+        "old_ends_at": old_ends.isoformat(),
+        "new_ends_at": state["ends_at"],
+        "sessions_appended": len(new_sessions),
+    })
+    return state
+
+
 def run_observation_loop(
     state: Dict[str, Any],
     long_cfg: Dict[str, Any],
@@ -1237,6 +1315,27 @@ def run_observation_loop(
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         if now >= ends_at:
+            if state.get("continuous", False):
+                # Continuous mode: never auto-finalize. Grow the same run's
+                # window by duration chunks (authoritative calendar) until now
+                # is inside it again, then keep scheduling normally.
+                try:
+                    while ends_at <= now:
+                        extend_continuous_window(state, long_cfg, deps)
+                        ends_at = datetime.fromisoformat(state["ends_at"])
+                        if ends_at.tzinfo is None:
+                            ends_at = ends_at.replace(tzinfo=timezone.utc)
+                except Exception as exc:
+                    stop = LongRunStop(
+                        "CALENDAR_UNAVAILABLE",
+                        f"continuous window extension failed: {exc}",
+                    )
+                    return finalize_observation(
+                        state, long_cfg, runtime, deps,
+                        final_status="STOPPED",
+                        stop_code=stop.code, stop_detail=stop.detail,
+                    )
+                continue
             return finalize_observation(state, long_cfg, runtime, deps,
                                         final_status="COMPLETED")
 

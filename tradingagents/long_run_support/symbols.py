@@ -11,6 +11,65 @@ from typing import Any, Dict, Optional
 from tradingagents.app_identity import DEFAULT_RESULTS_DIR, validate_app_path
 
 
+def _prepare_symbol_graph_config(
+    graph_config: Dict[str, Any],
+    runtime: Dict[str, Any],
+    *,
+    run_id: str,
+    session_date: str,
+    symbol: str,
+    expected_sha256: Optional[str] = None,
+):
+    """Return ``(graph_config, evidence_identity)`` for one symbol.
+
+    Traders shares the round-level graph config unchanged. Berkshire gets a
+    per-symbol config bound to a deterministic frozen-evidence packet under
+    the run's own isolated results namespace; capture/build reuses the shared
+    A/B evidence module so hashing and integrity semantics are identical.
+
+    Fail-closed: when the journal already pinned a packet hash, that hash is
+    installed as the expected sha256 BEFORE build_or_load runs — a missing or
+    tampered packet raises EvidenceIntegrityError instead of silently
+    producing different evidence.
+    """
+    backend = str(runtime.get("analysis_backend") or "traders").strip().lower()
+    if backend != "berkshire":
+        return dict(graph_config), None
+
+    from pathlib import Path
+
+    from tradingagents.dataflows.utils import safe_ticker_component
+    from tradingagents.experiments.evidence_snapshot import (
+        build_or_load_evidence_packet,
+    )
+
+    config = dict(graph_config)
+    config["analysis_backend"] = "berkshire"
+    # Berkshire consumes the same five-analyst Traders topology prompts; the
+    # profile key keeps that explicit in every audit/log record.
+    config["analysis_profile"] = "traders"
+    config["analysis_input_mode"] = "frozen_evidence"
+    results_dir = validate_app_path(
+        runtime.get("results_dir") or DEFAULT_RESULTS_DIR, field="results_dir"
+    )
+    packet_path = (
+        Path(results_dir)
+        / "_long_run_evidence"
+        / safe_ticker_component(run_id)
+        / safe_ticker_component(session_date)
+        / safe_ticker_component(symbol)
+        / "evidence_packet.json"
+    )
+    config["evidence_packet_path"] = str(packet_path)
+    if expected_sha256:
+        config["evidence_packet_sha256"] = str(expected_sha256)
+    packet = build_or_load_evidence_packet(
+        packet_path, symbol, trade_date=session_date, config=config
+    )
+    config["evidence_packet_sha256"] = packet["sha256"]
+    return config, {"path": str(packet_path), "sha256": str(packet["sha256"])}
+
+
 def run_symbol_work(
     *,
     journal,
@@ -206,8 +265,26 @@ def run_symbol_work(
         entry["analysis_run_ref"] = symbol_started
         save_round_journal(run_id, journal)
         try:
-            if graph is None:
-                graph = graph_factory(graph_config)
+            backend = str(runtime.get("analysis_backend") or "traders").strip().lower()
+            if backend == "berkshire":
+                # Berkshire: per-symbol frozen evidence + a dedicated graph.
+                # The packet identity is pinned into the journal BEFORE the
+                # graph runs; a resume re-verifies the same bytes and any
+                # tamper/missing packet fails closed in build_or_load.
+                symbol_config, evidence = _prepare_symbol_graph_config(
+                    graph_config, runtime,
+                    run_id=run_id, session_date=session_date, symbol=symbol,
+                    expected_sha256=entry.get("evidence_packet_sha256"),
+                )
+                entry["evidence_packet_path"] = evidence["path"]
+                entry["evidence_packet_sha256"] = evidence["sha256"]
+                save_round_journal(run_id, journal)
+                graph = graph_factory(symbol_config)
+            else:
+                # F07: the Traders graph is shared across the round's symbols;
+                # created lazily once, never per symbol.
+                if graph is None:
+                    graph = graph_factory(graph_config)
             final_state, _signal = graph.propagate(symbol, session_date)
             # F10 checkpoint 3: immediately after analysis returns, BEFORE
             # persisting a tradeable intent or starting broker execution.

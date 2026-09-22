@@ -11,8 +11,8 @@ Traders 把「取得市場資訊 → 多角度研究 → 辯論 → 風險決策
 | 模式 | 用途 | 執行入口 |
 | --- | --- | --- |
 | 單次分析 | 互動式研究單一標的並產出決策報告 | `python -m cli.main analyze` |
-| 30 日 Paper observation | 以每日排程執行單一策略的觀察流程，可中斷後恢復 | `python -m cli.main long-run` |
-| Traders × Berkshire A/B | 用相同凍結證據比較兩種分析團隊，可跑單一 pair 或可續跑的 30 NYSE-session Paper campaign | `scripts/run_analysis_ab.py`、`scripts/run_analysis_ab_campaign.py` |
+| Paper observation（single） | 以每日排程執行單一策略的觀察流程（預設 30 日曆天，可任意天數或 `--continuous`），可中斷後恢復，可選 `--backend traders\|berkshire` | `python -m cli.main long-run` |
+| Traders × Berkshire A/B | 用相同凍結證據比較兩種分析團隊：統一入口 unattended campaign，或單一 pair / 可續跑 campaign | `python -m cli.main long-run --mode ab`、`scripts/run_analysis_ab.py`、`scripts/run_analysis_ab_campaign.py` |
 
 所有券商寫入都被限制為 Alpaca Paper API。偵測到 live endpoint、`TRADINGBUFFETT_ALPACA_USE_PAPER=False` 或無法證明為 Paper 的設定時，程式應直接停止，而不是退回到實盤。
 
@@ -118,23 +118,26 @@ ExecutionService：持久化 outbox、券商快照、對帳與安全閘門
 
 ## 常見操作
 
-### 30 日單策略 Paper observation
+### 單策略 Paper observation（`long-run` single 模式）
 
 ```bash
-python -m cli.main long-run
+python -m cli.main long-run                        # 互動設定 + 預設 30 日曆天
+python -m cli.main long-run --duration-days 90     # 任意正整數日曆天，不再有 30 天上限
+python -m cli.main long-run --continuous           # 每跑完一個 duration chunk 就延伸同一 observation，永不自動 finalize
+python -m cli.main long-run --backend berkshire    # 單臂分析 backend：traders（預設）或 berkshire
 ```
 
 第一次啟動會收集非機密的模型、分析師、每日 ET 執行時間、名目金額等設定，並把 secrets 留在 `.env`、把 observation 設定留在 `~/.tradingbuffett/long_run/config.json`。啟動前會進行唯讀 preflight；在取得明確 Paper 授權前不會執行 broker mutation。
 
 同一指令會：
 
-1. 建立 30 個日曆天的 observation（只在美股交易日執行）。
+1. 建立指定日曆天數（預設 30）的 observation（只在美股交易日執行）；`--continuous` 時，每完成一個 chunk 就由權威 Alpaca 日曆再凍結延伸相同天數的 session，run identity 與已完成前綴不變。
 2. 為每一日保存 round journal、帳戶快照、事件與報告。
 3. 遭遇 crash 時使用同一 observation state 安全恢復，而不是建立新 run。
 4. 遇到 provider、安全或對帳無法證明正確的情況時停止，不會靜默繼續。
 5. 結束後輸出 `final_report.md` 與 `final_report.json`。
 
-此模式不是背景服務，不會安裝 OS autostart；需要保留程序運行，或在中斷後重新執行同一指令來恢復。最後報告是觀察報告，不代表自動清倉或獲利證明。
+此模式不是背景服務，不會安裝 OS autostart；需要保留程序運行，或在中斷後重新執行同一指令來恢復。最後報告是觀察報告，不代表自動清倉或獲利證明。`--backend berkshire` 時，results、cache 與 execution DB 會隔離到 `~/.tradingbuffett/single/berkshire/`，Traders 則沿用既有共享路徑。
 
 ### Traders × Berkshire A/B
 
@@ -167,7 +170,7 @@ python scripts/run_analysis_ab.py \
 
 #### 正式 30-Day A/B campaign
 
-30 日 campaign 是 Traders 與 Berkshire 的同一標的、30 個 **NYSE 有效交易日** 的雙帳戶 Paper 實驗。它重用單一 pair runner：兩臂保有隔離的 analysis、memory、execution DB、Safety state 與 Paper account，並共享每一日 frozen evidence。它不是常駐服務；在每個交易日市場開盤時由既有 cron/scheduler 呼叫一次即可。
+A/B campaign 是 Traders 與 Berkshire 的同一標的、`--days` 指定數量（預設 30，可任意正整數）的 **NYSE 有效交易日** 雙帳戶 Paper 實驗。它重用單一 pair runner：兩臂保有隔離的 analysis、memory、execution DB、Safety state 與 Paper account，並共享每一日 frozen evidence。它不是常駐服務；在每個交易日市場開盤時由既有 cron/scheduler 呼叫一次即可。
 
 ```bash
 # 首次建立 campaign；在當日市場開盤時會執行第一個 due pair。
@@ -182,9 +185,21 @@ python -m scripts.run_analysis_ab_campaign \
 # 之後每天用同一個 campaign root 恢復；不會重跑 completed session。
 python -m scripts.run_analysis_ab_campaign \
   --resume ~/.tradingbuffett/results/ab-paper-aapl
+
+# 統一入口：啟動 unattended auto launcher 子行程，逐日自動 resume 同一 campaign。
+python -m cli.main long-run --mode ab \
+  --symbol AAPL --start-date 2026-09-23 \
+  --execute --paper-notional-usd 500
+
+# continuous：永不 finalize；每跑完 --days 個 session 就由權威日曆凍結延伸下一個 chunk，
+# campaign_id、baseline equity、fingerprint 與已完成前綴全部保留。
+python -m cli.main long-run --mode ab \
+  --symbol AAPL --start-date 2026-09-23 --days 30 --continuous
 ```
 
 campaign 會以 Alpaca calendar 固定 30 個 NYSE sessions，未完成前一日 pair 時停止而不會跳到下一日；市場關閉時保留 state 供下次呼叫。它會固定 A/B config fingerprint 與解析後的非秘密 LLM/embedding provider、model、endpoint identity；變更即 fail closed。`campaign_state.json`、`AB_CAMPAIGN.json` 與 pair state 都不會寫入 API key、token、password 或 authorization header。
+
+**全域 runner lock**：single long-run、legacy A/B pair runner、A/B campaign coordinator 與 auto launcher 都會先取得 application-wide flock（`~/.tradingbuffett/runner.global.lock`，永不刪除檔案）；同一時間全機只允許一個 Paper runner 進程，競爭者立即以 exit code 2 fail closed。鎖順序固定為 global runner lock（最外層）→ 各模式既有鎖（Phase-D runner lock / campaign lock / pair `.ab.lock`）。
 
 首次使用 `--config-json` 時，resume 也必須提供相同檔案；否則 coordinator 會將它視為 config drift 而拒絕繼續。
 

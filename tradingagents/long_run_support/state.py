@@ -138,6 +138,48 @@ class RunnerLockBusy(RuntimeError):
     pass
 
 
+class GlobalRunnerLockBusy(RuntimeError):
+    """Raised when another application-level runner already holds the global lock."""
+
+
+def global_runner_lock_path() -> Path:
+    return app_home() / "runner.global.lock"
+
+
+def global_runner_lock(*, utc_now_iso: Callable[[], str]):
+    """Application-wide runner lock: exactly one long-run / A/B Paper runner
+    per machine/user, independent of mode.
+
+    Acquired (outermost) by the unified single long-run entry and by every
+    A/B Paper runner entry; the existing mode-specific locks (Phase-D
+    account lock, A/B campaign/experiment locks) stay innermost. The lock
+    file is never deleted; the flock alone is the authority.
+    """
+    path = global_runner_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.close()
+            raise GlobalRunnerLockBusy(
+                "another long-run or A/B Paper runner is already active "
+                f"on this machine ({path})"
+            ) from exc
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps({"pid": os.getpid(), "at": utc_now_iso()}))
+        handle.flush()
+        yield path
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        handle.close()
+
+
 def runner_lock(*, lock_path: Callable[[], Path], utc_now_iso: Callable[[], str], RunnerLockBusy: type[RuntimeError]):
     """Single-runner guard: only one Phase-D process per machine/user."""
     path = lock_path()
@@ -177,6 +219,9 @@ def new_observation_state(long_cfg: Dict[str, Any], *, expected_sessions: List[s
         "started_at": started.isoformat(),
         "ends_at": ends.isoformat(),
         "timezone": "US/Eastern",
+        # Continuous mode: the observation never auto-finalizes; the window
+        # is extended chunk-by-chunk under the same run_id.
+        "continuous": bool(long_cfg.get("continuous", False)),
         "baseline_commit": git_baseline_commit(),
         "config": sanitize_for_log(long_cfg),
         "expected_sessions": list(expected_sessions or []),

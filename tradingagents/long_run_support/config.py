@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
+from tradingagents.analysis_backends.resolver import VALID_ANALYSIS_BACKENDS
+
+
 def default_long_run_config(
     *,
     LONG_RUN_SCHEMA_VERSION: int,
@@ -25,6 +28,12 @@ def default_long_run_config(
     return {
         "schema_version": LONG_RUN_SCHEMA_VERSION,
         "duration_calendar_days": DEFAULT_DURATION_CALENDAR_DAYS,
+        # Continuous mode: never auto-finalize; duration_calendar_days becomes
+        # the scheduling-window chunk size, not a total cap.
+        "continuous": False,
+        # Analysis topology for the single runner: native Traders graph or the
+        # Berkshire Hathaway coordinator (frozen evidence, isolated artifacts).
+        "analysis_backend": "traders",
         "run_time_et": DEFAULT_RUN_TIME_ET,
         "base_trade_notional_usd": None,
         "analysts": list(VALID_ANALYSTS),
@@ -172,6 +181,13 @@ def validate_long_run_config(
     duration = cfg.get("duration_calendar_days")
     if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
         errors.append("duration_calendar_days must be a positive integer")
+    continuous = cfg.get("continuous", False)
+    if not isinstance(continuous, bool):
+        errors.append("continuous must be a boolean")
+    backend = cfg.get("analysis_backend", "traders")
+    if not isinstance(backend, str) or backend not in VALID_ANALYSIS_BACKENDS:
+        allowed = ", ".join(sorted(VALID_ANALYSIS_BACKENDS))
+        errors.append(f"analysis_backend must be one of: {allowed}")
     try:
         target = parse_run_time_et(str(cfg.get("run_time_et") or ""))
     except ValueError as exc:
@@ -295,6 +311,56 @@ def build_runtime_config(
     # the broker-side deterministic guards in execution.service still apply).
     runtime["allow_shorts"] = bool(long_cfg.get("allow_shorts", False))
     runtime["trading_mode"] = "trading" if runtime["allow_shorts"] else "investment"
+    # Analysis topology: the graph resolver reads analysis_backend; the
+    # profile key records that both backends run the Traders five-analyst
+    # topology in this runner.
+    backend = str(long_cfg.get("analysis_backend") or "traders").strip().lower()
+    if backend not in VALID_ANALYSIS_BACKENDS:
+        allowed = ", ".join(sorted(VALID_ANALYSIS_BACKENDS))
+        raise ValueError(f"analysis_backend must be one of: {allowed}")
+    runtime["analysis_backend"] = backend
+    runtime["analysis_profile"] = "traders"
+    return apply_single_backend_runtime_paths(runtime, backend)
+
+
+def single_backend_root(backend: str) -> Path:
+    """Isolated artifact root for a non-Traders single long-run backend."""
+    from tradingagents.app_identity import app_home, validate_app_path
+
+    return validate_app_path(app_home() / "single" / str(backend), field="results_dir")
+
+
+def apply_single_backend_runtime_paths(
+    runtime: Dict[str, Any], backend: str
+) -> Dict[str, Any]:
+    """Give a non-Traders single backend its own execution DB, results and
+    cache paths. Traders keeps the existing shared defaults unchanged.
+
+    Only runtime path keys this application actually consumes are remapped;
+    the Phase-D lifecycle state directory (active.json, journals, manifests)
+    is deliberately shared so one active observation stays one active
+    observation regardless of backend.
+    """
+    if backend != "berkshire":
+        return runtime
+    from tradingagents.app_identity import validate_app_path
+
+    root = single_backend_root(backend)
+    runtime = dict(runtime)
+    runtime["results_dir"] = str(
+        validate_app_path(root / "results", field="results_dir")
+    )
+    runtime["data_cache_dir"] = str(
+        validate_app_path(root / "data_cache", field="data_cache_dir")
+    )
+    runtime["execution_db_path"] = str(
+        validate_app_path(root / "execution" / "execution.sqlite3", field="execution_db")
+    )
+    runtime["recovery_ledger_db_path"] = str(
+        validate_app_path(
+            root / "execution" / "recovery_ledger.sqlite3", field="execution_db"
+        )
+    )
     return runtime
 
 

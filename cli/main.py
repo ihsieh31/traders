@@ -1631,8 +1631,103 @@ def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
 
 
 @app.command("long-run")
-def long_run():
-    """Configure, start, or resume the 30-day Paper observation (paper-only)."""
+def long_run(
+    mode: str = typer.Option(
+        "single", "--mode",
+        help="Runner mode: 'single' (default) or 'ab' (Traders x Berkshire A/B campaign)",
+    ),
+    backend: str = typer.Option(
+        "", "--backend",
+        help="single mode analysis backend: 'traders' or 'berkshire'",
+    ),
+    continuous: bool = typer.Option(
+        False, "--continuous",
+        help="Extend the same run/campaign in frozen duration chunks instead of finalizing",
+    ),
+    duration_days: int | None = typer.Option(
+        None, "--duration-days",
+        help="Observation window in calendar days (any positive integer; default 30)",
+    ),
+    symbol: str | None = typer.Option(None, "--symbol", help="A/B mode: campaign symbol"),
+    start_date: str | None = typer.Option(None, "--start-date", help="A/B mode: campaign start date YYYY-MM-DD"),
+    resume: str | None = typer.Option(None, "--resume", help="A/B mode: resume an existing campaign root"),
+    results_root: str | None = typer.Option(None, "--results-root", help="A/B mode: campaign results root"),
+    execute: bool = typer.Option(False, "--execute", help="A/B mode: execute paper orders"),
+    paper_notional_usd: float | None = typer.Option(None, "--paper-notional-usd", help="A/B mode: paper order notional in USD"),
+) -> None:
+    """Configure, start, or resume a long Paper observation or an A/B campaign."""
+    import subprocess as _subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    from tradingagents import long_run as lr
+
+    mode_value = mode.strip().lower()
+    if mode_value not in {"single", "ab"}:
+        console.print(f"[red]ERROR[/red]: --mode must be 'single' or 'ab' (got {mode!r})")
+        raise typer.Exit(code=2)
+    if duration_days is not None and duration_days < 1:
+        console.print("[red]ERROR[/red]: --duration-days must be a positive integer")
+        raise typer.Exit(code=2)
+    if mode_value == "ab":
+        if backend:
+            console.print("[red]ERROR[/red]: --backend is a single-mode option; "
+                          "A/B always runs Traders x Berkshire")
+            raise typer.Exit(code=2)
+        # The campaign launcher acquires the application-wide runner lock
+        # itself (outermost), covering the whole campaign process.
+        repo_root = _Path(__file__).resolve().parent.parent
+        command = [_sys.executable, "-m", "scripts.run_analysis_ab_campaign_auto"]
+        if symbol:
+            command += ["--symbol", symbol]
+        if start_date:
+            command += ["--start-date", start_date]
+        if duration_days is not None:
+            command += ["--days", str(duration_days)]
+        if results_root:
+            command += ["--results-root", results_root]
+        if resume:
+            command += ["--resume", resume]
+        if execute:
+            command += ["--execute"]
+        if paper_notional_usd is not None:
+            command += ["--paper-notional-usd", str(paper_notional_usd)]
+        if continuous:
+            command += ["--continuous"]
+        console.print(f"[dim]A/B campaign launcher: {' '.join(command)}[/dim]")
+        completed = _subprocess.run(command, cwd=repo_root)
+        if completed.returncode != 0:
+            raise typer.Exit(code=completed.returncode)
+        return
+    if resume is not None or results_root is not None or symbol is not None             or start_date is not None or execute:
+        console.print("[red]ERROR[/red]: --resume/--results-root/--symbol/"
+                      "--start-date/--execute are A/B-mode options")
+        raise typer.Exit(code=2)
+    backend_value = backend.strip().lower()
+    if backend_value and backend_value not in {"traders", "berkshire"}:
+        console.print(f"[red]ERROR[/red]: --backend must be 'traders' or 'berkshire' (got {backend!r})")
+        raise typer.Exit(code=2)
+
+    # CLI flags win over prompts and saved config for this run; None leaves
+    # the saved/prompted value untouched.
+    overrides = {
+        "analysis_backend": backend_value or None,
+        "continuous": True if continuous else None,
+        "duration_calendar_days": duration_days,
+    }
+    try:
+        # Application-wide runner lock, outermost: exactly one single
+        # long-run or A/B Paper runner process at a time. The Phase-D
+        # runner_lock stays nested inside it.
+        with lr.global_runner_lock():
+            _long_run_single_locked(overrides)
+    except lr.GlobalRunnerLockBusy as exc:
+        console.print(f"[bold red]ERROR: {exc}[/bold red]")
+        raise typer.Exit(code=2)
+
+
+def _long_run_single_locked(overrides: dict) -> None:
+    """Single mode: the Phase-D observation flow, already inside the global lock."""
     import sys as _sys
     from datetime import date as _date
     from datetime import datetime as _datetime
@@ -1643,6 +1738,12 @@ def long_run():
     if _sys.version_info < (3, 10):
         console.print("[bold red]Phase-D requires Python 3.10+.[/bold red]")
         raise typer.Exit(code=2)
+
+    def _apply_overrides(cfg: dict) -> None:
+        """CLI flags win over saved config; None means 'leave as saved'."""
+        for key, value in overrides.items():
+            if value is not None:
+                cfg[key] = value
 
     try:
         active = lr.load_active_state()
@@ -1676,6 +1777,7 @@ def long_run():
                 lr.save_active_state(active)
                 long_cfg = dict(lr.default_long_run_config())
                 long_cfg.update(active.get("config") or {})
+                _apply_overrides(long_cfg)
                 runtime = lr.build_runtime_config(long_cfg)
                 console.print(f"[green]Resuming observation {active['run_id']} "
                               f"(restart #{active['restart_count']}).[/green]")
@@ -1694,6 +1796,7 @@ def long_run():
 
     cfg = lr.load_long_run_config()
     cfg, secrets = collect_long_run_config(cfg)
+    _apply_overrides(cfg)
     if secrets:
         _write_env_updates(_long_run_env_path(), secrets)
         console.print("[green]Saved credentials to .env (never printed back).[/green]")
@@ -1728,8 +1831,11 @@ def long_run():
         f"allow_shorts={shorts_enabled}, "
         f"trading_mode={'trading' if shorts_enabled else 'investment'}"
     )
+    duration_label = f"{cfg['duration_calendar_days']}-calendar-day"
+    if cfg.get("continuous"):
+        duration_label += " CONTINUOUS (extends in frozen chunks; never auto-finalizes)"
     if not typer.confirm(
-        "Authorize this 30-calendar-day PAPER test? The process must stay "
+        f"Authorize this {duration_label} PAPER test? The process must stay "
         "running (rerun this command to resume after a crash).",
         default=False,
     ):

@@ -30,9 +30,18 @@ def _default_graph_factory(config: Dict[str, Any]) -> Any:
 
 
 def _default_execution_service() -> Any:
+    """Default: the application ExecutionService (Phase A).
+
+    The installed runtime config's execution_db_path is honored so an
+    isolated analysis backend (Berkshire) never reads or writes the Traders
+    execution DB. With no runtime override the app-level default/env
+    resolution in resolve_execution_db_path() applies unchanged.
+    """
+    from tradingagents.dataflows.config import get_config
     from tradingagents.execution import ExecutionService
 
-    return ExecutionService()
+    config = get_config() or {}
+    return ExecutionService(db_path=config.get("execution_db_path") or None)
 
 
 def _default_broker_client() -> Any:

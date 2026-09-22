@@ -12,6 +12,7 @@ campaign state machine exists here.
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -115,6 +116,8 @@ def run_auto(
     resume: str | Path | None = None,
     execute_paper: bool | None = None,
     paper_notional_usd: float | None = None,
+    continuous: bool = False,
+
     base_config: dict[str, Any] | None = None,
     calendar_client: Any = None,
     now_fn: Callable[[], datetime] = _now,
@@ -151,6 +154,7 @@ def run_auto(
             results_root=None if resume is not None else root,
             resume=resume, execute_paper=execute_paper,
             paper_notional_usd=paper_notional_usd, base_config=base_config,
+            continuous=continuous,
             calendar_client=calendar_client,
         )
         state = result.get("state") or _read_state(state_path) or {}
@@ -247,6 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-json")
     parser.add_argument("--execute", action="store_true", default=None)
     parser.add_argument("--paper-notional-usd", type=float)
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Never finalize: extend the same campaign by frozen chunks of --days sessions",
+    )
     args = parser.parse_args(argv)
     if args.resume:
         if args.symbol or args.start_date:
@@ -256,12 +265,23 @@ def main(argv: list[str] | None = None) -> int:
             "creating a campaign requires both --symbol and --start-date"
             " (or use --resume to continue an existing one)"
         )
-    result = run_auto(
-        symbol=args.symbol, start_date=args.start_date, days=args.days,
-        results_root=args.results_root, resume=args.resume,
-        execute_paper=args.execute, paper_notional_usd=args.paper_notional_usd,
-        base_config=_load_config(args.config_json),
-    )
+    from tradingagents.long_run import GlobalRunnerLockBusy, global_runner_lock
+
+    try:
+        # Outermost lock: exactly one Paper runner process application-wide;
+        # held for the whole unattended campaign so no single long-run or
+        # second A/B runner can start concurrently.
+        with global_runner_lock():
+            result = run_auto(
+                symbol=args.symbol, start_date=args.start_date, days=args.days,
+                results_root=args.results_root, resume=args.resume,
+                execute_paper=args.execute, paper_notional_usd=args.paper_notional_usd,
+                continuous=args.continuous,
+                base_config=_load_config(args.config_json),
+            )
+    except GlobalRunnerLockBusy as exc:
+        print(f"[AB campaign auto] ERROR: {exc}", file=sys.stderr)
+        return 2
     print(f"[AB campaign auto] {result['outcome']}")
     return 0 if result["outcome"] == "completed" else 1
 
