@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 from tradingagents.default_config import DEFAULT_CONFIG
 
@@ -510,17 +511,25 @@ class ReportIntegrityGateTests(unittest.TestCase):
             self.assertEqual(scoped["pair_count"], len(sessions))
 
     def test_finalize_campaign_rejects_pair_count_shortfall(self):
-        from scripts.run_analysis_ab_campaign import _campaign_state_path, finalize_campaign
+        from scripts.run_analysis_ab_campaign import finalize_campaign
 
         sessions = ["2026-06-22", "2026-06-23"]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_pairs(root, ["2026-06-22"])  # second session missing
             state = _campaign_state(sessions)
+            # Integrity gate fires first: a missing completed pair state.
             with self.assertRaisesRegex(RuntimeError, "completed pair state"):
                 finalize_campaign(root, state, summarize_fn=_summarize_stub(2))
             # Now the integrity passes but the summarizer observes too few.
             _write_pairs(root, sessions)
+            with self.assertRaisesRegex(RuntimeError, "exactly 2 pairs"):
+                finalize_campaign(root, state, summarize_fn=_summarize_stub(1))
+            # Exact match finalizes and writes the durable summary.
+            summary = finalize_campaign(root, state, summarize_fn=_summarize_stub(2))
+            self.assertEqual(summary["campaign"]["campaign_id"], "campaign-test")
+            self.assertTrue((root / "campaign_summary.json").exists())
+            self.assertTrue((root / "campaign_summary.md").exists())
 
 
 # ---------------------------------------------------------------------------
@@ -567,10 +576,335 @@ class AutoLauncherTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             main(["--resume", "/tmp/whatever", "--symbol", "AAPL"])
 
-            with self.assertRaisesRegex(RuntimeError, "exactly 2 pairs"):
-                finalize_campaign(root, state, summarize_fn=_summarize_stub(1))
-            # Exact match finalizes and writes the durable summary.
-            summary = finalize_campaign(root, state, summarize_fn=_summarize_stub(2))
-            self.assertEqual(summary["campaign"]["campaign_id"], "campaign-test")
-            self.assertTrue((root / "campaign_summary.json").exists())
-            self.assertTrue((root / "campaign_summary.md").exists())
+
+# ---------------------------------------------------------------------------
+# P1-1: auto launcher end-to-end state machine (fake runner, mocked waits)
+# ---------------------------------------------------------------------------
+
+class _FakeClock:
+    """Sleep advances the clock so bounded-polling waits converge instantly."""
+
+    def __init__(self, start_et):
+        from datetime import timezone
+
+        self._t = start_et.astimezone(timezone.utc)
+
+    def now(self):
+        return self._t
+
+    def sleep(self, seconds):
+        from datetime import timedelta
+
+        self._t = self._t + timedelta(seconds=seconds)
+
+    @property
+    def et(self):
+        return self._t.astimezone(ZoneInfo("America/New_York"))
+
+
+def _auto_state(sessions, done=0, execute_paper=False):
+    return {
+        "status": "RUNNING",
+        "symbol": "AAPL",
+        "sessions": list(sessions),
+        "completed_dates": list(sessions[:done]),
+        "execute_paper": execute_paper,
+        "current_date": None,
+    }
+
+
+class _AutoRunner:
+    """Fake campaign runner producing a realistic outcome sequence."""
+
+    def __init__(self, sessions, script):
+        # script maps a 1-based call index to a special outcome; the default
+        # advances completed_dates and reports session_completed / completed
+        # exactly like the real campaign does.
+        self.sessions = list(sessions)
+        self.script = dict(script)
+        self.calls: list[dict] = []
+        self.done = 0
+
+    def __call__(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        special = self.script.get(len(self.calls))
+        if special is not None:
+            return special(self)
+        self.done += 1
+        if self.done < len(self.sessions):
+            return {"outcome": "session_completed", "state": _auto_state(self.sessions, self.done)}
+        return {"outcome": "completed", "state": _auto_state(self.sessions, self.done)}
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+
+def _patched_auto_targets():
+    """Patch only the target-time lookup; waits use an advanced fake clock."""
+    return patch(
+        "scripts.run_analysis_ab_campaign_auto.effective_target_for_session",
+        MagicMock(return_value={"effective_target": "11:00"}),
+    )
+
+
+class AutoStateMechineTests(unittest.TestCase):
+    def _run(self, runner, clock, **kwargs):
+        from scripts.run_analysis_ab_campaign_auto import run_auto
+
+        with _patched_auto_targets():
+            return run_auto(
+                results_root=kwargs.pop("results_root", "/tmp/ab-auto"),
+                campaign_runner=runner,
+                now_fn=clock.now,
+                sleep_fn=clock.sleep,
+                **kwargs,
+            )
+
+    def test_a_session_completed_continues_to_next_session(self):
+        # Test A: session_completed, session_completed, completed -> 3 calls;
+        # the launcher must not exit after the first day.
+        runner = _AutoRunner(
+            ["2026-06-22", "2026-06-23", "2026-06-24"],
+            {3: lambda r: {"outcome": "completed", "state": _auto_state(r.sessions, 3)}},
+        )
+        clock = _FakeClock(datetime(2026, 6, 25, 12, 0, tzinfo=ZoneInfo("America/New_York")))
+        res = self._run(runner, clock, symbol="AAPL", start_date="2026-06-22")
+        self.assertEqual(runner.call_count, 3)
+        self.assertEqual(res["outcome"], "completed")
+
+    def test_b_thirty_sessions_all_run_then_stop(self):
+        # Test B: 29 x session_completed + 1 x completed -> exactly 30 calls;
+        # no 31st call after the campaign is complete.
+        sessions = [f"2026-06-{day:02d}" for day in range(1, 31)]
+        runner = _AutoRunner(sessions, {})
+        clock = _FakeClock(datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("America/New_York")))
+        res = self._run(runner, clock, symbol="AAPL", start_date=sessions[0])
+        self.assertEqual(runner.call_count, 30)
+        self.assertEqual(res["outcome"], "completed")
+
+    def test_c_not_due_waits_then_resumes_same_root(self):
+        # Test C: not_due -> bounded wait until the session target -> resume
+        # the same campaign root -> session_completed -> completed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = _AutoRunner(
+                ["2026-06-23", "2026-06-24"],
+                {
+                    1: lambda r: {"outcome": "not_due", "state": _auto_state(r.sessions, 0),
+                                  "next_date": "2026-06-23"},
+                },
+            )
+            clock = _FakeClock(datetime(2026, 6, 23, 8, 0, tzinfo=ZoneInfo("America/New_York")))
+            res = self._run(runner, clock, results_root=str(root))
+            self.assertEqual(res["outcome"], "completed")
+            self.assertEqual(runner.call_count, 3)
+            self.assertGreaterEqual(clock.et.hour, 11)  # the wait advanced time
+            for call in runner.calls[1:]:
+                self.assertEqual(call.get("resume"), Path(root))
+                self.assertIsNone(call.get("symbol"))
+                self.assertIsNone(call.get("start_date"))
+
+    def test_d_market_closed_before_open_uses_schedule_wait_not_retry_budget(self):
+        # Test D: market_closed twice before the open must not consume the
+        # 3-attempt transient retry budget and must not exit early.
+        day = "2026-06-23"
+
+        def market_closed(_r):
+            return {"outcome": "market_closed", "state": _auto_state([day], 0),
+                    "next_date": day}
+
+        runner = _AutoRunner(
+            [day],
+            {
+                1: market_closed,
+                2: market_closed,
+                3: lambda r: {"outcome": "session_completed", "state": _auto_state(r.sessions, 1)},
+            },
+        )
+        clock = _FakeClock(datetime(2026, 6, 23, 8, 0, tzinfo=ZoneInfo("America/New_York")))
+        res = self._run(runner, clock, symbol="AAPL", start_date=day)
+        self.assertEqual(runner.call_count, 4)
+        self.assertEqual(res["outcome"], "completed")
+        self.assertGreaterEqual(clock.et.hour, 11)  # waited until the target
+
+    def test_e_pair_unfinished_retries_bounded(self):
+        # Test E: pair_unfinished must stop after MAX_SAME_DAY_RETRIES.
+        from scripts.run_analysis_ab_campaign_auto import MAX_SAME_DAY_RETRIES
+
+        day = "2026-06-23"
+        state = _auto_state([day], 0)
+        state["current_date"] = day
+        calls: list[dict] = []
+
+        def unfinished(**kwargs):
+            calls.append(kwargs)
+            return {"outcome": "pair_unfinished", "state": dict(state)}
+
+        clock = _FakeClock(datetime(2026, 6, 23, 10, 30, tzinfo=ZoneInfo("America/New_York")))
+        res = self._run(unfinished, clock, symbol="AAPL", start_date=day)
+        self.assertEqual(len(calls), MAX_SAME_DAY_RETRIES + 1)
+        self.assertEqual(res["outcome"], "pair_unfinished")
+
+    def test_f_early_close_effective_target_reuses_existing_helper(self):
+        # Test F: the same authority adjusts the target for early closes.
+        from datetime import date
+
+        from tradingagents.long_run import effective_target_for_session
+
+        early = date(2026, 12, 24)  # early close 13:00 ET
+        info = effective_target_for_session(
+            early, "14:00",
+            calendar_rows=[{"date": early, "open": "09:30", "close": "13:00"}],
+        )
+        self.assertEqual(info["effective_target"], "12:30")
+        self.assertEqual(info["schedule_adjustment"], "EARLY_CLOSE")
+        normal = date(2026, 6, 23)
+        info2 = effective_target_for_session(
+            normal, "14:00",
+            calendar_rows=[{"date": normal, "open": "09:30", "close": "16:00"}],
+        )
+        self.assertEqual(info2["effective_target"], "14:00")
+        self.assertEqual(info2["schedule_adjustment"], "NONE")
+
+    def test_g_paper_campaign_uses_account_a_read_only_calendar_client(self):
+        # Test G: with calendar_client=None the launcher builds the campaign
+        # Account A read-only calendar client, never the default client.
+        import scripts.run_analysis_ab_campaign_auto as auto_mod
+
+        runner = _AutoRunner(
+            ["2026-06-22", "2026-06-23"],
+            {
+                1: lambda r: {"outcome": "session_completed",
+                              "state": _auto_state(r.sessions, 1, execute_paper=True)},
+                2: lambda r: {"outcome": "completed",
+                              "state": _auto_state(r.sessions, 2, execute_paper=True)},
+            },
+        )
+        clock = _FakeClock(datetime(2026, 7, 1, 12, 0, tzinfo=ZoneInfo("America/New_York")))
+        sentinel = object()
+        with patch.object(auto_mod, "_campaign_calendar_client",
+                          return_value=sentinel) as calendar_factory:
+            self._run(runner, clock, symbol="AAPL", start_date="2026-06-22")
+        calendar_factory.assert_called_once_with(execute_paper=True, supplied=None)
+
+
+# ---------------------------------------------------------------------------
+# P1-2: Day-30 settlement refresh actually reads broker/recovery state
+# ---------------------------------------------------------------------------
+
+def _equity_snapshot(captured_at):
+    return {
+        "traders": {"account": "A", "account_ref": "ref-A",
+                    "equity": "100000", "captured_at": captured_at},
+        "berkshire": {"account": "B", "account_ref": "ref-B",
+                      "equity": "100000", "captured_at": captured_at},
+    }
+
+
+def _paper_state(sessions):
+    state = _campaign_state(sessions)
+    state["execute_paper"] = True
+    state["starting_equity"] = _equity_snapshot("2026-06-22T15:00:00Z")
+    return state
+
+
+class SettlementRefreshTests(unittest.TestCase):
+    def test_h_local_accepted_recovers_to_broker_filled_then_completes(self):
+        from scripts.run_analysis_ab_campaign import (
+            BACKEND_ORDER,
+            _campaign_state_path,
+            _complete_campaign,
+        )
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backend = BACKEND_ORDER[0]
+            store, order = _seed_order(
+                root / "_profiles" / backend / "execution.sqlite3",
+                "dec-refresh", "ACCEPTED",
+            )
+            _write_pairs(root, sessions)
+            state = _paper_state(sessions)
+            refresh_calls: list = []
+
+            def refresh_fn(r, s):
+                refresh_calls.append((r, s))
+                ok, _ = store.transition_order(order["order_id"], "FILLED", filled_qty=5)
+                assert ok
+
+            res = _complete_campaign(
+                root, _campaign_state_path(root), state,
+                broker_snapshotter=lambda: _equity_snapshot("2026-06-22T20:00:00Z"),
+                summarize_fn=_summarize_stub(len(sessions)),
+                settlement_refresh_fn=refresh_fn,
+            )
+            self.assertEqual(res["outcome"], "completed")
+            self.assertEqual(len(refresh_calls), 1)
+            self.assertIsNotNone(res["state"]["ending_equity"])
+            self.assertEqual(res["state"]["status"], "COMPLETED")
+
+    def test_i_still_unsettled_after_refresh_stays_awaiting_without_equity(self):
+        from scripts.run_analysis_ab_campaign import (
+            BACKEND_ORDER,
+            _campaign_state_path,
+            _complete_campaign,
+        )
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backend = BACKEND_ORDER[0]
+            _seed_order(
+                root / "_profiles" / backend / "execution.sqlite3",
+                "dec-stuck", "ACCEPTED",
+            )
+            _write_pairs(root, sessions)
+            state = _paper_state(sessions)
+            refresh_calls: list = []
+            res = _complete_campaign(
+                root, _campaign_state_path(root), state,
+                broker_snapshotter=unittest.mock.Mock(),
+                summarize_fn=_summarize_stub(len(sessions)),
+                settlement_refresh_fn=lambda r, s: refresh_calls.append((r, s)),
+            )
+            self.assertEqual(res["outcome"], "awaiting_final_settlement")
+            self.assertEqual(len(refresh_calls), 1)
+            self.assertIsNone(res["state"].get("ending_equity"))
+            self.assertEqual(res["state"]["status"], "RUNNING")
+            self.assertFalse((root / "campaign_summary.json").exists())
+
+    def test_j_refresh_maps_traders_to_account_a_and_berkshire_to_b(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for backend in ("traders", "berkshire"):
+                _seed_order(
+                    root / "_profiles" / backend / "execution.sqlite3",
+                    f"dec-{backend}", "ACCEPTED",
+                )
+            with patch(
+                "tradingagents.execution.service.ExecutionService"
+            ) as service_cls, patch(
+                "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client"
+            ) as client_factory:
+                cam._refresh_broker_settlement(root, _campaign_state(sessions))
+            self.assertEqual(service_cls.call_count, 2)
+            db_paths = [c.kwargs["db_path"] for c in service_cls.call_args_list]
+            self.assertEqual(
+                db_paths,
+                [root / "_profiles" / "traders" / "execution.sqlite3",
+                 root / "_profiles" / "berkshire" / "execution.sqlite3"],
+            )
+            for call in service_cls.call_args_list:
+                call.kwargs["broker_factory"]()
+            self.assertEqual(
+                [c.kwargs.get("account") for c in client_factory.call_args_list],
+                ["A", "B"],
+            )
+            self.assertTrue(
+                all(c.kwargs.get("read_only") is False for c in client_factory.call_args_list)
+            )

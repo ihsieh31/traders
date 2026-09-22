@@ -460,6 +460,40 @@ def _unsettled_primary_orders(root: Path, symbol: str) -> list[dict[str, Any]]:
     return found
 
 
+def _refresh_broker_settlement(root: Path, state: Mapping[str, Any]) -> dict[str, Any]:
+    """Refresh durable order state from the broker before the settlement check.
+
+    Recovery/lookup/adopt only: it reuses the existing
+    ``ExecutionService.startup_recover`` entry point per backend, with that
+    backend's dedicated Paper account credentials and its own execution DB
+    (traders -> Account A, berkshire -> Account B; never a shared service, a
+    default account, or crossed DBs).  It never re-analyzes, never regenerates
+    a signal, never creates a new decision_id, and never opens new exposure
+    beyond the recovery rules that already own durable PENDING orders.
+    Idempotent: a crash mid-refresh is handled by simply running it again on
+    the next resume; lookup/adopt cannot duplicate POSTs.
+    """
+
+    from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+    from tradingagents.execution.service import ExecutionService
+
+    results: dict[str, Any] = {}
+    for backend in BACKEND_ORDER:
+        db_path = root / "_profiles" / backend / "execution.sqlite3"
+        if not db_path.exists():
+            continue
+        service = ExecutionService(
+            db_path=db_path,
+            broker_factory=(
+                lambda account=BACKEND_ACCOUNT[backend]: get_alpaca_trading_client(
+                    account=account, read_only=False
+                )
+            ),
+        )
+        results[backend] = service.startup_recover()
+    return results
+
+
 def _expected_pair_dirs(root: Path, state: Mapping[str, Any]) -> list[Path]:
     """The frozen campaign sessions+symbol fully determine its pair paths."""
 
@@ -557,14 +591,18 @@ def _complete_campaign(
     *,
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]],
     summarize_fn: Callable[[str | Path], dict[str, Any]],
+    settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """Durably pin ending equity before rendering derived report files."""
 
     if state.get("status") != "COMPLETED":
-        # Final settlement gate: never pin ending equity while a
-        # campaign-owned primary order has not reached a broker terminal
-        # state.  The next --resume re-checks settlement only; it never
-        # reruns analysis or creates new orders.
+        if state.get("execute_paper") and settlement_refresh_fn is not None:
+            # The local DB may lag the broker (e.g. local ACCEPTED while the
+            # broker already FILLED).  Run the existing recovery/reconciliation
+            # for both arms first so the settlement check below reads fresh
+            # durable state; only a still-unsettled check blocks completion.
+            if _unsettled_primary_orders(root, str(state["symbol"])):
+                settlement_refresh_fn(root, state)
         unsettled = _unsettled_primary_orders(root, str(state["symbol"]))
         if unsettled:
             state["status"] = "RUNNING"
@@ -615,6 +653,7 @@ def _run_campaign_locked(
     pair_runner: Callable[..., dict[str, Any]] = run_single_pair,
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
+    settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """Create/resume a campaign and run at most its earliest due pair."""
 
@@ -705,6 +744,7 @@ def _run_campaign_locked(
         return _complete_campaign(
             root, state_path, state,
             broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
+            settlement_refresh_fn=settlement_refresh_fn,
         )
 
     next_date = state["sessions"][len(state["completed_dates"])]
@@ -770,6 +810,7 @@ def _run_campaign_locked(
     return _complete_campaign(
         root, state_path, state,
         broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
+        settlement_refresh_fn=settlement_refresh_fn,
     )
 
 
@@ -790,6 +831,7 @@ def run_campaign(
     pair_runner: Callable[..., dict[str, Any]] = run_single_pair,
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
+    settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """Serialize the entire campaign lifecycle before touching its state."""
 
@@ -815,6 +857,7 @@ def run_campaign(
             pair_runner=pair_runner,
             broker_snapshotter=broker_snapshotter,
             summarize_fn=summarize_fn,
+            settlement_refresh_fn=settlement_refresh_fn,
         )
 
 
