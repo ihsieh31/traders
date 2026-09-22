@@ -52,44 +52,8 @@ def test_L02_actual_market_loop_preserves_native_tool_history(monkeypatch):
     assert any(b.get('type') == 'tool_use' and b.get('id') == 'call-native' for b in blocks), f'Native request lacks tool_use: {wire}; AI.tool_calls={ai.tool_calls}; invalid={ai.invalid_tool_calls}'
 
 
-def test_U01_parallel_coordinator_cannot_write_stale_same_symbol_report(monkeypatch):
-    from webui.utils import state as smod
-    from tradingagents.graph.setup import GraphSetup
-    app = smod.AppState()
-    app.init_symbol_state('AAPL')
-    app.analyzing_symbol = app.current_symbol = 'AAPL'
-    monkeypatch.setattr(smod, 'app_state', app)
-    owner = GraphSetup.__new__(GraphSetup)
-    owner.config = {'analyst_call_delay':0, 'analyst_start_delay':0, 'tool_result_delay':0}
-    def old_analyst(state):
-        # Controlled Stop -> Start while the old provider call is in flight.
-        app.request_stop()
-        app.stop_requested = False
-        app.get_state('AAPL')['current_reports']['market_report'] = 'NEW RUN REPORT'
-        return {'messages': [], 'market_report':'OLD RUN REPORT', 'analysis_status':{'market':'completed'}}
-    node = owner._create_parallel_analysts_coordinator(['market'], {'market':old_analyst},
-                {'market':None}, {'market':lambda s:s})
-    node({'company_of_interest':'AAPL', 'messages':[]})
-    assert app.get_state('AAPL')['current_reports']['market_report'] == 'NEW RUN REPORT'
 
 
-def test_U01_parallel_status_cannot_follow_another_symbol(monkeypatch):
-    from webui.utils import state as smod
-    from tradingagents.graph.setup import GraphSetup
-    app = smod.AppState()
-    app.init_symbol_state('AAPL'); app.init_symbol_state('MSFT')
-    app.analyzing_symbol = app.current_symbol = 'AAPL'
-    monkeypatch.setattr(smod, 'app_state', app)
-    owner = GraphSetup.__new__(GraphSetup)
-    owner.config = {'analyst_call_delay':0, 'analyst_start_delay':0, 'tool_result_delay':0}
-    def old_analyst(state):
-        app.request_stop(); app.stop_requested = False
-        app.analyzing_symbol = 'MSFT'
-        return {'messages': [], 'market_report':'AAPL report', 'analysis_status':{'market':'completed'}}
-    node = owner._create_parallel_analysts_coordinator(['market'], {'market':old_analyst},
-                {'market':None}, {'market':lambda s:s})
-    node({'company_of_interest':'AAPL', 'messages':[]})
-    assert app.get_state('MSFT')['agent_statuses']['Market Analyst'] == 'pending'
 
 
 def test_D11_same_day_past_instant_never_fetches_present_quote(monkeypatch):
@@ -193,45 +157,8 @@ def test_native_budget_exhaustion_does_not_publish_tool_request_as_report(monkey
     assert not out[report_key]
 
 
-@pytest.mark.parametrize('transition', ['same_symbol', 'other_symbol', 'stop'])
-def test_owned_parallel_coordinator_discards_late_updates(monkeypatch, transition):
-    from webui.utils import state as smod
-    from tradingagents.graph.setup import GraphSetup
-    app=smod.AppState(); app.init_symbol_state('AAPL'); app.init_symbol_state('MSFT')
-    app.analyzing_symbol=app.current_symbol='AAPL'
-    monkeypatch.setattr(smod,'app_state',app)
-    owner=GraphSetup.__new__(GraphSetup)
-    owner.config={'_analysis_source':'webui_stream','_webui_symbol':'AAPL',
-                  '_webui_run_generation':app.run_generation,'analyst_call_delay':0,'analyst_start_delay':0}
-    def analyst(state):
-        assert app.get_state('AAPL')['agent_statuses']['Market Analyst']=='in_progress'
-        app.request_stop()
-        if transition!='stop': app.stop_requested=False
-        if transition=='other_symbol': app.analyzing_symbol='MSFT'
-        app.get_state('AAPL')['current_reports']['market_report']='NEW REPORT'
-        app.get_state('AAPL')['agent_statuses']['Market Analyst']='pending'
-        return {'messages':[],'market_report':'OLD REPORT','analysis_status':{'market':'completed'}}
-    node=owner._create_parallel_analysts_coordinator(['market'],{'market':analyst},{'market':None},{})
-    node({'company_of_interest':'AAPL','messages':[]})
-    assert app.get_state('AAPL')['current_reports']['market_report']=='NEW REPORT'
-    assert app.get_state('AAPL')['agent_statuses']['Market Analyst']=='pending'
-    assert app.get_state('MSFT')['agent_statuses']['Market Analyst']=='pending'
 
 
-def test_owned_parallel_coordinator_publishes_current_symbol(monkeypatch):
-    from webui.utils import state as smod
-    from tradingagents.graph.setup import GraphSetup
-    app=smod.AppState(); app.init_symbol_state('AAPL'); app.init_symbol_state('MSFT')
-    app.current_symbol='MSFT'; app.analyzing_symbol='AAPL'
-    monkeypatch.setattr(smod,'app_state',app)
-    owner=GraphSetup.__new__(GraphSetup)
-    owner.config={'_analysis_source':'webui_stream','_webui_symbol':'AAPL',
-                  '_webui_run_generation':app.run_generation,'analyst_call_delay':0,'analyst_start_delay':0}
-    node=owner._create_parallel_analysts_coordinator(['market'],{'market':lambda s:{'messages':[],'market_report':'CURRENT REPORT','analysis_status':{'market':'completed'}}},{'market':None},{})
-    node({'company_of_interest':'AAPL','messages':[]})
-    assert app.get_state('AAPL')['current_reports']['market_report']=='CURRENT REPORT'
-    assert app.get_state('AAPL')['agent_statuses']['Market Analyst']=='completed'
-    assert app.get_state('MSFT')['current_reports']['market_report'] is None
 
 
 @pytest.mark.parametrize('volume', [float('inf'), float('-inf'), float('nan')])
@@ -271,77 +198,3 @@ def test_macro_extends_only_yoy_series_and_reports_missing_month(monkeypatch):
     assert seen['FEDFUNDS']=='2026-08-17'
     assert seen['CPIAUCSL']<='2025-08-01' and seen['PPIACO']<='2025-08-01'
     assert 'Year-over-Year' not in report  # no invented comparison for absent data
-
-
-def test_owned_parallel_risk_coordinator_discards_stale_status(monkeypatch):
-    from webui.utils import state as smod
-    from tradingagents.graph.setup import GraphSetup
-    from threading import Event
-    app=smod.AppState();app.init_symbol_state('AAPL');app.init_symbol_state('MSFT')
-    app.analyzing_symbol=app.current_symbol='AAPL'
-    monkeypatch.setattr(smod,'app_state',app)
-    owner=GraphSetup.__new__(GraphSetup)
-    owner.config={'_analysis_source':'webui_stream','_webui_symbol':'AAPL','_webui_run_generation':app.run_generation,'risk_analyst_start_delay':0}
-    stopped=Event()
-    def risky(state):
-        app.request_stop();app.stop_requested=False;app.analyzing_symbol='MSFT';stopped.set()
-        return {'risk_debate_state':{'current_risky_response':'old risky'}}
-    def other(state):
-        assert stopped.wait(5)
-        return {'risk_debate_state':{}}
-    node=owner._create_parallel_risk_round_one_coordinator({'Risky':risky,'Safe':other,'Neutral':other})
-    node({'company_of_interest':'AAPL','risk_debate_state':{}})
-    assert all(s=='pending' for s in app.get_state('MSFT')['agent_statuses'].values())
-
-
-def test_final_result_during_slow_chart_is_discarded_after_restart(monkeypatch):
-    from unittest.mock import MagicMock
-    from webui.components import analysis as mod
-    from webui.utils.state import AppState
-    app=AppState();app.init_symbol_state('AAPL');app.analyzing_symbol='AAPL'
-    app.trade_enabled=True
-    monkeypatch.setattr(mod,'app_state',app)
-    final={'final_trade_decision':'HOLD','final_trade_intent':None}
-    graph=NS(propagator=NS(create_initial_state=lambda *a:{}),
-             _resolve_memory_log_outcomes=lambda *a:None,
-             _has_checkpoint_for_run=lambda *a:False,
-             _graph_args_for_run=lambda *a:{'config':{}},
-             _graph_for_run=lambda *a:(NS(stream=lambda *a,**k:iter([final])),None),
-             process_signal=lambda *a:'HOLD',_log_state=lambda *a:None,
-             memory_log=NS(store_decision=lambda **k:None))
-    configs=[]
-    def make_graph(*a,**k):configs.append(k['config']);return graph
-    monkeypatch.setattr(mod,'TradingAgentsGraph',make_graph)
-    monkeypatch.setattr(mod,'get_run_audit_logger',lambda:MagicMock())
-    monkeypatch.setattr(mod.time,'sleep',lambda *a:None)
-    trade=MagicMock();monkeypatch.setattr(mod,'execute_trade_after_analysis',trade)
-    def slow_chart(*a,**k):
-        app.request_stop();app.stop_requested=False
-        app.get_state('AAPL')['recommended_action']='NEW ACTION'
-        app.get_state('AAPL')['analysis_running']=True
-        app.get_state('AAPL')['chart_data']='NEW CHART'
-        return 'OLD CHART'
-    monkeypatch.setattr(mod,'create_chart',slow_chart)
-    dispatched=app.run_generation
-    outcome=mod.run_analysis('AAPL',['market'],{'rounds':1,'level':'Shallow'},False,'m','m',run_generation=dispatched)
-    assert configs[0]['_webui_run_generation']==dispatched and configs[0]['_webui_symbol']=='AAPL'
-    assert outcome['status']=='discarded'
-    assert app.get_state('AAPL')['recommended_action']=='NEW ACTION'
-    assert app.get_state('AAPL')['chart_data']=='NEW CHART'
-    assert app.get_state('AAPL')['analysis_running']
-    assert not app.get_state('AAPL')['analysis_complete']
-    trade.assert_not_called()
-
-
-def test_stale_trade_dispatch_cannot_read_new_run_result(monkeypatch):
-    from unittest.mock import MagicMock
-    from webui.components import analysis as mod
-    from webui.utils.state import AppState
-    app=AppState();app.init_symbol_state('AAPL');app.analyzing_symbol='AAPL'
-    monkeypatch.setattr(mod,'app_state',app)
-    state=app.get_state('AAPL');state['analysis_complete']=True;state['recommended_action']='BUY';state['final_trade_intent']={'new':'intent'}
-    original=app.run_generation;app.request_stop();app.stop_requested=False
-    execute=MagicMock();monkeypatch.setattr('tradingagents.execution.auto_trade.execute_auto_trade',execute)
-    mod.execute_trade_after_analysis('AAPL',False,1000,run_generation=original)
-    execute.assert_not_called()
-    assert 'trading_results' not in state

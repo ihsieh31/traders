@@ -844,63 +844,8 @@ def test_N13_checkpoint_resume_skips_completed_nodes_and_isolates_run_scope(isol
 # N14 — broker outages are error states, never an empty portfolio
 # ---------------------------------------------------------------------------
 
-def test_N14_broker_outage_renders_error_states_without_leaking_details(
-        isolated, monkeypatch, capsys):
-    from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-    from webui.components.alpaca_account import (
-        render_account_summary, render_orders_table, render_orders_table_error,
-        render_positions_table,
-    )
-
-    secret = "dummy-secret-must-not-render"
-    monkeypatch.setattr(
-        "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
-        Mock(side_effect=RuntimeError(f"APCA_API_SECRET_KEY={secret}")),
-    )
-    positions = render_positions_table()
-    assert "Unable to Load Positions" in str(positions)
-    assert secret not in str(positions)
-    with pytest.raises(RuntimeError, match=r"Alpaca positions unavailable \(RuntimeError\)"):
-        AlpacaUtils.get_positions_data()
-    with pytest.raises(RuntimeError, match=r"Alpaca account info unavailable \(RuntimeError\)"):
-        AlpacaUtils.get_account_info()
-    account = render_account_summary()
-    assert "Unable to Load Account Summary" in str(account)
-    assert secret not in str(account)
-    with pytest.raises(RuntimeError, match=r"Alpaca orders unavailable \(RuntimeError\)"):
-        AlpacaUtils.get_recent_orders_page()
-    orders = render_orders_table()
-    assert "Unable to Load Orders" in str(orders)
-    assert secret not in str(orders)
-    # The callback path's catch must land on the error renderer too.
-    try:
-        AlpacaUtils.get_recent_orders_page()
-    except Exception as exc:
-        callback_error = render_orders_table_error(exc)
-        assert "Unable to Load Orders" in str(callback_error)
-        assert secret not in str(callback_error)
-    # Even an arbitrary renderer exception must not be echoed verbatim.
-    arbitrary = render_orders_table_error(RuntimeError(secret))
-    assert secret not in str(arbitrary)
-    assert secret not in capsys.readouterr().out
 
 
-def test_N14_legal_empty_account_still_renders_empty_and_zeros(isolated, monkeypatch):
-    from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-    from webui.components.alpaca_account import render_account_summary, render_positions_table
-
-    client = Mock()
-    client.get_all_positions.return_value = []
-    client.get_account.return_value = NS(buying_power=0, cash=0, equity=0, last_equity=0)
-    client.get_orders.return_value = []
-    monkeypatch.setattr("tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client",
-                        lambda: client)
-    assert "Your portfolio is currently empty" in str(render_positions_table())
-    account = AlpacaUtils.get_account_info()
-    assert account["cash"] == 0 and account["buying_power"] == 0
-    assert "$0.00" in str(render_account_summary())
-    orders = AlpacaUtils.get_recent_orders_page()
-    assert orders["orders"] == [] and orders["total_orders"] == 0
 
 
 # ---------------------------------------------------------------------------

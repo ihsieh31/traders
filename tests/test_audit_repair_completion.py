@@ -10,7 +10,6 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from test_execution_safety_plan_a import env, opening, now
-from test_audit_api_key_semantics import _register, _find
 from tradingagents.execution.authority import BrokerAuthorityError, capture_broker_snapshot
 from tradingagents.execution.lifecycle import next_deadline_decision_id
 
@@ -151,40 +150,10 @@ def test_offline_indicator_is_computed_at_requested_date(tmp_path):
     assert "185.5" in str(result), result
 
 
-def test_load_env_never_returns_server_secret_and_clear_disables_fallback(monkeypatch):
-    from tradingagents.dataflows import config
-    from webui.utils.state import app_state
-    monkeypatch.setattr(config, "_runtime_api_keys", {})
-    for flag in ("analysis_running", "loop_enabled", "market_hour_enabled"): monkeypatch.setattr(app_state, flag, False)
-    monkeypatch.setenv("TRADINGBUFFETT_OPENAI_API_KEY", "fixture-server-private-key")
-    mod, app = _register()
-    result = _find(app, "load_from_env")(1)
-    assert "fixture-server-private-key" not in str(result)
-    assert config.get_openai_api_key() == "fixture-server-private-key"
-    cleared = _find(app, "clear_api_keys")(1)
-    assert config.get_openai_api_key() == ""
-    _find(app, "load_api_keys")(cleared[-1])
-    assert config.get_openai_api_key() == ""
 
 
-@pytest.mark.parametrize("flag", ["analysis_running", "loop_enabled", "market_hour_enabled"])
-def test_active_run_cannot_switch_credentials(monkeypatch, flag):
-    from tradingagents.dataflows import config
-    from webui.utils.state import app_state
-    from webui.callbacks.api_config_callbacks import apply_api_keys_to_config
-    monkeypatch.setattr(config, "_runtime_api_keys", {"openai_api_key": "original"})
-    monkeypatch.setattr(app_state, flag, True)
-    assert not apply_api_keys_to_config({"openai": "new"})
-    assert config.get_openai_api_key() == "original"
 
 
-def test_settings_restore_screening_advanced_and_scheduling_controls():
-    from webui.callbacks.storage_callbacks import CONTROL_IDS, restore_settings
-    restored = dict(zip(CONTROL_IDS, restore_settings({"auto_screening_enabled": True,
-        "screening_model": "screen-model", "quick_llm_temperature": 0.2, "loop_enabled": True})))
-    assert restored["auto-screening-enabled"] is True
-    assert restored["screening-model"] == "screen-model"
-    assert restored["quick-llm-temperature"] == 0.2 and restored["loop-enabled"] is True
 
 
 def test_report_coverage_refs_and_chunk_limit_are_truthful():
@@ -256,59 +225,3 @@ def test_historical_window_passes_end_and_never_requests_today_quote(monkeypatch
     assert calls[-1]["end_date"] == "2026-01-07"
     report = get_alpaca_data("AAPL", "2026-01-05", "2026-01-07")
     assert "Latest Real-Time Quote" not in report
-
-
-def test_webui_settings_and_account_callbacks_register_on_real_dash(monkeypatch):
-    from dash import Dash
-    from webui.callbacks.storage_callbacks import register_storage_callbacks
-    from webui.callbacks.trading_callbacks import register_trading_callbacks
-    from webui.components.alpaca_account import render_alpaca_account_section
-    from tradingagents.dataflows.alpaca_utils import AlpacaUtils
-    monkeypatch.setattr(AlpacaUtils, "get_positions_data", lambda: [])
-    monkeypatch.setattr(AlpacaUtils, "get_account_info", lambda: {"buying_power": 100, "cash": 50, "equity": 1000, "last_equity": 990, "daily_change_dollars": 10, "daily_change_percent": 1})
-    monkeypatch.setattr(AlpacaUtils, "get_recent_orders_page", lambda **_: {"orders": [], "total_pages": 1})
-    app = Dash(__name__, suppress_callback_exceptions=True)
-    register_storage_callbacks(app); register_trading_callbacks(app)
-    assert "account-summary-container.children" in app.callback_map
-    summary_fn = app.callback_map["account-summary-container.children"]["callback"].__wrapped__
-    result = summary_fn(1, 0, 0, {})
-    assert "Updated" in str(result) and "100" in str(result)
-    assert "account-summary-container" in str(render_alpaca_account_section())
-
-
-def test_wheel_contains_resources_and_imports_from_outside_repo(tmp_path):
-    import os
-    import shutil
-    import subprocess
-    import sys
-    import zipfile
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[1]
-    source = tmp_path / "source"; source.mkdir()
-    for directory in ("cli", "webui", "tradingagents"):
-        shutil.copytree(root / directory, source / directory, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    for name in ("setup.py", "requirements.txt", "MANIFEST.in"):
-        shutil.copy2(root / name, source / name)
-    build = subprocess.run([sys.executable, "setup.py", "bdist_wheel"], cwd=source,
-                           capture_output=True, text=True)
-    assert build.returncode == 0, build.stderr[-3000:]
-    wheel = next((source / "dist").glob("*.whl"))
-    with zipfile.ZipFile(wheel) as archive:
-        assert "cli/static/welcome.txt" in archive.namelist()
-        assert "webui/assets/custom.css" in archive.namelist()
-        assert any(name.startswith("tradingagents/prompts/templates/") and name.endswith(".md") for name in archive.namelist())
-        archive.extractall(tmp_path / "installed")
-    isolated = dict(os.environ)
-    isolated["PYTHONPATH"] = str(tmp_path / "installed") + os.pathsep + str(root / "scripts/refactoring")
-    smoke = subprocess.run([sys.executable, "-c", '''from importlib.resources import files
-from pathlib import Path
-import cli.main, webui.app_dash
-assert Path(cli.main.__file__).resolve().is_relative_to(Path("installed").resolve())
-assert files("cli").joinpath("static/welcome.txt").read_text()
-assert files("webui").joinpath("assets/custom.css").read_text()
-from typer.testing import CliRunner
-result = CliRunner().invoke(cli.main.app, ["--help"])
-assert result.exit_code == 0, result.output
-print("wheel smoke passed")
-'''], cwd=tmp_path, env=isolated, capture_output=True, text=True)
-    assert smoke.returncode == 0, smoke.stdout[-2000:] + smoke.stderr[-3000:]

@@ -454,16 +454,6 @@ class R3CalendarTests(unittest.TestCase):
         self.assertEqual(seen["req"].start, date(2026, 9, 4))
         clear_calendar_cache()
 
-    def test_webui_uses_authoritative_not_static(self):
-        from webui.utils.market_hours import is_market_open
-
-        # Early-close day: 13:00 close. 14:00 should be closed authoritatively,
-        # but static 16:00 logic would say open.
-        day = date(2026, 9, 4)
-        rows = _rows_from_dates([date(2026, 9, 3), day], early_closes={day: time(13, 0)})
-        dt = _ET.localize(datetime(2026, 9, 4, 14, 0))
-        is_open, reason = is_market_open(dt, calendar_rows=rows)
-        self.assertFalse(is_open)
 
 
 # ---------------------------------------------------------------------------

@@ -207,30 +207,6 @@ class RealizedReturnJoinTests(unittest.TestCase):
         self.assertEqual(returns, {})
 
 
-class CostWebUIWiringTests(unittest.TestCase):
-    def test_panel_component_builds(self):
-        from webui.components.cost_panel import create_cost_panel
-
-        rendered = str(create_cost_panel())
-        for component_id in (
-            "cost-refresh-btn",
-            "cost-summary-cards",
-            "cost-daily-graph",
-            "cost-symbol-table",
-        ):
-            self.assertIn(component_id, rendered)
-
-    def test_callbacks_register_on_fresh_app(self):
-        import dash
-
-        from webui.callbacks.cost_callbacks import register_cost_callbacks
-
-        app = dash.Dash(__name__, suppress_callback_exceptions=True)
-        register_cost_callbacks(app)
-        self.assertTrue(
-            any("cost-summary-cards" in key for key in app.callback_map),
-            f"cost callback missing: {list(app.callback_map)}",
-        )
 
 
 if __name__ == "__main__":

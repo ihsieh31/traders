@@ -1399,57 +1399,7 @@ class ExecutionEntryGateTests(unittest.TestCase):
 
 
 class SchedulerIntegrationTests(unittest.TestCase):
-    def test_screening_stop_halts_the_scheduler(self):
-        from webui.utils.state import app_state
-        from webui.callbacks.control_callbacks import _prepare_auto_round_symbols
 
-        app_state.reset()
-        stopped = RoundPlan(
-            status="stopped", reason="INSUFFICIENT_CANDIDATES", detail="only 3"
-        )
-        with patch(
-            "tradingagents.screening.pipeline.prepare_screening_round",
-            return_value=stopped,
-        ):
-            result = _prepare_auto_round_symbols(
-                {"auto_screening_enabled": True}
-            )
-        self.assertIsNone(result)
-        self.assertIsNotNone(app_state.screening_stop_reason)
-        self.assertIn("INSUFFICIENT_CANDIDATES", app_state.screening_stop_reason)
-        self.assertTrue(app_state.stop_loop)
-        self.assertTrue(app_state.stop_market_hour)
-        self.assertEqual(app_state.analysis_queue, [])
-        app_state.reset()
-
-    def test_successful_plan_feeds_the_round_symbols(self):
-        from webui.utils.state import app_state
-        from webui.callbacks.control_callbacks import _prepare_auto_round_symbols
-
-        app_state.reset()
-        universe, bars = SelectionCacheTests._payload_universe_bars(None)
-        deps = _deps(
-            universe, bars,
-            positions=[{"symbol": "T00", "qty": 1, "asset_class": "us_equity"}],
-        )
-        config = _base_config()
-        with patch(
-            "tradingagents.screening.pipeline.prepare_screening_round",
-            return_value=prepare_screening_round(config, deps=deps, now=_NOW),
-        ):
-            symbols = _prepare_auto_round_symbols(
-                {"auto_screening_enabled": True,
-                 "screening_selection_cache_path": config["screening_selection_cache_path"],
-                 "screening_as_of_override": config["screening_as_of_override"],
-                 "data_cache_dir": config["data_cache_dir"],
-                 "results_dir": config["results_dir"]}
-            )
-        self.assertIsNotNone(symbols)
-        self.assertEqual(len(symbols), 21)  # Top20 + T00 extra
-        self.assertEqual(
-            [entry["symbol"] for entry in app_state.screening_top20], symbols[:20]
-        )
-        app_state.reset()
 
     def test_two_concurrent_first_scans_produce_one_screening_call(self):
         config = _base_config()

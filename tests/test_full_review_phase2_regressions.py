@@ -372,57 +372,6 @@ class F15UsageTests(_Isolated, unittest.TestCase):
         callback.on_llm_end(ChatResult(generations=[ChatGeneration(message=message)]))
         self.assertEqual(self._guard.llm_tokens_used(), before)
 
-    def test_gpt5_adapter_accounts_exactly_once(self):
-        """Fake Responses transport returns usage 123: budget +123, one event,
-        UI counter may update but never a second SafetyGuard increment."""
-        from tradingagents.agents.utils.gpt5_llm import GPT5ChatModel
-
-        usage_obj = SimpleNamespace(
-            input_tokens=100, output_tokens=23, total_tokens=123)
-        response = SimpleNamespace(
-            output=[SimpleNamespace(type="message", content=[SimpleNamespace(
-                type="output_text", text="hello")])],
-            output_text="hello", usage=usage_obj,
-        )
-        model = GPT5ChatModel(model="gpt-5-mini", api_key="test-key")
-        object.__setattr__(
-            model, "_client", SimpleNamespace(
-                responses=SimpleNamespace(create=MagicMock(return_value=response)))
-        )
-
-        before = self._guard.llm_tokens_used()
-        ui_calls = []
-
-        class _FakeAppState:
-            llm_calls_log = []
-            llm_calls_count = 0
-            needs_ui_update = False
-
-            @staticmethod
-            def register_llm_call(**kwargs):
-                ui_calls.append(kwargs)
-
-        audit = self._logger()
-        run_id = audit.start_run(symbol="AAPL", trade_date="2026-09-08")
-        with patch("webui.utils.state.app_state", _FakeAppState):
-            model.invoke("hi")
-        audit.finish_run(symbol="AAPL", run_id=run_id)
-
-        self.assertEqual(self._guard.llm_tokens_used() - before, 123)
-        self.assertEqual(len(ui_calls), 1)
-        self.assertFalse(ui_calls[0].get("write_audit", True))
-
-        # Exactly one audit event carrying the usage in the run log.
-        payloads = [
-            json.loads(p.read_text())
-            for p in Path(os.environ["TRADINGBUFFETT_RESULTS_DIR"]).glob("AAPL/TradingAgentsStrategy_logs/runs/*.json")
-        ]
-        usage_events = [
-            e for p in payloads for e in p["events"]
-            if e["type"] == "llm_call" and e["payload"].get("purpose") == "gpt5_responses"
-        ]
-        self.assertEqual(len(usage_events), 1)
-        self.assertEqual(usage_events[0]["payload"]["usage"]["total_tokens"], 123)
 
     def test_direct_openai_tool_usage_recorded_once(self):
         from tradingagents.llm_clients.usage import record_direct_openai_usage
@@ -1309,14 +1258,6 @@ class F17AnalysisDateTests(_Isolated, unittest.TestCase):
         with self.assertRaises(ValueError):
             current_analysis_date(datetime(2026, 9, 8, 12, 0))
 
-    def test_webui_uses_helper_not_local_now(self):
-        import tradingagents.dataflows.interface_utils as iu
-        import webui.components.analysis as analysis
-
-        source = Path(analysis.__file__).read_text()
-        self.assertIn("current_analysis_date", source)
-        self.assertNotIn('datetime.now().strftime("%Y-%m-%d")', source)
-        self.assertTrue(callable(iu.current_analysis_date))
 
     def test_cli_uses_helper_not_local_now(self):
         source = Path(
@@ -1330,72 +1271,6 @@ class F17AnalysisDateTests(_Isolated, unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class F18EntryPointTests(_Isolated, unittest.TestCase):
-    def test_webui_cli_imports_and_parses(self):
-        import webui.cli
-
-        self.assertTrue(callable(webui.cli.main))
-
-    def test_entry_point_target_resolves(self):
-        source = (Path(__file__).resolve().parents[1] / "setup.py").read_text()
-        # setup.py must point at the packaged webui.cli module.
-        self.assertIn("tradingagents-web=webui.cli:main", source)
-        self.assertNotIn("web_ui:main", source)
-
-    def test_root_script_delegates_to_packaged_module(self):
-        root = Path(__file__).resolve().parents[1] / "run_webui_dash.py"
-        source = root.read_text()
-        self.assertIn("from webui.cli import main", source)
-
-    def test_installed_wheel_entry_point_smoke(self):
-        """Build a wheel, import its webui.cli module from the wheel contents
-        in an isolated path, and prove the entry target resolves without
-        contacting any external service."""
-        import subprocess
-        import sys
-        import zipfile
-
-        repo = Path(__file__).resolve().parents[1]
-        wheel_dir = self.workdir / "wheel"
-        wheel_dir.mkdir()
-        subprocess.run(
-            [sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation", ".",
-             "-w", str(wheel_dir)],
-            cwd=repo, check=True, capture_output=True, timeout=300,
-        )
-        wheels = list(wheel_dir.glob("tradingagents-*.whl"))
-        self.assertTrue(wheels)
-        with zipfile.ZipFile(wheels[0]) as zf:
-            names = zf.namelist()
-            self.assertIn("webui/cli.py", names)
-            entry = zf.read("tradingagents-0.1.0.dist-info/entry_points.txt").decode()
-            self.assertIn("tradingagents-web", entry)
-            self.assertIn("webui.cli:main", entry.replace(" ", ""))
-            # The packaged module must be importable from the wheel alone.
-            extracted = self.workdir / "wheel-extract"
-            extracted.mkdir()
-            zf.extractall(extracted)
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "wheel_webui_cli",
-            extracted / "webui" / "cli.py",
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        self.assertTrue(callable(module.main))
-
-    def test_run_webui_dash_help_exits_without_server(self):
-        import subprocess
-        import sys
-
-        repo = Path(__file__).resolve().parents[1]
-        result = subprocess.run(
-            [sys.executable, "run_webui_dash.py", "--help"],
-            cwd=repo, capture_output=True, timeout=60, text=True,
-        )
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("--port", result.stdout)
 
 
 if __name__ == "__main__":

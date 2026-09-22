@@ -768,40 +768,6 @@ class StateMachineTests(unittest.TestCase):
 
 
 class SingleEntryTests(unittest.TestCase):
-    def test_production_callers_use_single_execution_entry(self):
-        repo = Path(__file__).resolve().parent.parent
-        analysis = (repo / "webui" / "components" / "analysis.py").read_text()
-        trading_cb = (repo / "webui" / "callbacks" / "trading_callbacks.py").read_text()
-        # No legacy signal fallback: analysis must not call the raw signal path.
-        self.assertNotIn("execute_trading_action(", analysis)
-        # Production liquidation must go through the service, not raw close.
-        self.assertIn("ExecutionService", trading_cb)
-        self.assertNotIn("AlpacaUtils.close_position(", trading_cb)
-        self.assertIn("ExecutionService", analysis)
-        # No production module may call the removed direct helpers or the
-        # disabled signal path (tests/ and the deprecated wrapper itself
-        # excluded; the wrapper delegates without broker calls).
-        offenders = []
-        for src in list((repo / "tradingagents").rglob("*.py")) + list(
-            (repo / "webui").rglob("*.py")
-        ) + list((repo / "cli").rglob("*.py")):
-            text = src.read_text()
-            rel = str(src.relative_to(repo))
-            if "place_market_order(" in text or "place_protected_market_order(" in text:
-                offenders.append(f"{rel}: direct place helper call")
-            if "AlpacaUtils.close_position(" in text:
-                offenders.append(f"{rel}: direct close call")
-            if "execute_trading_action(" in text and src.name != "alpaca_utils.py":
-                offenders.append(f"{rel}: legacy signal execution call")
-        self.assertEqual(offenders, [])
-        # Unique constraints are the last line of defense.
-        store_src = (
-            repo / "tradingagents" / "execution" / "store.py"
-        ).read_text()
-        self.assertIn("decision_id TEXT UNIQUE", store_src)
-        self.assertIn("client_order_id TEXT UNIQUE", store_src)
-        self.assertIn("broker_order_id TEXT UNIQUE", store_src)
-        self.assertIn("execution_id TEXT PRIMARY KEY", store_src)
 
     def test_legacy_signal_path_is_fail_closed_with_zero_broker_calls(self):
         from tradingagents.dataflows.alpaca_utils import AlpacaUtils

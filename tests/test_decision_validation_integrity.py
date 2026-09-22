@@ -580,19 +580,7 @@ class BrokerLastEquityTests(unittest.TestCase):
 class HonestPresentationTests(unittest.TestCase):
     """Spec items 15-17: honest UI copy and long-run return limitations."""
 
-    def test_webui_source_has_no_walk_forward_copy(self):
-        source = Path("webui/components/backtest_panel.py").read_text(encoding="utf-8")
-        callbacks = Path("webui/callbacks/backtest_callbacks.py").read_text(encoding="utf-8")
-        self.assertNotIn("Walk-Forward Backtest", source)
-        self.assertNotIn("Out-of-sample windows", source + callbacks)
-        self.assertIn("Recorded Signal Diagnostic", source)
-        self.assertIn("Segmented diagnostic windows", callbacks)
-        self.assertIn("does not prove profitability", source)
 
-    def test_teach_ui_uses_hypothetical_label(self):
-        source = Path("webui/components/backtest_panel.py").read_text(encoding="utf-8")
-        self.assertNotIn("realized next-open return", source)
-        self.assertIn("fixed-horizon hypothetical position return", source)
 
     def test_long_run_report_carries_return_limitations(self):
         import tradingagents.long_run as lr

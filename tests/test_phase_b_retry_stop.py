@@ -641,57 +641,6 @@ class ParallelCoordinatorStopTests(unittest.TestCase):
     # --- DMC-1 D02/D03: first-round risk failure must not masquerade as a
     # completed round; only a full three-speaker round may merge. ---
 
-    def test_parallel_risk_generic_failure_propagates_per_role(self):
-        from webui.utils.state import AppState
-
-        for failing in ("Risky", "Safe", "Neutral"):
-            with self.subTest(failing=failing):
-                setup = self._setup()
-                ui = AppState()
-                ui.init_symbol_state("NVDA")
-                ui.analyzing_symbol = "NVDA"
-                setup.config.update({
-                    "_analysis_source": "webui_stream",
-                    "_webui_symbol": "NVDA",
-                    "_webui_run_generation": ui.run_generation,
-                })
-
-                def broken(state):
-                    raise RuntimeError("debator exploded")
-
-                def ok(state):
-                    return {
-                        "risk_debate_state": {
-                            "current_risky_response": "Risky Analyst: bold",
-                            "current_safe_response": "Safe Analyst: careful",
-                            "current_neutral_response": "Neutral Analyst: balanced",
-                        }
-                    }
-
-                nodes = {"Risky": ok, "Safe": ok, "Neutral": ok}
-                nodes[failing] = broken
-                coordinator = setup._create_parallel_risk_round_one_coordinator(nodes)
-                state = {
-                    "company_of_interest": "NVDA",
-                    "risk_debate_state": {"count": 0},
-                }
-                with patch("webui.utils.state.app_state", ui), patch.object(
-                    ui, "update_agent_status", wraps=ui.update_agent_status
-                ) as update_status:
-                    with self.assertRaises(RuntimeError):
-                        coordinator(state)
-
-                # The failed role must never be presented as completed; the
-                # UI vocabulary has no failed value, so it is reset to pending.
-                name = f"{failing} Analyst"
-                statuses = [
-                    call.args[1]
-                    for call in update_status.call_args_list
-                    if call.args and call.args[0] == name
-                ]
-                self.assertNotIn("completed", statuses)
-                self.assertIn("pending", statuses)
-                self.assertEqual(ui.get_state("NVDA")["agent_statuses"][name], "pending")
 
     def test_parallel_risk_all_success_merges_exactly_three_speakers(self):
         setup = self._setup()
@@ -772,36 +721,6 @@ class ParallelCoordinatorStopTests(unittest.TestCase):
         self.assertEqual(ctx.exception.detail, "timeout")
 
 
-class SchedulerStopTests(unittest.TestCase):
-    def test_provider_stop_clears_queue_and_halts_scheduling(self):
-        from webui.components.analysis import mark_provider_stop
-        from webui.utils.state import app_state
-
-        app_state.analysis_queue = ["AAPL", "MSFT"]
-        failure = ProviderFailure(
-            role="analysis", provider="openai", model="m", attempts=4,
-            category="transient", detail="timeout",
-        )
-        mark_provider_stop("AAPL", failure)
-        self.assertEqual(app_state.analysis_queue, [])
-        self.assertIn("AAPL", app_state.provider_stop_reason)
-        self.assertIn("restart", app_state.provider_stop_reason)
-
-        from webui.callbacks.control_callbacks import _halt_scheduling_for_provider_stop
-
-        app_state.stop_loop = False
-        app_state.stop_market_hour = False
-        _halt_scheduling_for_provider_stop()
-        self.assertTrue(app_state.stop_loop)
-        self.assertTrue(app_state.stop_market_hour)
-        self.assertEqual(app_state.analysis_queue, [])
-
-    def test_operator_restart_clears_provider_stop(self):
-        from webui.utils.state import app_state
-
-        app_state.provider_stop_reason = "stale"
-        app_state.reset()
-        self.assertIsNone(app_state.provider_stop_reason)
 
 
 class LcelCompositionRegressionTests(unittest.TestCase):

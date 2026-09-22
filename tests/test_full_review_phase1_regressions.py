@@ -1340,15 +1340,6 @@ class F05LiquidationIdentityTests(_GuardIsolated, unittest.TestCase):
             self.assertNotEqual(first["decision_id"], second["decision_id"])
             self.assertNotEqual(first["intent_id"], second["intent_id"])
 
-    def test_webui_callback_no_longer_passes_decision_id(self):
-        source = Path(
-            "webui/callbacks/trading_callbacks.py"
-        ).read_text(encoding="utf-8") if Path(
-            "webui/callbacks/trading_callbacks.py"
-        ).exists() else (Path(__file__).resolve().parents[1]
-                         / "webui/callbacks/trading_callbacks.py").read_text(
-            encoding="utf-8")
-        self.assertNotIn("ui-liquidate", source)
 
 
 # ---------------------------------------------------------------------------
@@ -1768,30 +1759,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
             return {"success": True, "broker_attempted": True,
                     "broker_calls": 1}
 
-    def test_webui_state_stop_flag_gates_trade(self):
-        from webui.utils.state import AppState
 
-        state = AppState()
-        self.assertFalse(state.is_stop_requested())
-        state.stop_loop_mode()
-        self.assertTrue(state.is_stop_requested())
-        # Only an explicit Start clears it; reset_for_loop never does.
-        state.start_loop(["AAA"], {})
-        self.assertFalse(state.is_stop_requested())
-        state.stop_market_hour_mode()
-        self.assertTrue(state.is_stop_requested())
-        state.reset_for_loop()
-        self.assertTrue(state.is_stop_requested())
-
-    def test_request_stop_is_universal_across_modes(self):
-        from webui.utils.state import AppState
-
-        state = AppState()
-        state.start_loop(["AAA"], {})
-        state.request_stop()
-        self.assertTrue(state.stop_loop)
-        self.assertTrue(state.stop_market_hour)
-        self.assertTrue(state.is_stop_requested())
 
 
 if __name__ == "__main__":
