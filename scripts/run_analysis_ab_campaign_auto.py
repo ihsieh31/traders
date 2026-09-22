@@ -23,6 +23,7 @@ from scripts.run_analysis_ab_campaign import (
     _calendar_client as _campaign_calendar_client,
 )
 from scripts.run_analysis_ab_campaign import _campaign_state_path, _read_state, run_campaign
+from tradingagents.app_identity import default_results_dir, validate_app_path
 from tradingagents.long_run import effective_target_for_session
 
 
@@ -41,6 +42,21 @@ EXECUTION_WINDOW_GRACE_SECONDS = 30 * 60
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _campaign_root(*, resume: str | Path | None, results_root: str | Path | None) -> Path:
+    """Resolve the campaign root exactly like the campaign coordinator does.
+
+    Create mode must not fall back to the process CWD: the coordinator
+    defaults to ``default_results_dir() / "ab"``, so a create pass started
+    without ``--results-root`` has to resume that same directory afterwards.
+    Reuses the coordinator's own resolvers instead of a second scheme.
+    """
+    if resume is not None:
+        return validate_app_path(resume, field="campaign_path")
+    return validate_app_path(
+        results_root or (default_results_dir() / "ab"), field="results_dir"
+    )
 
 
 def _seconds_until_target(session: str, now: datetime, calendar_client: Any) -> float:
@@ -109,6 +125,12 @@ def run_auto(
     its state machine: every pass resumes the same campaign root."""
     retries = 0
     resolved_calendar = calendar_client
+    # Same resolved root the coordinator uses for this pass, so our own state
+    # reads and every later --resume provably point at one directory.
+    root = _campaign_root(resume=resume, results_root=results_root)
+    state_path = _campaign_state_path(root)
+    if resume is not None:
+        resume = root
 
     def _calendar(state: dict[str, Any]) -> Any:
         nonlocal resolved_calendar
@@ -125,13 +147,13 @@ def run_auto(
 
     while True:
         result = campaign_runner(
-            symbol=symbol, start_date=start_date, days=days, results_root=results_root,
+            symbol=symbol, start_date=start_date, days=days,
+            results_root=None if resume is not None else root,
             resume=resume, execute_paper=execute_paper,
             paper_notional_usd=paper_notional_usd, base_config=base_config,
             calendar_client=calendar_client,
         )
-        root = Path(resume or results_root or "")
-        state = result.get("state") or _read_state(_campaign_state_path(root)) or {}
+        state = result.get("state") or _read_state(state_path) or {}
         outcome = result["outcome"]
 
         if outcome == "completed":
@@ -226,8 +248,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true", default=None)
     parser.add_argument("--paper-notional-usd", type=float)
     args = parser.parse_args(argv)
-    if bool(args.resume) == bool(args.symbol or args.start_date):
-        parser.error("use --resume, or provide both --symbol and --start-date")
+    if args.resume:
+        if args.symbol or args.start_date:
+            parser.error("--resume cannot be combined with --symbol/--start-date")
+    elif not (args.symbol and args.start_date):
+        parser.error(
+            "creating a campaign requires both --symbol and --start-date"
+            " (or use --resume to continue an existing one)"
+        )
     result = run_auto(
         symbol=args.symbol, start_date=args.start_date, days=args.days,
         results_root=args.results_root, resume=args.resume,

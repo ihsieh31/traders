@@ -704,7 +704,9 @@ class AutoStateMechineTests(unittest.TestCase):
             self.assertEqual(runner.call_count, 3)
             self.assertGreaterEqual(clock.et.hour, 11)  # the wait advanced time
             for call in runner.calls[1:]:
-                self.assertEqual(call.get("resume"), Path(root))
+                # later passes resume the same coordinator-resolved root
+                self.assertEqual(call.get("resume"), Path(root).absolute())
+                self.assertIsNone(call.get("results_root"))
                 self.assertIsNone(call.get("symbol"))
                 self.assertIsNone(call.get("start_date"))
 
@@ -791,6 +793,109 @@ class AutoStateMechineTests(unittest.TestCase):
             self._run(runner, clock, symbol="AAPL", start_date="2026-06-22",
                       calendar_client=None)
         calendar_factory.assert_called_once_with(execute_paper=True, supplied=None)
+
+
+# ---------------------------------------------------------------------------
+# P2: launcher root resolution must match the campaign coordinator exactly
+# ---------------------------------------------------------------------------
+
+class AutoRootResolutionTests(unittest.TestCase):
+    """Create mode without --results-root must not fall back to the CWD."""
+
+    def _run(self, runner, clock, **kwargs):
+        from scripts.run_analysis_ab_campaign_auto import run_auto
+
+        kwargs.setdefault("calendar_client", object())
+        with _patched_auto_targets():
+            return run_auto(
+                campaign_runner=runner, now_fn=clock.now, sleep_fn=clock.sleep, **kwargs
+            )
+
+    def test_l_default_root_matches_coordinator_and_is_resumed(self):
+        from scripts.run_analysis_ab_campaign_auto import _campaign_root
+        from tradingagents.app_identity import default_results_dir
+
+        expected = _campaign_root(resume=None, results_root=None)
+        self.assertEqual(expected, (default_results_dir() / "ab").absolute())
+        self.assertNotEqual(expected, Path(".").resolve())
+
+        runner = _AutoRunner(["2026-06-22", "2026-06-23"], {})
+        clock = _FakeClock(datetime(2026, 6, 23, 12, 0, tzinfo=ZoneInfo("America/New_York")))
+        res = self._run(runner, clock, symbol="AAPL", start_date="2026-06-22",
+                        results_root=None)
+        self.assertEqual(res["outcome"], "completed")
+        self.assertEqual(runner.call_count, 2)
+        first = runner.calls[0]
+        self.assertEqual(Path(first["results_root"]), expected)
+        self.assertIsNone(first["resume"])
+        self.assertEqual(first["symbol"], "AAPL")
+        for call in runner.calls[1:]:
+            # the next pass is a --resume of that same default root
+            self.assertEqual(Path(call["resume"]), expected)
+            self.assertIsNone(call["results_root"])
+            self.assertIsNone(call["symbol"])
+            self.assertIsNone(call["start_date"])
+
+    def test_m_explicit_root_and_resume_mode_are_coordinator_identical(self):
+        from scripts.run_analysis_ab_campaign_auto import _campaign_root
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # explicit create root, and resume root, both resolve like the
+            # coordinator's validate_app_path (which keeps the caller's
+            # non-canonical spelling)
+            self.assertEqual(
+                _campaign_root(resume=None, results_root=root), Path(root).absolute()
+            )
+            self.assertEqual(
+                _campaign_root(resume=str(root), results_root="/tmp/ignored"),
+                Path(root).absolute(),
+            )
+            runner = _AutoRunner(["2026-06-22"], {})
+            clock = _FakeClock(datetime(2026, 6, 22, 12, 0, tzinfo=ZoneInfo("America/New_York")))
+            res = self._run(runner, clock, resume=str(root))
+            self.assertEqual(res["outcome"], "completed")
+            self.assertEqual(runner.calls[0]["resume"], Path(root).absolute())
+            self.assertIsNone(runner.calls[0]["results_root"])
+
+    def test_n_cli_create_mode_requires_both_symbol_and_start_date(self):
+        from scripts.run_analysis_ab_campaign_auto import main
+
+        for argv in ([], ["--symbol", "AAPL"], ["--start-date", "2026-06-01"]):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit):
+                    main(argv)
+
+    def test_o_cli_valid_invocations_still_accepted(self):
+        import scripts.run_analysis_ab_campaign_auto as auto_mod
+
+        with patch.object(
+            auto_mod, "run_auto", return_value={"outcome": "completed"}
+        ) as run_auto_mock:
+            self.assertEqual(
+                auto_mod.main(["--symbol", "AAPL", "--start-date", "2026-06-01"]), 0
+            )
+            self.assertEqual(run_auto_mock.call_count, 1)
+            self.assertEqual(run_auto_mock.call_args.kwargs["symbol"], "AAPL")
+            self.assertEqual(
+                run_auto_mock.call_args.kwargs["start_date"], "2026-06-01"
+            )
+            self.assertIsNone(run_auto_mock.call_args.kwargs["resume"])
+
+        with patch.object(
+            auto_mod, "run_auto", return_value={"outcome": "completed"}
+        ) as run_auto_mock:
+            self.assertEqual(auto_mod.main(["--resume", "/tmp/ab-auto"]), 0)
+            self.assertEqual(run_auto_mock.call_args.kwargs["resume"], "/tmp/ab-auto")
+            self.assertIsNone(run_auto_mock.call_args.kwargs["symbol"])
+
+        for argv in (
+            ["--resume", "/tmp/ab-auto", "--symbol", "AAPL"],
+            ["--resume", "/tmp/ab-auto", "--start-date", "2026-06-01"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit):
+                    auto_mod.main(argv)
 
 
 # ---------------------------------------------------------------------------
