@@ -11,6 +11,7 @@ scheduler/cron while the market is open, then use ``--resume`` on later days.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -61,6 +62,28 @@ def _eastern_date(now: datetime | None = None) -> date:
 
 def _campaign_state_path(root: Path) -> Path:
     return root / "campaign_state.json"
+
+
+@contextmanager
+def _campaign_lock(root: Path):
+    """Serialize the complete campaign state read/run/write lifecycle."""
+
+    root.mkdir(parents=True, exist_ok=True)
+    handle = (root / ".campaign.lock").open("a+", encoding="utf-8")
+    lock_api = None
+    try:
+        try:
+            import fcntl as lock_api
+        except ImportError as exc:  # pragma: no cover - production is Linux/macOS
+            raise RuntimeError("A/B campaign requires advisory file locking") from exc
+        lock_api.flock(handle.fileno(), lock_api.LOCK_EX)
+        yield
+    finally:
+        try:
+            if lock_api is not None:
+                lock_api.flock(handle.fileno(), lock_api.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def _read_state(path: Path) -> dict[str, Any] | None:
@@ -121,8 +144,51 @@ def _validate_state(state: Mapping[str, Any]) -> None:
         raise RuntimeError("campaign state has invalid resolved LLM routes")
     if bool(state.get("execute_paper")):
         starting = state.get("starting_equity")
-        if not isinstance(starting, dict) or set(starting) != set(BACKEND_ORDER):
-            raise RuntimeError("Paper campaign state has no starting equity")
+        ending = state.get("ending_equity")
+        if starting is not None:
+            _validate_equity_snapshot(starting, label="starting")
+        if ending is not None:
+            _validate_equity_snapshot(ending, label="ending")
+        if completed and starting is None:
+            raise RuntimeError("Paper campaign state completed sessions without starting equity")
+        if state.get("status") == "COMPLETED":
+            if starting is None or ending is None:
+                raise RuntimeError("completed Paper campaign state has no ending equity")
+            _assert_matching_account_refs(starting, ending)
+
+
+def _validate_equity_snapshot(snapshot: Any, *, label: str) -> None:
+    if not isinstance(snapshot, Mapping) or set(snapshot) != set(BACKEND_ORDER):
+        raise RuntimeError(f"{label} equity snapshot must contain both A/B arms")
+    refs = set()
+    for backend in BACKEND_ORDER:
+        item = snapshot[backend]
+        if not isinstance(item, Mapping):
+            raise RuntimeError(f"{label} equity snapshot is invalid for {backend}")
+        if item.get("account") != BACKEND_ACCOUNT[backend]:
+            raise RuntimeError(f"{label} equity snapshot account mapping is invalid for {backend}")
+        reference = item.get("account_ref")
+        if not isinstance(reference, str) or not reference:
+            raise RuntimeError(f"{label} equity snapshot has no account_ref for {backend}")
+        try:
+            equity = float(item.get("equity"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"{label} equity snapshot has invalid equity for {backend}") from exc
+        if not math.isfinite(equity) or equity <= 0:
+            raise RuntimeError(f"{label} equity snapshot has unusable equity for {backend}")
+        if not isinstance(item.get("captured_at"), str) or not item["captured_at"]:
+            raise RuntimeError(f"{label} equity snapshot has no captured_at for {backend}")
+        refs.add(reference)
+    if len(refs) != len(BACKEND_ORDER):
+        raise RuntimeError(f"{label} equity snapshot does not isolate A/B accounts")
+
+
+def _assert_matching_account_refs(
+    starting: Mapping[str, Mapping[str, Any]], ending: Mapping[str, Mapping[str, Any]]
+) -> None:
+    for backend in BACKEND_ORDER:
+        if starting[backend]["account_ref"] != ending[backend]["account_ref"]:
+            raise RuntimeError(f"{backend} Paper account identity changed during campaign")
 
 
 def _calendar_client(*, execute_paper: bool, supplied: Any = None) -> Any:
@@ -239,6 +305,7 @@ def _new_state(
         "config_fingerprint": config_fingerprint,
         "resolved_llm_routes": dict(resolved_routes),
         "starting_equity": dict(starting_equity) if starting_equity is not None else None,
+        "ending_equity": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -263,11 +330,12 @@ def _performance(
     state: Mapping[str, Any], ending: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     output: dict[str, Any] = {}
     starting = state["starting_equity"]
+    _validate_equity_snapshot(starting, label="starting")
+    _validate_equity_snapshot(ending, label="ending")
+    _assert_matching_account_refs(starting, ending)
     for backend in BACKEND_ORDER:
         start = starting[backend]
         end = ending[backend]
-        if start["account_ref"] != end["account_ref"]:
-            raise RuntimeError(f"{backend} Paper account identity changed during campaign")
         initial = float(start["equity"])
         final = float(end["equity"])
         pnl = final - initial
@@ -342,14 +410,13 @@ def finalize_campaign(
     root: Path,
     state: Mapping[str, Any],
     *,
-    broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
 ) -> dict[str, Any]:
     """Idempotently produce final reports; never runs another pair."""
 
     analysis = summarize_fn(root)
     performance = (
-        _performance(state, broker_snapshotter()) if state.get("execute_paper") else None
+        _performance(state, state["ending_equity"]) if state.get("execute_paper") else None
     )
     summary = {
         "schema_version": 1,
@@ -369,7 +436,48 @@ def finalize_campaign(
     return summary
 
 
-def run_campaign(
+def _has_existing_ab_artifacts(root: Path) -> bool:
+    return (
+        (root / "AB_CAMPAIGN.json").exists()
+        or any(root.glob("*/*/pair_state.json"))
+        or any(root.glob("*/*/pair_summary.json"))
+    )
+
+
+def _complete_campaign(
+    root: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    *,
+    broker_snapshotter: Callable[[], dict[str, dict[str, Any]]],
+    summarize_fn: Callable[[str | Path], dict[str, Any]],
+) -> dict[str, Any]:
+    """Durably pin ending equity before rendering derived report files."""
+
+    if state.get("execute_paper"):
+        if state.get("starting_equity") is None:
+            raise RuntimeError("Paper campaign cannot complete without starting equity")
+        if state.get("ending_equity") is None:
+            ending = broker_snapshotter()
+            _validate_equity_snapshot(ending, label="ending")
+            _assert_matching_account_refs(state["starting_equity"], ending)
+            state["ending_equity"] = ending
+        _assert_matching_account_refs(state["starting_equity"], state["ending_equity"])
+        if state.get("status") != "COMPLETED":
+            state["status"] = "COMPLETED"
+            state["current_date"] = None
+        # Campaign state is the authority.  Later resume reads this snapshot
+        # and never refreshes it from a potentially changed broker account.
+        _save_state(state_path, state)
+    elif state.get("status") != "COMPLETED":
+        state["status"] = "COMPLETED"
+        state["current_date"] = None
+        _save_state(state_path, state)
+    summary = finalize_campaign(root, state, summarize_fn=summarize_fn)
+    return {"outcome": "completed", "state": state, "summary": summary}
+
+
+def _run_campaign_locked(
     *,
     symbol: str | None = None,
     start_date: str | None = None,
@@ -395,6 +503,17 @@ def run_campaign(
         root = validate_app_path(results_root or (default_results_dir() / "ab"), field="results_dir")
     state_path = _campaign_state_path(root)
     state = _read_state(state_path)
+    if resume is None:
+        if state is not None:
+            raise RuntimeError(
+                "campaign already exists at this results root; use --resume explicitly"
+            )
+        if _has_existing_ab_artifacts(root):
+            raise RuntimeError(
+                "results root contains existing A/B artifacts; use a dedicated new root"
+            )
+    elif state is None:
+        raise RuntimeError("no campaign exists at --resume root")
     config = deepcopy(dict(base_config or _load_config(None)))
 
     if state is None:
@@ -431,7 +550,6 @@ def run_campaign(
             execute_paper=create_execute_paper,
             paper_notional_usd=paper_notional_usd,
         )
-        starting = broker_snapshotter() if create_execute_paper else None
         state = _new_state(
             symbol=symbol,
             start_date=requested_start,
@@ -441,7 +559,7 @@ def run_campaign(
             paper_notional_usd=paper_notional_usd,
             config_fingerprint=fingerprint,
             resolved_routes=routes,
-            starting_equity=starting,
+            starting_equity=None,
         )
         _save_state(state_path, state)
     else:
@@ -463,14 +581,10 @@ def run_campaign(
             raise RuntimeError("campaign paper_notional_usd changed; refusing resume")
 
     if len(state["completed_dates"]) == state["target_days"]:
-        if state["status"] != "COMPLETED":
-            state["status"] = "COMPLETED"
-            state["current_date"] = None
-            _save_state(state_path, state)
-        summary = finalize_campaign(
-            root, state, broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn
+        return _complete_campaign(
+            root, state_path, state,
+            broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
         )
-        return {"outcome": "completed", "state": state, "summary": summary}
 
     next_date = state["sessions"][len(state["completed_dates"])]
     today = _eastern_date(now)
@@ -488,6 +602,13 @@ def run_campaign(
     state["status"] = "RUNNING"
     state["current_date"] = next_date
     _save_state(state_path, state)
+    if state.get("execute_paper") and state.get("starting_equity") is None:
+        # Persist the first official broker baseline before the pair runner
+        # can change either Paper account.  Resume never overwrites it.
+        starting = broker_snapshotter()
+        _validate_equity_snapshot(starting, label="starting")
+        state["starting_equity"] = starting
+        _save_state(state_path, state)
     try:
         result = pair_runner(
             symbol=state["symbol"],
@@ -519,12 +640,55 @@ def run_campaign(
     if len(state["completed_dates"]) != state["target_days"]:
         return {"outcome": "session_completed", "state": state, "pair": result}
 
-    state["status"] = "COMPLETED"
-    _save_state(state_path, state)
-    summary = finalize_campaign(
-        root, state, broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn
+    return _complete_campaign(
+        root, state_path, state,
+        broker_snapshotter=broker_snapshotter, summarize_fn=summarize_fn,
     )
-    return {"outcome": "completed", "state": state, "summary": summary}
+
+
+def run_campaign(
+    *,
+    symbol: str | None = None,
+    start_date: str | None = None,
+    days: int = 30,
+    results_root: str | Path | None = None,
+    resume: str | Path | None = None,
+    base_config: Mapping[str, Any] | None = None,
+    execute_paper: bool | None = None,
+    paper_notional_usd: float | None = None,
+    debug: bool = False,
+    now: datetime | None = None,
+    calendar_client: Any = None,
+    session_fetcher: Callable[..., list[date]] = fetch_session_dates,
+    pair_runner: Callable[..., dict[str, Any]] = run_single_pair,
+    broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
+    summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
+) -> dict[str, Any]:
+    """Serialize the entire campaign lifecycle before touching its state."""
+
+    root = validate_app_path(
+        resume if resume is not None else results_root or (default_results_dir() / "ab"),
+        field="campaign_path" if resume is not None else "results_dir",
+    )
+    # Lock ordering is always campaign lock -> the pair runner's .ab.lock.
+    with _campaign_lock(root):
+        return _run_campaign_locked(
+            symbol=symbol,
+            start_date=start_date,
+            days=days,
+            results_root=results_root,
+            resume=resume,
+            base_config=base_config,
+            execute_paper=execute_paper,
+            paper_notional_usd=paper_notional_usd,
+            debug=debug,
+            now=now,
+            calendar_client=calendar_client,
+            session_fetcher=session_fetcher,
+            pair_runner=pair_runner,
+            broker_snapshotter=broker_snapshotter,
+            summarize_fn=summarize_fn,
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

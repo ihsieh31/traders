@@ -1,3 +1,4 @@
+import fcntl
 import json
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from tradingagents.default_config import DEFAULT_CONFIG
-from scripts.run_analysis_ab_campaign import run_campaign
+from scripts.run_analysis_ab_campaign import _campaign_lock, run_campaign
 
 
 ET = ZoneInfo("America/New_York")
@@ -47,9 +48,19 @@ def _completed_pair(**_kwargs):
     return {"status": "COMPLETED"}
 
 
+def _equity_snapshot(traders, berkshire, *, captured_at):
+    return {
+        "traders": {"account": "A", "account_ref": "traders-ref", "equity": traders,
+                    "captured_at": captured_at},
+        "berkshire": {"account": "B", "account_ref": "berkshire-ref", "equity": berkshire,
+                      "captured_at": captured_at},
+    }
+
+
 class AnalysisABCampaignTests(unittest.TestCase):
     def _run(self, root, *, start="2026-06-20", days=2, now=None, **kwargs):
         pair_runner = kwargs.pop("pair_runner", _completed_pair)
+        summarize_fn = kwargs.pop("summarize_fn", _summary)
         return run_campaign(
             symbol="AAPL",
             start_date=start,
@@ -60,7 +71,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
             calendar_client=object(),
             session_fetcher=_sessions,
             pair_runner=pair_runner,
-            summarize_fn=_summary,
+            summarize_fn=summarize_fn,
             **kwargs,
         )
 
@@ -236,3 +247,120 @@ class AnalysisABCampaignTests(unittest.TestCase):
             self.assertEqual(result["outcome"], "completed")
             self.assertEqual(calls, [1])
             self.assertTrue((root / "campaign_summary.md").exists())
+
+    def test_paper_starting_equity_is_not_captured_before_first_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run(
+                Path(tmp) / "campaign", now=_now("2026-06-19"), execute_paper=True,
+                paper_notional_usd=500.0,
+                broker_snapshotter=lambda: self.fail("future campaign must not read broker equity"),
+            )
+            self.assertEqual(result["outcome"], "not_due")
+            self.assertIsNone(result["state"]["starting_equity"])
+
+    def test_paper_starting_equity_is_persisted_before_first_pair(self):
+        events = []
+        snapshots = iter([_equity_snapshot(100000.0, 100000.0, captured_at="start")])
+
+        def runner(**kwargs):
+            events.append("pair")
+            state = json.loads((Path(kwargs["results_root"]) / "campaign_state.json").read_text())
+            self.assertEqual(state["starting_equity"]["traders"]["equity"], 100000.0)
+            return {"status": "PARTIAL"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run(
+                Path(tmp) / "campaign", execute_paper=True, paper_notional_usd=500.0,
+                pair_runner=runner,
+                broker_snapshotter=lambda: events.append("snapshot") or next(snapshots),
+            )
+            self.assertEqual(result["outcome"], "pair_unfinished")
+            self.assertEqual(events, ["snapshot", "pair"])
+
+    def test_persisted_starting_equity_survives_restart_without_refresh(self):
+        snapshots = iter([_equity_snapshot(100000.0, 100000.0, captured_at="start")])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+                self._run(
+                    root, execute_paper=True, paper_notional_usd=500.0,
+                    pair_runner=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated crash")),
+                    broker_snapshotter=lambda: next(snapshots),
+                )
+            resumed = run_campaign(
+                resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-22"),
+                calendar_client=object(), session_fetcher=_sessions, pair_runner=_completed_pair,
+                broker_snapshotter=lambda: self.fail("starting equity must not refresh"),
+                summarize_fn=_summary,
+            )
+            self.assertEqual(resumed["outcome"], "session_completed")
+            self.assertEqual(resumed["state"]["starting_equity"]["traders"]["equity"], 100000.0)
+
+    def test_completed_ending_equity_is_immutable_on_resume(self):
+        snapshots = iter([
+            _equity_snapshot(100000.0, 100000.0, captured_at="start"),
+            _equity_snapshot(103000.0, 101500.0, captured_at="end"),
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            completed = self._run(
+                root, days=1, execute_paper=True, paper_notional_usd=500.0,
+                broker_snapshotter=lambda: next(snapshots),
+            )
+            self.assertEqual(completed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
+            resumed = run_campaign(
+                resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-23"),
+                calendar_client=object(), session_fetcher=_sessions,
+                pair_runner=lambda **_kwargs: self.fail("completed campaign must not rerun pair"),
+                broker_snapshotter=lambda: self.fail("completed campaign must not reread broker"),
+                summarize_fn=_summary,
+            )
+            self.assertEqual(resumed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
+
+    def test_crash_after_ending_snapshot_reuses_persisted_snapshot(self):
+        snapshots = iter([
+            _equity_snapshot(100000.0, 100000.0, captured_at="start"),
+            _equity_snapshot(103000.0, 101500.0, captured_at="end"),
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            with self.assertRaisesRegex(RuntimeError, "summary crash"):
+                self._run(
+                    root, days=1, execute_paper=True, paper_notional_usd=500.0,
+                    broker_snapshotter=lambda: next(snapshots),
+                    summarize_fn=lambda _root: (_ for _ in ()).throw(RuntimeError("summary crash")),
+                )
+            state = json.loads((root / "campaign_state.json").read_text())
+            self.assertEqual(state["status"], "COMPLETED")
+            self.assertEqual(state["ending_equity"]["traders"]["equity"], 103000.0)
+            resumed = run_campaign(
+                resume=root, base_config=DEFAULT_CONFIG, now=_now("2026-06-23"),
+                calendar_client=object(), session_fetcher=_sessions,
+                pair_runner=lambda **_kwargs: self.fail("finalizer restart must not rerun pair"),
+                broker_snapshotter=lambda: self.fail("finalizer restart must not reread broker"),
+                summarize_fn=_summary,
+            )
+            self.assertEqual(resumed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
+
+    def test_existing_root_requires_explicit_resume_and_rejects_old_ab_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            self._run(root, now=_now("2026-06-19"))
+            with self.assertRaisesRegex(RuntimeError, "use --resume explicitly"):
+                self._run(root, start="2026-07-02", now=_now("2026-07-01"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "contaminated"
+            root.mkdir()
+            (root / "AB_CAMPAIGN.json").write_text("{}")
+            with self.assertRaisesRegex(RuntimeError, "existing A/B artifacts"):
+                self._run(root, now=_now("2026-06-19"))
+
+    def test_campaign_lock_uses_exclusive_flock_for_full_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            with patch("fcntl.flock") as flock:
+                with _campaign_lock(root):
+                    self.assertTrue((root / ".campaign.lock").exists())
+            self.assertEqual(flock.call_count, 2)
+            self.assertEqual(flock.call_args_list[0].args[1], fcntl.LOCK_EX)
+            self.assertEqual(flock.call_args_list[1].args[1], fcntl.LOCK_UN)

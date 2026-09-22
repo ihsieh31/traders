@@ -188,7 +188,7 @@ campaign 會以 Alpaca calendar 固定 30 個 NYSE sessions，未完成前一日
 
 首次使用 `--config-json` 時，resume 也必須提供相同檔案；否則 coordinator 會將它視為 config drift 而拒絕繼續。
 
-完成第 30 個 pair 後，`campaign_summary.json` 與 `campaign_summary.md` 會比較兩個 Paper 帳戶。起始與結束 equity 都直接讀取 Alpaca broker，報告包含 starting equity、ending equity、absolute P&L、return%，以及既有 analysis/execution telemetry；它不會宣告「贏家」。若 final report 寫入中斷，重新執行 `--resume` 只會重新產生報告，不會再次交易。
+完成第 30 個 pair 後，`campaign_summary.json` 與 `campaign_summary.md` 會比較兩個 Paper 帳戶。起始與結束 equity 都直接讀取 Alpaca broker，報告包含 starting equity、ending equity、absolute P&L、return%，以及既有 analysis/execution telemetry；它不會宣告「贏家」。結束 broker snapshot 會在 completion 時 durable pin，之後 resume 不會因帳戶後續變動而刷新它。若 final report 寫入中斷，重新執行 `--resume` 只會重新產生報告，不會再次交易。
 
 ## 產物在哪裡？
 
