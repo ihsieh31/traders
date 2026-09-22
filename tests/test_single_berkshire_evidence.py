@@ -184,6 +184,9 @@ class _FakeBroker:
 
 
 class _FakeService:
+    def __init__(self):
+        self.execute_calls = []
+
     def enforce_exit_deadlines(self, can_submit=None):
         return {"success": True, "deadline_exits": [], "broker_calls": 0}
 
@@ -192,6 +195,7 @@ class _FakeService:
                 "reconciliation_reasons": []}
 
     def execute(self, **kwargs):
+        self.execute_calls.append(kwargs)
         return {"success": True, "broker_attempted": True, "broker_calls": 1,
                 "decision_id": kwargs.get("decision_id")}
 
@@ -255,12 +259,13 @@ class PerSymbolGraphTests(unittest.TestCase):
             graphs.append(graph)
             return graph
 
+        service = _FakeService()
         runtime = dict(self.runtime)
         runtime["analysis_backend"] = backend
         deps = lr.LongRunDeps(
             screening_fn=lambda config, refresh=False: _plan(symbols),
             graph_factory=factory,
-            execution_service_factory=lambda: _FakeService(),
+            execution_service_factory=lambda: service,
             broker_client_factory=lambda: _FakeBroker(),
             sleep_fn=lambda seconds: None,
         )
@@ -268,11 +273,11 @@ class PerSymbolGraphTests(unittest.TestCase):
             run_id=f"run-{backend}", session_date=SESSION,
             long_cfg=lr.default_long_run_config(), runtime=runtime, deps=deps,
         )
-        return journal, graphs
+        return journal, graphs, service
 
     def test_berkshire_builds_one_graph_and_packet_per_symbol(self):
         with _patch_toolkit():
-            journal, graphs = self._run_round("berkshire")
+            journal, graphs, _service = self._run_round("berkshire")
         self.assertEqual(journal["status"], "COMPLETED")
         self.assertEqual(len(graphs), 2, "Berkshire must build a graph per symbol")
         paths, shas = set(), set()
@@ -290,8 +295,44 @@ class PerSymbolGraphTests(unittest.TestCase):
             self.assertTrue(entry["evidence_packet_sha256"])
             self.assertTrue(Path(entry["evidence_packet_path"]).exists())
 
+    def test_pinned_missing_packet_fails_symbol_closed_on_resume(self):
+        """P2-3 at production level: no recapture, no regeneration, no trade."""
+        with _patch_toolkit():
+            journal, _graphs, _service = self._run_round(
+                "berkshire", symbols=("AAPL",))
+        entry = journal["symbols"]["AAPL"]
+        pinned = entry["evidence_packet_sha256"]
+        packet = Path(entry["evidence_packet_path"])
+        self.assertTrue(packet.exists())
+
+        # Re-enter the symbol's analysis on resume with the packet removed.
+        replay = lr.load_round_journal("run-berkshire", SESSION)
+        replay["status"] = "RUNNING"  # the process died before the round ended
+        replay["symbols"]["AAPL"]["status"] = "PENDING"
+        lr.save_round_journal("run-berkshire", replay)
+        packet.unlink()
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("pinned packet must never be recaptured")
+
+        with patch(
+            "tradingagents.experiments.evidence_snapshot._capture_packet",
+            side_effect=_boom,
+        ) as capture:
+            journal2, _graphs2, service2 = self._run_round(
+                "berkshire", symbols=("AAPL",))
+        capture.assert_not_called()
+        self.assertEqual(service2.execute_calls, [], "no trade after evidence loss")
+        self.assertFalse(packet.exists(), "replacement evidence must not be written")
+        failed = journal2["symbols"]["AAPL"]
+        self.assertEqual(failed["status"], "FAILED")
+        self.assertIn("EvidenceIntegrityError",
+                      failed["execution_result_summary"]["error"])
+        self.assertEqual(failed["trade_intent"], None)
+        self.assertEqual(failed["evidence_packet_sha256"], pinned)
+
     def test_traders_reuses_one_round_level_graph(self):
-        journal, graphs = self._run_round("traders")
+        journal, graphs, _service = self._run_round("traders")
         self.assertEqual(journal["status"], "COMPLETED")
         self.assertEqual(len(graphs), 1, "Traders shares one graph across symbols")
         self.assertEqual(
