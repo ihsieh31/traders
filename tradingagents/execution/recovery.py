@@ -671,8 +671,8 @@ def _risk_terms_for_plan(payload: dict, *, BrokerAuthorityError, require_two_to_
 def _portfolio_stop_risk_totals(
     *, execution_store: Any, snapshot: Any, candidate_order_id: Optional[str],
     broker_status_to_local, BrokerAuthorityError,
-) -> tuple[float, float, set[str], set[str]]:
-    """Return (active risk, pending risk, protective client IDs, children IDs)."""
+) -> tuple[float, float]:
+    """Return active and pending stop-risk reservations."""
     from .lifecycle import remaining_lots
     from .order_planning import _planned_order_specs
     from .store import client_order_id_for
@@ -685,14 +685,6 @@ def _portfolio_stop_risk_totals(
 
     local_orders = execution_store.list_all_orders()
     local_by_client = {row["client_order_id"]: row for row in local_orders}
-    protective_client_ids: set[str] = set()
-    protective_broker_ids: set[str] = set()
-    for row in local_orders:
-        if execution_store.protective_parent(row["order_id"]) is not None:
-            protective_client_ids.add(row["client_order_id"])
-            if row.get("broker_order_id"):
-                protective_broker_ids.add(row["broker_order_id"])
-
     broker_by_client: dict[str, Any] = {}
     for broker_order in snapshot.orders:
         client_id = str(broker_order.client_order_id or "")
@@ -892,7 +884,7 @@ def _portfolio_stop_risk_totals(
         if not math.isfinite(pending_risk):
             raise BrokerAuthorityError("aggregate pending stop risk is invalid")
 
-    return existing_risk, pending_risk, protective_client_ids, protective_broker_ids
+    return existing_risk, pending_risk
 
 
 def _evaluate_opening_caps(
@@ -920,7 +912,6 @@ def _evaluate_opening_caps(
     such symbol fails the evaluation closed (zero broker calls) instead of
     guessing a price from the candidate.
     """
-    from dataclasses import replace
     from tradingagents.risk.exposure import (
         ExposureDecision,
         clip_to_portfolio_stop_risk,
@@ -929,19 +920,13 @@ def _evaluate_opening_caps(
     )
 
     config = _get_execution_config()
-    existing_risk, pending_risk, protective_clients, protective_broker_ids = _portfolio_stop_risk_totals(
+    existing_risk, pending_risk = _portfolio_stop_risk_totals(
         execution_store=execution_store,
         snapshot=snapshot,
         candidate_order_id=candidate_order_id,
         broker_status_to_local=broker_status_to_local,
         BrokerAuthorityError=BrokerAuthorityError,
     )
-    filtered_orders = tuple(
-        order for order in snapshot.orders
-        if order.client_order_id not in protective_clients
-        and order.broker_order_id not in protective_broker_ids
-    )
-    cap_snapshot = replace(snapshot, orders=filtered_orders)
     quote_price = float(quote.price) if quote is not None else None
     position = snapshot.position(symbol)
     planned_close_reduction = 0.0
@@ -971,7 +956,7 @@ def _evaluate_opening_caps(
         reference_prices[(symbol or "").upper().replace("/", "")] = quote_price
     needs_price = {
         order.symbol
-        for order in cap_snapshot.orders
+        for order in snapshot.orders
         if order.notional is None
         and broker_status_to_local(order.status)
         not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
@@ -981,7 +966,7 @@ def _evaluate_opening_caps(
         if required in reference_prices:
             continue
         if quote_factory is None:
-            total, fully_estimated = outstanding_increasing_notional(cap_snapshot)
+            total, fully_estimated = outstanding_increasing_notional(snapshot)
             if not fully_estimated:
                 raise BrokerAuthorityError(
                     f"cannot obtain a validated quote for outstanding-order "
@@ -1001,7 +986,7 @@ def _evaluate_opening_caps(
     cap_result = evaluate_opening_exposure(
         symbol=symbol,
         proposed_notional=proposed_notional,
-        snapshot=cap_snapshot,
+        snapshot=snapshot,
         quote_price=quote_price,
         reference_prices=reference_prices,
         symbol_cap_pct=float(config.get("max_symbol_concentration_pct", 25.0) or 0),

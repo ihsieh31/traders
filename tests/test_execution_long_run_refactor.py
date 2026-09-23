@@ -42,7 +42,9 @@ UPDATED_CANONICAL_HASHES = {
     "protected_close": "e489968434e1c4fbfeb0fda922f78dc3f64137b9c5f0f9f25161dda51c8b046b",
     "adopt_unknown": "661f53c4d727bb4a8647cce70d59f35525ca68b07066241f4ea6110b3265ed3e",
     "block_submitting": "3cbf0f6772631c053d6a093bc7a461c09fb96f58429c1710c790b3b05211436a",
-    "gap_between_items": "759f224a061863caebe919b40ff5e15d091ddb74228166c34fe906bea06f40a4",
+    # Recovery cap evaluation now retains conservative exposure from the
+    # account's live protective OCO children.
+    "gap_between_items": "0b89641b87c59a768a445521413976093cc48f0eb7ff26c415e21a7669873b4b",
     "contracts": "e7f78fffa5fb228d62573f680bb33ba83cec8129c8dd0e7bab50e1eceafd22fe",
 }
 

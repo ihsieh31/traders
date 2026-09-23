@@ -355,6 +355,72 @@ class TestStopRiskExecutionBridge:
         assert result.details["existing_position_risk"] == 100
         assert result.details["reserved_pending_risk"] == 0
 
+    def test_opening_caps_keep_bracket_sibling_gross_exposure_without_double_counting_stop_risk(self, tmp_path):
+        store = self._store(tmp_path)
+        parent = _write_order(
+            store, "bracket-held", "AAPL", _payload("AAPL"),
+            quantity=9, fill_qty=9, fill_price=100, status="FILLED",
+        )
+        store.sync_order_from_broker(
+            parent["order_id"], "FILLED", broker_order_id="parent-broker", filled_qty=9,
+        )
+        stop_child = SimpleNamespace(
+            broker_order_id="stop-broker", client_order_id="stop-client",
+            symbol="AAPL", side="sell", qty=9,
+        )
+        target_child = SimpleNamespace(
+            broker_order_id="target-broker", client_order_id="target-client",
+            symbol="AAPL", side="sell", qty=9,
+        )
+        parent_row = store.get_order(parent["order_id"])
+        store.register_protective_child(parent_row, stop_child)
+        store.register_protective_child(parent_row, target_child)
+        broker_children = [
+            BrokerOrder(
+                broker_order_id=child.broker_order_id,
+                client_order_id=child.client_order_id,
+                symbol="AAPL", side="sell", status="new", qty=9, filled_qty=0,
+                filled_avg_price=None, updated_at=datetime.now(timezone.utc),
+                order_type=order_type,
+            )
+            for child, order_type in ((stop_child, "stop"), (target_child, "limit"))
+        ]
+        held_position = _position("AAPL", 9, 100)
+        candidate = _payload("GOOG")
+
+        protected_only = _evaluate(
+            store,
+            _snapshot([held_position], broker_children),
+            candidate,
+            proposed=10000,
+        )
+        assert protected_only.approved
+        # Through the production cap bridge, the first SELL closes the held
+        # lot and the OCO sibling remains conservatively counted as $900.
+        assert protected_only.details["gross_outstanding"] == 900
+        # These children protect the existing lot; the lot's stop risk is
+        # already represented by existing_position_risk.
+        assert protected_only.details["existing_position_risk"] == 90
+        assert protected_only.details["reserved_pending_risk"] == 0
+
+        pending = _write_order(
+            store, "pending-open", "MSFT", _payload("MSFT"), quantity=10,
+        )
+        pending_broker_order = BrokerOrder(
+            broker_order_id="pending-broker", client_order_id=pending["client_order_id"],
+            symbol="MSFT", side="buy", status="new", qty=10, filled_qty=0,
+            filled_avg_price=None, updated_at=datetime.now(timezone.utc),
+        )
+        with_pending_open = _evaluate(
+            store,
+            _snapshot([held_position], [*broker_children, pending_broker_order]),
+            candidate,
+            proposed=10000,
+        )
+        assert with_pending_open.approved
+        assert with_pending_open.details["gross_outstanding"] == 1900
+        assert with_pending_open.details["reserved_pending_risk"] == 100
+
     def test_recovery_uses_fresh_snapshot_risk_headroom(self, tmp_path):
         # Recovery's shared cap bridge receives a fresh snapshot. A mark rise
         # that consumes the full risk budget blocks the durable pending order.

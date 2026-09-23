@@ -364,7 +364,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
         )
         return broker
 
-    def test_second_order_cannot_reuse_filled_headroom(self):
+    def test_filled_bracket_siblings_conservatively_consume_recovery_headroom(self):
         broker = self._broker()
         # The harness broker must model protective children so a filled
         # program entry can prove its protection (N07 coverage invariant).
@@ -435,16 +435,17 @@ class ExecutionIntegrationTests(unittest.TestCase):
                              "side": "buy", "quantity": 49.0, "notional": None}],
                 )
                 second = svc.startup_recover()
-            self.assertTrue(second["success"], second)
-            self.assertEqual(len(broker.state["submit_calls"]), 2)
-            resubmitted = next(o for o in broker.state["orders"]
-                               if o.client_order_id == "ta-second-buy")
-            clipped = float(resubmitted.qty) * 101
-            # Headroom was recomputed from the fresh snapshot: 16600 held
-            # under the 20000 cap leaves 3400 — the 5000 resubmit is clipped
-            # to it (33 shares x 101) instead of reusing any stale size.
-            self.assertLessEqual(clipped, 3400.0)
-            self.assertGreater(clipped, 3300.0)
+            self.assertFalse(second["success"], second)
+            # The live OCO siblings can both fill in a race. One SELL closes
+            # the held 166 shares and the other remains conservatively
+            # counted as extra opening exposure, so the symbol cap rejects
+            # this recovery resubmit before a broker POST.
+            self.assertEqual(len(broker.state["submit_calls"]), 1)
+            self.assertEqual(second["recovery_maintenance"]["submit_calls"], 0)
+            self.assertTrue(any("binding: symbol cap" in reason
+                                for reason in second["reconciliation_reasons"]))
+            local_second = svc.store.get_order_by_client("ta-second-buy")
+            self.assertEqual(local_second["status"], "CANCELED")
 
     def test_pending_buy_order_consumes_headroom(self):
         # A live (not yet filled) opening buy from a prior decision must be
