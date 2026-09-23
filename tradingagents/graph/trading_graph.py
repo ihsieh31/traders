@@ -510,9 +510,6 @@ class TradingAgentsGraph:
                 holding_days=holding_days,
                 reflection=reflection,
             )
-            self._reflect_agents_on_outcome(
-                ticker, entry_date_text, raw_return, alpha_return, holding_days
-            )
 
     def _reflect_agents_on_outcome(
         self,
@@ -522,12 +519,14 @@ class TradingAgentsGraph:
         alpha_return: Optional[float],
         holding_days: int,
     ) -> None:
-        """Feed a realized outcome back into the per-agent ChromaDB memories.
+        """Reflect an explicitly supplied, execution-backed outcome.
 
         Recovers the original run's final_state from the persisted run log,
         so each agent reflects on the exact situation it saw when the
         decision was made — not on today's state. Best-effort by design:
-        reflection failures must never affect the current analysis run.
+        reflection failures must never affect the current analysis run. Raw
+        forward asset returns from ``_resolve_memory_log_outcomes`` never
+        call this method because they do not establish realized trade P&L.
         """
         if not self.config.get("reflection_on_outcome_enabled", False):
             return

@@ -147,25 +147,22 @@ class BracketExecutionTests(unittest.TestCase):
         )
 
     def test_buy_with_stop_and_target_submits_bracket_order(self):
-        result = self._execute(_intent(stop_loss="182.50", take_profit="195"))
+        result = self._execute(_intent(stop_loss="182.50", take_profit="210"))
 
         self.assertTrue(result["success"])
         self.assertEqual(result["protective_order_status"], "submitted_bracket")
         request = self.client.submit_order.call_args[0][0]
         self.assertEqual(str(request.order_class.value).lower(), "bracket")
         self.assertEqual(float(request.stop_loss.stop_price), 182.50)
-        self.assertEqual(float(request.take_profit.limit_price), 195.0)
+        self.assertEqual(float(request.take_profit.limit_price), 210.0)
         self.assertEqual(str(request.time_in_force.value).lower(), "gtc")
         self.assertIsNotNone(request.qty)
 
-    def test_buy_with_stop_only_submits_oto_order(self):
+    def test_buy_with_stop_only_is_rejected_by_opening_contract(self):
         result = self._execute(_intent(stop_loss="182.50"))
 
-        self.assertEqual(result["protective_order_status"], "submitted_oto")
-        request = self.client.submit_order.call_args[0][0]
-        self.assertEqual(str(request.order_class.value).lower(), "oto")
-        self.assertEqual(float(request.stop_loss.stop_price), 182.50)
-        self.assertIsNone(request.take_profit)
+        self.assertFalse(result["success"])
+        self.client.submit_order.assert_not_called()
 
     def test_crypto_buy_without_supported_protection_is_blocked(self):
         result = self._execute(
@@ -194,7 +191,7 @@ class BracketExecutionTests(unittest.TestCase):
             "tradingagents.dataflows.config.get_config",
             return_value={"protective_bracket_orders_enabled": False},
         ):
-            result = self._execute(_intent(stop_loss="182.50", take_profit="195"))
+            result = self._execute(_intent(stop_loss="182.50", take_profit="210"))
 
         self.assertFalse(result["success"])
         self.client.submit_order.assert_not_called()
@@ -212,7 +209,7 @@ class BracketExecutionTests(unittest.TestCase):
             HTTPError(response=rejection),
         )
 
-        result = self._execute(_intent(stop_loss="182.50", take_profit="195"))
+        result = self._execute(_intent(stop_loss="182.50", take_profit="210"))
 
         self.assertFalse(result["success"])
         self.assertEqual(self.client.submit_order.call_count, 1)
@@ -223,7 +220,7 @@ class BracketExecutionTests(unittest.TestCase):
         result = self._execute(
             _intent(
                 stop_loss="210",
-                take_profit="180",
+                take_profit="147",
                 action=ExecutableAction.SHORT,
                 trading_mode="trading",
                 allow_shorts=True,
@@ -234,7 +231,7 @@ class BracketExecutionTests(unittest.TestCase):
         self.assertEqual(result["protective_order_status"], "submitted_bracket")
         request = self.client.submit_order.call_args[0][0]
         self.assertEqual(float(request.stop_loss.stop_price), 210.0)
-        self.assertEqual(float(request.take_profit.limit_price), 180.0)
+        self.assertEqual(float(request.take_profit.limit_price), 147.0)
 
 
 if __name__ == "__main__":

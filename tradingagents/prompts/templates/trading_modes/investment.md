@@ -11,7 +11,7 @@ Protective-order capability boundary: Use the existing broker protective orders 
 - **Holding Period:** 2-10 trading days, capturing intermediate price swings
 - **Entry Strategy:** Based on multi-timeframe confluence (1h/4h/1d), pullbacks to support, or breakouts
 - **Exit Strategy:** Predefined swing targets at key resistance/support or explicit full-exit decisions
-- **Risk Management:** 1-3% risk per trade, minimum 2:1 risk/reward ratio
+- **Risk Management:** 1-3% risk per trade. Opening orders require at least 2:1 R/R across the full authorized entry range; execution checks this deterministically.
 - **Position Sizing:** Based on ATR-derived stop distance and account risk tolerance
 
 **SWING TRADING CRITERIA:**

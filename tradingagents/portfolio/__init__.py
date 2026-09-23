@@ -2,7 +2,7 @@
 
 The agent pipeline analyzes each symbol in isolation; nothing ever looks at
 the book as a whole. This layer sits above the per-symbol decisions and
-adjusts the size of NEW long exposure with three plain-arithmetic guards —
+adjusts the size of NEW long or short exposure with three plain-arithmetic guards —
 zero LLM involvement, so it cannot be argued out of a limit:
 
 - **Correlation penalty**: a candidate whose returns correlate above a
@@ -117,11 +117,14 @@ def assess_new_position(
     open_positions: Dict[str, float],
     price_history: Dict[str, pd.DataFrame],
     config: Optional[PortfolioLimitsConfig] = None,
+    action: str = "BUY",
 ) -> PortfolioVerdict:
     """Size a proposed NEW position against the whole book.
 
-    `open_positions` maps symbol -> absolute market value; `price_history`
-    maps symbol -> OHLCV frame (the candidate's own history included).
+    `open_positions` maps symbol -> signed market value (positive LONG,
+    negative SHORT); `price_history` maps symbol -> OHLCV frame (the
+    candidate's own history included). Correlation compares signed P&L
+    returns, so same-direction risk is penalized regardless of position side.
     """
     config = config or PortfolioLimitsConfig()
     requested = max(float(requested_notional or 0.0), 0.0)
@@ -149,7 +152,9 @@ def assess_new_position(
     candidate = _candidate_returns(symbol, price_history, config.lookback_bars)
     factor = 1.0
 
-    # --- correlation against every open position -----------------------------
+    candidate_direction = -1.0 if str(action or "").upper() == "SHORT" else 1.0
+
+    # --- P&L correlation against every open position --------------------------
     if candidate is not None and open_positions:
         max_positive = None
         for other_symbol in open_positions:
@@ -161,7 +166,12 @@ def assess_new_position(
             aligned = pd.concat([candidate, other], axis=1, join="inner").dropna()
             if len(aligned) < _MIN_OVERLAP_BARS:
                 continue
-            corr = float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
+            held_value = float(open_positions[other_symbol])
+            if held_value == 0:
+                continue
+            candidate_pnl = aligned.iloc[:, 0] * candidate_direction
+            held_pnl = aligned.iloc[:, 1] * (1.0 if held_value > 0 else -1.0)
+            corr = float(candidate_pnl.corr(held_pnl))
             if pd.isna(corr):
                 continue
             verdict.correlations[other_symbol] = corr
@@ -172,7 +182,7 @@ def assess_new_position(
             verdict.factors["correlation"] = config.correlated_size_factor
             worst = max(verdict.correlations, key=verdict.correlations.get)
             verdict.reasons.append(
-                f"High correlation with open position {worst} "
+                f"High P&L correlation with open position {worst} "
                 f"({max_positive:+.2f} > {config.high_correlation:g}): "
                 f"size scaled by {config.correlated_size_factor:g}."
             )
@@ -244,7 +254,7 @@ def adjust_new_position_notional(
     gather_state: Callable[[], Tuple[Optional[float], Dict[str, float], Dict[str, pd.DataFrame]]],
     config: Optional[PortfolioLimitsConfig] = None,
 ) -> float:
-    """Execution-time hook: portfolio-aware size for NEW long exposure only.
+    """Execution-time hook: portfolio-aware size for new LONG or SHORT exposure.
 
     SELL/HOLD/NEUTRAL (closing or keeping) pass through untouched — the
     layer limits what gets added to the book, never what leaves it. Any
@@ -252,7 +262,8 @@ def adjust_new_position_notional(
     amount: the portfolio layer must never block a trade by breaking.
     """
     config = config or PortfolioLimitsConfig()
-    if not config.enabled or str(action or "").upper() not in ("BUY", "LONG"):
+    normalized_action = str(action or "").upper()
+    if not config.enabled or normalized_action not in ("BUY", "LONG", "SHORT"):
         return requested_notional
     try:
         equity, open_positions, price_history = gather_state()
@@ -263,6 +274,7 @@ def adjust_new_position_notional(
             open_positions or {},
             price_history or {},
             config=config,
+            action=normalized_action,
         )
         for reason in verdict.reasons:
             print(f"[PORTFOLIO] {symbol}: {reason}")
@@ -303,7 +315,15 @@ def gather_portfolio_state_via_alpaca(
     open_positions: Dict[str, float] = {}
     for pos in client.get_all_positions():
         try:
-            open_positions[str(pos.symbol).upper()] = abs(float(pos.market_value))
+            quantity = float(pos.qty)
+            market_value = abs(float(pos.market_value))
+            if not isfinite(quantity) or quantity == 0 or not isfinite(market_value):
+                continue
+            # Use position direction explicitly. Broker adapters may expose
+            # short market value as either signed or absolute.
+            open_positions[str(pos.symbol).upper()] = (
+                market_value if quantity > 0 else -market_value
+            )
         except (TypeError, ValueError):
             continue
 

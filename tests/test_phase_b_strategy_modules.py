@@ -12,7 +12,9 @@ import pandas as pd
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.portfolio import (
     PortfolioLimitsConfig,
+    assess_new_position,
     adjust_new_position_notional,
+    gather_portfolio_state_via_alpaca,
 )
 
 
@@ -64,6 +66,70 @@ class CorrelationHookCallerTests(unittest.TestCase):
             "NEW", "BUY", 10000.0, gather_state=broken, config=PortfolioLimitsConfig(),
         )
         self.assertEqual(adjusted, 10000.0)
+
+    def test_portfolio_correlation_uses_signed_pnl_for_long_short_pairs(self):
+        returns = [((index % 9) - 4) / 1000 for index in range(60)]
+
+        def frame(sign):
+            closes = [100.0]
+            for value in returns:
+                closes.append(closes[-1] * (1 + sign * value))
+            return _frame(closes)
+
+        config = PortfolioLimitsConfig(
+            vol_sizing_enabled=False, correlated_size_factor=0.5,
+            high_correlation=0.6, min_size_factor=0.25,
+        )
+        cases = [
+            # candidate side, held signed MV, raw return sign, penalty?
+            ("LONG", 20000.0, 1, True),
+            ("SHORT", -20000.0, 1, True),
+            ("LONG", -20000.0, 1, False),
+            ("LONG", -20000.0, -1, True),
+        ]
+        for action, held_value, raw_sign, should_penalize in cases:
+            with self.subTest(action=action, held_value=held_value, raw_sign=raw_sign):
+                verdict = assess_new_position(
+                    "NEW", 10000.0, 100000.0,
+                    {"HELD": held_value},
+                    {"NEW": frame(1), "HELD": frame(raw_sign)},
+                    config=config, action=action,
+                )
+                self.assertEqual(verdict.adjusted_notional,
+                                 5000.0 if should_penalize else 10000.0)
+                expected_corr = raw_sign * (-1 if action == "SHORT" else 1) * (
+                    1 if held_value > 0 else -1
+                )
+                self.assertAlmostEqual(verdict.correlations["HELD"], expected_corr, places=6)
+
+    def test_signed_market_values_keep_gross_cap_absolute(self):
+        config = PortfolioLimitsConfig(
+            vol_sizing_enabled=False, max_gross_exposure_pct=80.0,
+        )
+        verdict = assess_new_position(
+            "NEW", 20000.0, 100000.0,
+            {"LONG": 60000.0, "SHORT": -30000.0},
+            {}, config=config, action="LONG",
+        )
+        self.assertEqual(verdict.adjusted_notional, 0.0)
+        self.assertTrue(any("$90,000" in reason for reason in verdict.reasons))
+
+    def test_gather_preserves_short_market_value_sign(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        client = SimpleNamespace(
+            get_account=lambda: SimpleNamespace(equity="100000"),
+            get_all_positions=lambda: [
+                SimpleNamespace(symbol="LONG", qty="12", market_value="12000"),
+                # Some broker adapters provide short market value unsigned.
+                SimpleNamespace(symbol="SHORT", qty="-7", market_value="7000"),
+            ],
+        )
+        with patch("tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client", return_value=client), \
+             patch("tradingagents.dataflows.alpaca_utils.AlpacaUtils.get_stock_data", return_value=_frame([1, 2, 3])):
+            _, positions, _ = gather_portfolio_state_via_alpaca("NEW")
+        self.assertEqual(positions, {"LONG": 12000.0, "SHORT": -7000.0})
 
 
 

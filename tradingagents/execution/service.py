@@ -191,6 +191,8 @@ def _evaluate_opening_caps(
     quote: Any,
     intent_dict: dict[str, Any],
     quote_factory: Optional[Callable[[str], Any]] = None,
+    execution_store: Any = None,
+    candidate_order_id: Optional[str] = None,
 ):
     """Run the Phase B deterministic exposure evaluator for opening legs.
 
@@ -209,6 +211,8 @@ def _evaluate_opening_caps(
         quote=quote,
         intent_dict=intent_dict,
         quote_factory=quote_factory,
+        execution_store=execution_store,
+        candidate_order_id=candidate_order_id,
         BrokerAuthorityError=BrokerAuthorityError,
         _get_execution_config=_get_execution_config,
         broker_status_to_local=broker_status_to_local,

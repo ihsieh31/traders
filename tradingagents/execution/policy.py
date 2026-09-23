@@ -6,6 +6,7 @@ fill. Stop risk is a planned loss bound; gaps/slippage can exceed it.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 import math
 
 
@@ -14,6 +15,60 @@ def utc_timestamp(value):
     if stamp.tzinfo is None or stamp.utcoffset() is None:
         raise ValueError("timestamps must include a timezone")
     return stamp.astimezone(timezone.utc)
+
+
+@dataclass(frozen=True)
+class RiskRewardTerms:
+    worst_entry_price: float
+    risk_per_share: float
+    reward_per_share: float
+    risk_fraction: float
+    ratio: float
+
+
+def worst_case_risk_reward(
+    *, target_position, minimum_price, maximum_price, stop_loss_price,
+    take_profit_price,
+) -> RiskRewardTerms | None:
+    """Calculate R/R at the least favorable price in the authorized range."""
+    try:
+        low, high, stop, target = map(
+            float, (minimum_price, maximum_price, stop_loss_price, take_profit_price)
+        )
+        if not all(math.isfinite(value) and value > 0 for value in (low, high, stop, target)):
+            return None
+        if low > high:
+            return None
+        direction = str(getattr(target_position, "value", target_position)).upper()
+        if direction not in {"LONG", "SHORT"}:
+            return None
+        short = direction == "SHORT"
+        if (short and (stop <= high or target >= low)) or (not short and (stop >= low or target <= high)):
+            return None
+        worst = low if short else high
+        risk = stop - worst if short else worst - stop
+        reward = worst - target if short else target - worst
+        if risk <= 0 or reward <= 0:
+            return None
+        risk_fraction, ratio = risk / worst, reward / risk
+        if not math.isfinite(risk_fraction) or not math.isfinite(ratio):
+            return None
+        return RiskRewardTerms(worst, risk, reward, risk_fraction, ratio)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _is_opening_intent(intent: dict) -> bool:
+    transition = str(intent.get("position_transition") or "").upper()
+    if transition in {"OPEN_LONG", "OPEN_SHORT", "REVERSE_TO_LONG", "REVERSE_TO_SHORT"}:
+        return True
+    for row in intent.get("planned_actions") or []:
+        action = str(row.get("action") or "").lower() if isinstance(row, dict) else ""
+        if action.startswith("open_"):
+            return True
+    target = str(intent.get("target_position") or "").upper()
+    current = str(intent.get("current_position") or "").upper()
+    return target in {"LONG", "SHORT"} and target != current
 
 
 def entry_check(intent: dict, *, now=None, price=None, equity=None, requested=None) -> tuple[float | None, str | None]:
@@ -43,7 +98,21 @@ def entry_check(intent: dict, *, now=None, price=None, equity=None, requested=No
         if (short and stop <= high) or (not short and stop >= low):
             raise ValueError("stop must be outside the entire entry range on the loss side")
         target = controls.get("take_profit_price")
-        if target is not None:
+        if _is_opening_intent(intent):
+            if target is None:
+                raise ValueError("opening exposure requires a numeric take-profit price for minimum 2:1 R/R")
+            terms = worst_case_risk_reward(
+                target_position=intent.get("target_position"),
+                minimum_price=low,
+                maximum_price=high,
+                stop_loss_price=stop,
+                take_profit_price=target,
+            )
+            if terms is None:
+                raise ValueError("stop and target must define positive risk and reward beyond the entry range")
+            if terms.ratio < 2.0:
+                raise ValueError(f"opening exposure requires at least 2:1 R/R at worst authorized entry (got {terms.ratio:.2f}:1)")
+        elif target is not None:
             target = float(target)
             if not math.isfinite(target) or target <= 0 or (short and target >= low) or (not short and target <= high):
                 raise ValueError("target must be beyond the entry range on the profit side")
@@ -56,8 +125,10 @@ def entry_check(intent: dict, *, now=None, price=None, equity=None, requested=No
         equity, requested = float(equity), float(requested)
         if not all(math.isfinite(v) and v > 0 for v in (equity, requested)):
             raise ValueError("invalid account equity or requested amount")
-        # Use the worst price within the authorized range, not an unrelated ATR.
-        distance_fraction = (stop - low) / low if short else (high - stop) / high
+        # Use the same worst authorized entry used by the deterministic R/R gate.
+        distance_fraction = terms.risk_fraction if _is_opening_intent(intent) else (
+            (stop - low) / low if short else (high - stop) / high
+        )
         amount = min(requested, equity * risk / distance_fraction)
         cap = policy.get("maximum_notional")
         if cap is not None:

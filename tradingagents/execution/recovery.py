@@ -6,6 +6,8 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+import json
+import math
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
@@ -242,6 +244,8 @@ def _resubmit_recovered(
                 f"recovery resubmit blocked for {local['symbol']}: {quarantine['error']}"
             )
         try:
+            intent = self._store.get_intent_for_order(local["order_id"])
+            payload = json.loads((intent or {}).get("payload_json") or "{}")
             cap_result = _evaluate_opening_caps(
                 symbol=local["symbol"],
                 specs=[
@@ -253,8 +257,10 @@ def _resubmit_recovered(
                 ],
                 snapshot=snapshot,
                 quote=quote,
-                intent_dict={"symbol": local["symbol"]},
+                intent_dict=payload,
                 quote_factory=self._quote_factory,
+                execution_store=self._store,
+                candidate_order_id=local["order_id"],
             )
         except BrokerAuthorityError:
             raise
@@ -275,14 +281,12 @@ def _resubmit_recovered(
             and float(effective_notional) > cap_result.notional
         ):
             effective_notional = cap_result.notional
-    intent = self._store.get_intent_for_order(local["order_id"])
     # Phase B note: the Phase A "recovery target already exists" block is
     # superseded — an increase onto an existing same-side position is
     # allowed and clipped by the recomputed exposure caps above.
     recovery_controls = None
     if not risk_reducing:
         from .policy import entry_check
-        payload = json.loads((intent or {}).get("payload_json") or "{}")
         amount = float(effective_notional or float(effective_quantity or 0) * quote.price)
         amount, error = entry_check(payload, price=(quote.ask_price if side == "buy" else quote.bid_price) or float("nan"),
                                     equity=snapshot.equity, requested=amount)
@@ -619,6 +623,278 @@ def _recover_locked(
     )
 
 
+def _stop_risk_number(value: Any, label: str, *, BrokerAuthorityError, allow_zero=False) -> float:
+    if isinstance(value, bool):
+        raise BrokerAuthorityError(f"invalid {label}: boolean is not a risk value")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise BrokerAuthorityError(f"invalid {label}: {value!r}") from exc
+    if not math.isfinite(number) or number < 0 or (number == 0 and not allow_zero):
+        raise BrokerAuthorityError(f"invalid {label}: {value!r}")
+    return number
+
+
+def _signed_risk_number(value: Any, label: str, *, BrokerAuthorityError, allow_zero=False) -> float:
+    if isinstance(value, bool):
+        raise BrokerAuthorityError(f"invalid {label}: boolean is not a risk value")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise BrokerAuthorityError(f"invalid {label}: {value!r}") from exc
+    if not math.isfinite(number) or (number == 0 and not allow_zero):
+        raise BrokerAuthorityError(f"invalid {label}: {value!r}")
+    return number
+
+
+def _risk_terms_for_plan(payload: dict, *, BrokerAuthorityError, require_two_to_one: bool):
+    from .policy import worst_case_risk_reward
+
+    controls = payload.get("risk_controls") or {}
+    policy = payload.get("entry_policy") or {}
+    terms = worst_case_risk_reward(
+        target_position=payload.get("target_position"),
+        minimum_price=policy.get("minimum_price"),
+        maximum_price=policy.get("maximum_price"),
+        stop_loss_price=controls.get("stop_loss_price"),
+        take_profit_price=controls.get("take_profit_price"),
+    )
+    if terms is None:
+        raise BrokerAuthorityError("durable opening plan has invalid stop/target geometry")
+    if require_two_to_one and terms.ratio < 2.0:
+        raise BrokerAuthorityError(
+            f"durable opening plan violates minimum 2:1 R/R ({terms.ratio:.2f}:1)"
+        )
+    return terms
+
+
+def _portfolio_stop_risk_totals(
+    *, execution_store: Any, snapshot: Any, candidate_order_id: Optional[str],
+    broker_status_to_local, BrokerAuthorityError,
+) -> tuple[float, float, set[str], set[str]]:
+    """Return (active risk, pending risk, protective client IDs, children IDs)."""
+    from .lifecycle import remaining_lots
+    from .order_planning import _planned_order_specs
+    from .store import client_order_id_for
+    from tradingagents.risk.exposure import remaining_position_stop_risk
+
+    if execution_store is None:
+        raise BrokerAuthorityError("durable execution ledger unavailable; refusing new exposure")
+    if execution_store.account_binding_owner() != snapshot.account_id:
+        raise BrokerAuthorityError("execution ledger account binding does not match broker snapshot")
+
+    local_orders = execution_store.list_all_orders()
+    local_by_client = {row["client_order_id"]: row for row in local_orders}
+    protective_client_ids: set[str] = set()
+    protective_broker_ids: set[str] = set()
+    for row in local_orders:
+        if execution_store.protective_parent(row["order_id"]) is not None:
+            protective_client_ids.add(row["client_order_id"])
+            if row.get("broker_order_id"):
+                protective_broker_ids.add(row["broker_order_id"])
+
+    broker_by_client: dict[str, Any] = {}
+    for broker_order in snapshot.orders:
+        client_id = str(broker_order.client_order_id or "")
+        if client_id in broker_by_client:
+            raise BrokerAuthorityError(f"duplicate broker order identity for {client_id}")
+        broker_by_client[client_id] = broker_order
+        status = broker_status_to_local(broker_order.status)
+        if status in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
+            continue
+        local = local_by_client.get(client_id)
+        if local is None:
+            raise BrokerAuthorityError(
+                f"unowned live broker order {client_id or '<missing client id>'}; refusing new exposure"
+            )
+        if local["order_id"] != candidate_order_id and execution_store.protective_parent(local["order_id"]) is None:
+            if str(local.get("status") or "").upper() in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
+                raise BrokerAuthorityError(f"broker order {client_id} is live but durable order is terminal")
+
+    lots = remaining_lots(execution_store)
+    lots_by_symbol: dict[str, list[dict]] = {}
+    normalize = lambda value: str(value or "").upper().replace("/", "").replace("-", "")
+    for raw_symbol, symbol_lots in lots.items():
+        key = normalize(raw_symbol)
+        lots_by_symbol.setdefault(key, []).extend(symbol_lots)
+
+    broker_positions = {
+        normalize(position.symbol): position
+        for position in snapshot.positions
+        if abs(float(position.qty)) > 1e-9
+    }
+    all_symbols = set(broker_positions) | set(lots_by_symbol)
+    existing_risk = 0.0
+    for symbol in all_symbols:
+        position = broker_positions.get(symbol)
+        symbol_lots = [lot for lot in lots_by_symbol.get(symbol, [])
+                       if abs(_signed_risk_number(lot.get("qty"), "active lot quantity",
+                                                  BrokerAuthorityError=BrokerAuthorityError)) > 1e-9]
+        if position is None or not symbol_lots:
+            raise BrokerAuthorityError(
+                f"broker/ledger active position mismatch for {symbol}; refusing new exposure"
+            )
+        signed_broker_qty = _signed_risk_number(position.qty, f"{symbol} broker quantity",
+                                                BrokerAuthorityError=BrokerAuthorityError)
+        lot_qty = sum(float(lot["qty"]) for lot in symbol_lots)
+        if (not math.isfinite(lot_qty) or not math.isclose(lot_qty, signed_broker_qty,
+                                                           rel_tol=0, abs_tol=1e-6)):
+            raise BrokerAuthorityError(
+                f"broker/ledger quantity mismatch for {symbol}; refusing new exposure"
+            )
+        mark_value = position.current_price
+        if mark_value is None:
+            market_value = _signed_risk_number(
+                position.market_value, f"{symbol} market value",
+                BrokerAuthorityError=BrokerAuthorityError,
+            )
+            if market_value * signed_broker_qty <= 0:
+                raise BrokerAuthorityError(f"cannot prove a current mark for {symbol}")
+            mark_value = abs(market_value / signed_broker_qty)
+        mark = _stop_risk_number(mark_value, f"{symbol} current mark",
+                                 BrokerAuthorityError=BrokerAuthorityError)
+        for lot in symbol_lots:
+            quantity = float(lot["qty"])
+            if (quantity > 0) != (signed_broker_qty > 0):
+                raise BrokerAuthorityError(f"active lot direction mismatch for {symbol}")
+            intent = lot.get("intent") or {}
+            if normalize(intent.get("symbol")) != symbol:
+                raise BrokerAuthorityError(f"active lot intent symbol mismatch for {symbol}")
+            payload = json.loads(intent.get("payload_json") or "")
+            target = str(payload.get("target_position") or "").upper()
+            if target != ("LONG" if quantity > 0 else "SHORT"):
+                raise BrokerAuthorityError(f"active lot direction is not proven by its TradeIntent for {symbol}")
+            controls = payload.get("risk_controls") or {}
+            stop = _stop_risk_number(
+                controls.get("stop_loss_price"), f"{symbol} durable stop",
+                BrokerAuthorityError=BrokerAuthorityError,
+            )
+            existing_risk += remaining_position_stop_risk(
+                qty=quantity, current_mark=mark, stop_loss_price=stop,
+            )
+            if not math.isfinite(existing_risk):
+                raise BrokerAuthorityError("aggregate active position stop risk is invalid")
+
+    # A durable opening intent and its original stop/target define the
+    # reservation. Protective children are not separate openings.
+    fill_totals: dict[str, list[float]] = {}
+    for fill in execution_store.list_fills_since(""):
+        qty = _stop_risk_number(fill.get("qty"), "durable fill quantity",
+                                BrokerAuthorityError=BrokerAuthorityError)
+        price = _stop_risk_number(fill.get("price"), "durable fill price",
+                                  BrokerAuthorityError=BrokerAuthorityError)
+        bucket = fill_totals.setdefault(fill["order_id"], [0.0, 0.0])
+        bucket[0] += qty
+        bucket[1] += qty * price
+        if not all(math.isfinite(value) and value >= 0 for value in bucket):
+            raise BrokerAuthorityError("durable fill totals are invalid")
+
+    pending_risk = 0.0
+    recoverable = {"PENDING", "SUBMITTING", "UNKNOWN", "PARTIAL", "ACCEPTED"}
+    terminal = {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+    for row in local_orders:
+        if row.get("order_id") == candidate_order_id:
+            continue
+        if normalize(row.get("symbol")) == "__ACCOUNT__":
+            continue
+        row_status = str(row.get("status") or "").upper()
+        if row_status in terminal:
+            continue
+        if row_status not in recoverable:
+            raise BrokerAuthorityError(f"unknown durable order status {row_status!r}; refusing new exposure")
+        if execution_store.protective_parent(row["order_id"]) is not None:
+            continue
+        broker_order = broker_by_client.get(row["client_order_id"])
+        if (broker_order is not None
+                and broker_status_to_local(broker_order.status) in terminal):
+            continue
+        intent = execution_store.get_intent_for_order(row["order_id"])
+        if not intent:
+            raise BrokerAuthorityError("recoverable durable order has no parent TradeIntent")
+        payload = json.loads(intent.get("payload_json") or "")
+        planned = _planned_order_specs(payload, None)
+        matches = []
+        for spec in planned:
+            expected_client_id = client_order_id_for(
+                intent.get("decision_id") or "", row["symbol"], spec["side"],
+                role=spec["role"], seq=spec["seq"],
+            )
+            if expected_client_id == row["client_order_id"]:
+                matches.append(spec)
+        if not matches:
+            side_matches = [spec for spec in planned if str(spec.get("side") or "").lower() == str(row.get("side") or "").lower()]
+            if len(side_matches) == 1:
+                matches = side_matches
+            elif len(planned) == 1 and str(planned[0].get("side") or "").lower() == str(row.get("side") or "").lower():
+                matches = planned
+        if len(matches) != 1:
+            raise BrokerAuthorityError(f"cannot prove opening/closing role for durable order {row['client_order_id']}")
+        spec = matches[0]
+        if spec.get("role") == "close":
+            continue
+        if spec.get("role") != "open":
+            raise BrokerAuthorityError("durable order has an unknown exposure role")
+        terms = _risk_terms_for_plan(
+            payload, BrokerAuthorityError=BrokerAuthorityError, require_two_to_one=True,
+        )
+        if normalize(payload.get("symbol")) != normalize(row.get("symbol")):
+            raise BrokerAuthorityError("pending opening order symbol conflicts with its TradeIntent")
+
+        if broker_order is not None:
+            broker_status = broker_status_to_local(broker_order.status)
+            if broker_status in terminal:
+                continue
+            if (normalize(broker_order.symbol) != normalize(row.get("symbol"))
+                    or str(broker_order.side).lower() != str(row.get("side") or "").lower()
+                    or (row.get("broker_order_id") and row["broker_order_id"] != broker_order.broker_order_id)):
+                raise BrokerAuthorityError(f"pending opening order identity mismatch for {row['client_order_id']}")
+
+        filled_qty, filled_cost = fill_totals.get(row["order_id"], [0.0, 0.0])
+        local_filled = _stop_risk_number(
+            row.get("filled_qty"), "durable filled quantity",
+            BrokerAuthorityError=BrokerAuthorityError, allow_zero=True,
+        )
+        fills_proven = (broker_order is not None
+                        and broker_status_to_local(broker_order.status) not in terminal)
+        if fills_proven:
+            broker_filled = _stop_risk_number(
+                broker_order.filled_qty, "broker filled quantity",
+                BrokerAuthorityError=BrokerAuthorityError, allow_zero=True,
+            )
+            fills_proven = (math.isclose(filled_qty, local_filled, rel_tol=0, abs_tol=1e-8)
+                            and math.isclose(filled_qty, broker_filled, rel_tol=0, abs_tol=1e-8))
+        else:
+            broker_filled = 0.0
+
+        quantity = row.get("quantity")
+        notional = row.get("notional")
+        quantity_risk = 0.0
+        notional_risk = 0.0
+        if quantity is not None:
+            planned_qty = _stop_risk_number(quantity, "durable opening quantity",
+                                            BrokerAuthorityError=BrokerAuthorityError)
+            if fills_proven and broker_order is not None:
+                broker_qty = _stop_risk_number(broker_order.qty, "broker order quantity",
+                                               BrokerAuthorityError=BrokerAuthorityError)
+                if not math.isclose(planned_qty, broker_qty, rel_tol=0, abs_tol=1e-8):
+                    fills_proven = False
+            remaining_qty = max(planned_qty - filled_qty, 0.0) if fills_proven else planned_qty
+            quantity_risk = remaining_qty * terms.risk_per_share
+        if notional is not None:
+            planned_notional = _stop_risk_number(notional, "durable opening notional",
+                                                 BrokerAuthorityError=BrokerAuthorityError)
+            remaining_notional = max(planned_notional - filled_cost, 0.0) if fills_proven else planned_notional
+            notional_risk = remaining_notional * terms.risk_fraction
+        reservation = max(quantity_risk, notional_risk)
+        if not math.isfinite(reservation) or reservation < 0:
+            raise BrokerAuthorityError("pending opening stop-risk reservation is invalid")
+        pending_risk += reservation
+        if not math.isfinite(pending_risk):
+            raise BrokerAuthorityError("aggregate pending stop risk is invalid")
+
+    return existing_risk, pending_risk, protective_client_ids, protective_broker_ids
+
+
 def _evaluate_opening_caps(
     *,
     symbol: str,
@@ -627,6 +903,8 @@ def _evaluate_opening_caps(
     quote: Any,
     intent_dict: dict[str, Any],
     quote_factory: Optional[Callable[[str], Any]] = None,
+    execution_store: Any = None,
+    candidate_order_id: Optional[str] = None,
     BrokerAuthorityError,
     _get_execution_config,
     broker_status_to_local,
@@ -642,12 +920,28 @@ def _evaluate_opening_caps(
     such symbol fails the evaluation closed (zero broker calls) instead of
     guessing a price from the candidate.
     """
+    from dataclasses import replace
     from tradingagents.risk.exposure import (
+        ExposureDecision,
+        clip_to_portfolio_stop_risk,
         evaluate_opening_exposure,
         outstanding_increasing_notional,
     )
 
     config = _get_execution_config()
+    existing_risk, pending_risk, protective_clients, protective_broker_ids = _portfolio_stop_risk_totals(
+        execution_store=execution_store,
+        snapshot=snapshot,
+        candidate_order_id=candidate_order_id,
+        broker_status_to_local=broker_status_to_local,
+        BrokerAuthorityError=BrokerAuthorityError,
+    )
+    filtered_orders = tuple(
+        order for order in snapshot.orders
+        if order.client_order_id not in protective_clients
+        and order.broker_order_id not in protective_broker_ids
+    )
+    cap_snapshot = replace(snapshot, orders=filtered_orders)
     quote_price = float(quote.price) if quote is not None else None
     position = snapshot.position(symbol)
     planned_close_reduction = 0.0
@@ -677,7 +971,7 @@ def _evaluate_opening_caps(
         reference_prices[(symbol or "").upper().replace("/", "")] = quote_price
     needs_price = {
         order.symbol
-        for order in snapshot.orders
+        for order in cap_snapshot.orders
         if order.notional is None
         and broker_status_to_local(order.status)
         not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
@@ -687,7 +981,7 @@ def _evaluate_opening_caps(
         if required in reference_prices:
             continue
         if quote_factory is None:
-            total, fully_estimated = outstanding_increasing_notional(snapshot)
+            total, fully_estimated = outstanding_increasing_notional(cap_snapshot)
             if not fully_estimated:
                 raise BrokerAuthorityError(
                     f"cannot obtain a validated quote for outstanding-order "
@@ -704,10 +998,10 @@ def _evaluate_opening_caps(
                 f"symbol {required}: {exc}; refusing to add exposure"
             ) from exc
 
-    return evaluate_opening_exposure(
+    cap_result = evaluate_opening_exposure(
         symbol=symbol,
         proposed_notional=proposed_notional,
-        snapshot=snapshot,
+        snapshot=cap_snapshot,
         quote_price=quote_price,
         reference_prices=reference_prices,
         symbol_cap_pct=float(config.get("max_symbol_concentration_pct", 25.0) or 0),
@@ -715,4 +1009,27 @@ def _evaluate_opening_caps(
         gross_cap_pct=config.get("portfolio_max_gross_exposure_pct", 100.0),
         sector_mapping=dict(config.get("sector_mapping") or {}),
         planned_close_reduction=planned_close_reduction,
+    )
+    if not cap_result.approved:
+        return cap_result
+    terms = _risk_terms_for_plan(
+        intent_dict, BrokerAuthorityError=BrokerAuthorityError, require_two_to_one=True,
+    )
+    stop_result = clip_to_portfolio_stop_risk(
+        proposed_notional=cap_result.notional,
+        equity=snapshot.equity,
+        max_stop_risk_pct=config.get("portfolio_max_stop_risk_pct", 5.0),
+        existing_position_risk=existing_risk,
+        reserved_pending_risk=pending_risk,
+        candidate_risk_fraction=terms.risk_fraction,
+    )
+    if not stop_result.approved:
+        return stop_result
+    return ExposureDecision(
+        approved=True,
+        notional=stop_result.notional,
+        reason=(cap_result.reason if stop_result.notional >= cap_result.notional
+                else f"{cap_result.reason}; clipped by portfolio stop-risk budget"),
+        details={**cap_result.details, **stop_result.details,
+                 "portfolio_stop_risk_cap": True},
     )

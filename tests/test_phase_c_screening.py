@@ -1647,6 +1647,7 @@ class ExecutionEntryGateTests(unittest.TestCase):
                 confidence="medium",
                 risk_rationale="gate test",
                 required_controls="strict", entry_policy=_ready_entry_policy(), stop_loss_price=95,
+                take_profit_price=113,
             ),
         ).model_dump(mode="json")
 

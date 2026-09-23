@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -265,7 +266,8 @@ def _buy_intent(confidence="high"):
             confidence=confidence,
             risk_rationale="Buy setup.",
             required_controls="Stop below support.",
-            stop_loss_price=96.0, entry_policy=_ready_policy(),
+            stop_loss_price=96.0, take_profit_price=108.0,
+            entry_policy=_ready_policy(),
         ),
     ).model_dump(mode="json")
 
@@ -346,12 +348,13 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         sizing = result["risk_sizing"]
         self.assertTrue(sizing["applied"])
         self.assertAlmostEqual(sizing["notional"], 12_500.0, places=2)
-        # The sized stop rides the same parent submit as an OTO leg with
-        # whole-share qty resolved from the quote (12500 / 100 = 125).
+        # The sized stop and required 2:1 target ride the same parent submit
+        # as a bracket with whole-share qty resolved from the quote.
         request = broker.submit_order.call_args[0][0]
         self.assertEqual(float(request.stop_loss.stop_price), 96.0)
+        self.assertEqual(float(request.take_profit.limit_price), 108.0)
         self.assertEqual(float(request.qty), 125.0)
-        self.assertEqual(result["protective_order_status"], "submitted_oto")
+        self.assertEqual(result["protective_order_status"], "submitted_bracket")
 
     def test_risk_sizing_rejection_blocks_order_submission(self):
         import tempfile
@@ -491,8 +494,8 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         # action+trading_mode+current_position, so a same-side increase can
         # no longer be expressed by mutating current_position while keeping
         # the OPEN_LONG planned action. The sizing gate is asserted for new
-        # risk opened while the account already carries gross exposure (a
-        # foreign-symbol holding), which the sizing engine must account for.
+        # risk opened while the account already carries a proven, protected
+        # foreign-symbol holding.
         broker.get_all_positions.return_value = [
             SimpleNamespace(symbol="MSFT", qty="5", market_value="500")
         ]
@@ -502,14 +505,54 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
             "tradingagents.safety.get_safety_guard",
             return_value=self._disabled_guard(),
         ):
-            result = self._service(tmp, broker).execute(
+            from tradingagents.execution.store import client_order_id_for
+
+            service = self._service(tmp, broker)
+            store = service.store
+            store.ensure_account_binding("paper-risk")
+            prior_payload = _buy_intent()
+            prior_payload["symbol"] = "MSFT"
+            decision_id = "durable-existing-msft"
+            client_id = client_order_id_for(
+                decision_id, "MSFT", "buy", role="open", seq=0
+            )
+            _, prior_orders, _ = store.create_outbox(
+                decision_id=decision_id, run_id=None, symbol="MSFT", action="BUY",
+                target_position="LONG", payload_json=json.dumps(prior_payload),
+                orders=[{"client_order_id": client_id, "symbol": "MSFT",
+                         "side": "buy", "quantity": 5, "notional": None}],
+            )
+            prior = prior_orders[0]
+            store.record_fill(execution_id="fill-existing-msft",
+                              order_id=prior["order_id"], qty=5, price=100)
+            store.sync_order_from_broker(
+                prior["order_id"], "FILLED", broker_order_id="existing-msft",
+                filled_qty=5,
+            )
+            stop = SimpleNamespace(
+                broker_order_id="existing-msft-stop", client_order_id="existing-msft-stop-client",
+                symbol="MSFT", side="sell", qty=5,
+            )
+            store.register_protective_child(store.get_order(prior["order_id"]), stop)
+            broker.get_orders.return_value = [
+                SimpleNamespace(id="existing-msft", client_order_id=client_id,
+                                symbol="MSFT", side="buy", status="filled", qty="5",
+                                filled_qty="5", filled_avg_price="100",
+                                updated_at=datetime.now(timezone.utc), legs=[]),
+                SimpleNamespace(id="existing-msft-stop", client_order_id=stop.client_order_id,
+                                symbol="MSFT", side="sell", status="new", type="stop",
+                                qty="5", filled_qty="0",
+                                updated_at=datetime.now(timezone.utc), legs=[]),
+            ]
+            broker.submit_order.return_value.updated_at = datetime.now(timezone.utc)
+            result = service.execute(
                 trade_intent=_buy_intent(),
                 dollar_amount=10_000,
                 allow_shorts=False,
                 risk_params={},
             )
 
-        self.assertTrue(result["success"])
+        self.assertTrue(result["success"], result)
         snapshot.assert_called_once()
         # Opening new risk against existing gross exposure must be sized.
         self.assertFalse(result.get("hold", False))

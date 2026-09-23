@@ -2,7 +2,10 @@
 flat-vs-unknown separation, and prompt-injection boundaries."""
 
 import unittest
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -13,11 +16,15 @@ from tradingagents.execution.authority import (
     capture_broker_snapshot,
 )
 from tradingagents.execution.context import (
+    ActiveTradePlanContext,
     build_position_context,
     capture_position_context,
+    load_active_trade_plan_context,
     render_account_context,
     render_position_context,
+    render_trade_plan_context,
 )
+from tradingagents.execution.store import ExecutionStore
 
 _NOW = datetime.now(timezone.utc)
 
@@ -94,6 +101,121 @@ class PositionContextMathTests(unittest.TestCase):
         account_text = render_account_context(context)
         self.assertIn("$100,000.00", account_text)
         self.assertIn("Gross exposure", account_text)
+
+
+class ActiveTradePlanTests(unittest.TestCase):
+    def _write_lots(self, path, plans, *, account_id="paper-1"):
+        store = ExecutionStore(path)
+        store.ensure_account_binding(account_id)
+        for index, (decision_id, thesis, quantity) in enumerate(plans):
+            payload = {
+                "symbol": "NVDA", "trade_date": "2026-09-22",
+                "rationale_summary": thesis, "time_horizon": "5 days",
+                "risk_controls": {
+                    "invalidation": "daily close below 90",
+                    "stop_loss_price": 90.0, "take_profit_price": 120.0,
+                },
+                "entry_policy": {
+                    "status": "READY", "minimum_price": 98.0,
+                    "maximum_price": 100.0,
+                    "expires_at": "2026-09-23T15:00:00+00:00",
+                    "exit_by": "2026-09-29T15:00:00+00:00",
+                    "risk_fraction": 0.01,
+                },
+            }
+            _, orders, _ = store.create_outbox(
+                decision_id=decision_id, run_id=None, symbol="NVDA", action="BUY",
+                target_position="LONG", payload_json=json.dumps(payload),
+                orders=[{"client_order_id": f"trade-{index}", "symbol": "NVDA",
+                         "side": "buy", "quantity": quantity, "notional": None}],
+            )
+            store.record_fill(
+                execution_id=f"fill-{index}", order_id=orders[0]["order_id"],
+                qty=quantity, price=99.0,
+                filled_at="2026-09-22T14:00:00+00:00",
+            )
+        return store
+
+    def _position(self, qty=10, *, account_id="paper-1"):
+        return build_position_context(
+            "NVDA", _snapshot(
+                positions=[("NVDA", qty, qty * 99.0, {"current_price": 99.0})],
+                account_id=account_id,
+            ),
+        )
+
+    def test_filled_lot_recovers_original_plan_and_context_is_read_only(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "execution.sqlite3"
+            store = self._write_lots(path, [("decision-original", "original earnings thesis", 10)])
+            plan = load_active_trade_plan_context(self._position(), {"execution_db_path": str(path)})
+            self.assertEqual(plan.availability, "available")
+            self.assertEqual(plan.original_thesis, "original earnings thesis")
+            self.assertEqual(plan.original_stop_loss_price, 90.0)
+            self.assertEqual(plan.original_take_profit_price, 120.0)
+            self.assertEqual(plan.exit_by, "2026-09-29T15:00:00+00:00")
+            self.assertEqual(plan.active_lot_qty, 10.0)
+            self.assertIn("Original trade plan: available", render_trade_plan_context(plan))
+            readonly = ExecutionStore(path, read_only=True)
+            with self.assertRaises(sqlite3.OperationalError):
+                with readonly._connect() as conn:
+                    conn.execute("INSERT INTO schema_version(version) VALUES (999)")
+            self.assertEqual(store.account_binding_owner(), "paper-1")
+
+    def test_flat_and_broker_ledger_mismatch_are_unavailable(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "execution.sqlite3"
+            self._write_lots(path, [("decision-original", "original thesis", 10)])
+            flat = load_active_trade_plan_context(
+                build_position_context("NVDA", _snapshot()),
+                {"execution_db_path": str(Path(directory) / "missing.db")},
+            )
+            self.assertEqual(flat.availability, "unavailable")
+            self.assertIn("flat", flat.reason)
+            mismatch = load_active_trade_plan_context(
+                self._position(qty=11), {"execution_db_path": str(path)}
+            )
+            self.assertEqual(mismatch.availability, "unavailable")
+            self.assertIn("quantity", mismatch.reason)
+
+    def test_multiple_active_plans_are_ambiguous_and_bad_payload_is_unavailable(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "execution.sqlite3"
+            store = self._write_lots(path, [
+                ("decision-one", "first thesis", 10),
+                ("decision-two", "second thesis", 10),
+            ])
+            plan = load_active_trade_plan_context(
+                self._position(qty=20), {"execution_db_path": str(path)}
+            )
+            self.assertEqual(plan.availability, "ambiguous")
+            intent = store.get_intent_by_decision("decision-one")
+            with sqlite3.connect(path) as conn:
+                conn.execute("UPDATE execution_intents SET payload_json='{' WHERE decision_id=?", ("decision-one",))
+            malformed = load_active_trade_plan_context(
+                self._position(qty=20), {"execution_db_path": str(path)}
+            )
+            self.assertEqual(malformed.availability, "unavailable")
+            self.assertIn("evidence unavailable", malformed.reason)
+
+    def test_profile_execution_paths_are_isolated(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as directory:
+            arm_a = Path(directory) / "traders" / "execution.sqlite3"
+            arm_b = Path(directory) / "berkshire" / "execution.sqlite3"
+            self._write_lots(arm_a, [("decision-a", "Traders thesis", 10)])
+            self._write_lots(arm_b, [("decision-b", "Berkshire thesis", 10)])
+            a = load_active_trade_plan_context(self._position(), {"execution_db_path": str(arm_a)})
+            b = load_active_trade_plan_context(self._position(), {"execution_db_path": str(arm_b)})
+            self.assertEqual(a.original_thesis, "Traders thesis")
+            self.assertEqual(b.original_thesis, "Berkshire thesis")
 
 
 class CaptureFailureTests(unittest.TestCase):
@@ -189,6 +311,17 @@ class NodePromptInjectionTests(unittest.TestCase):
             positions=[("NVDA", 100.0, 28000.0, {"avg_entry_price": 240.0})]
         ))
 
+    def _trade_plan(self):
+        return ActiveTradePlanContext(
+            symbol="NVDA", availability="available", decision_id="decision-original",
+            trade_date="2026-09-22", original_thesis="original earnings thesis",
+            invalidation="close below 90", original_stop_loss_price=90.0,
+            original_take_profit_price=120.0, entry_minimum_price=98.0,
+            entry_maximum_price=100.0, entry_expires_at="2026-09-23T15:00:00+00:00",
+            exit_by="2026-09-29T15:00:00+00:00", risk_fraction=0.01,
+            time_horizon="5 days", active_lot_qty=100.0,
+        )
+
     def test_trader_prompt_contains_broker_context(self):
         from tradingagents.agents.trader.trader import create_trader
 
@@ -212,6 +345,9 @@ class NodePromptInjectionTests(unittest.TestCase):
             "tradingagents.agents.trader.trader.capture_position_context",
             return_value=self._context(),
         ), patch(
+            "tradingagents.agents.trader.trader.load_active_trade_plan_context",
+            return_value=self._trade_plan(),
+        ), patch(
             "tradingagents.agents.trader.trader.capture_agent_prompt",
             side_effect=fake_capture,
         ), patch(
@@ -226,6 +362,7 @@ class NodePromptInjectionTests(unittest.TestCase):
         )
         self.assertIn("Broker position context", trader_prompt)
         self.assertIn("28.00%", trader_prompt)
+        self.assertIn("original earnings thesis", trader_prompt)
         self.assertEqual(out["current_position"], "LONG")
 
     def test_risk_manager_recaptures_fresh_context_each_run(self):
@@ -257,6 +394,9 @@ class NodePromptInjectionTests(unittest.TestCase):
         with patch(
             "tradingagents.agents.managers.risk_manager.capture_position_context",
             side_effect=contexts,
+        ), patch(
+            "tradingagents.agents.managers.risk_manager.load_active_trade_plan_context",
+            return_value=self._trade_plan(),
         ) as capture_mock, patch(
             "tradingagents.agents.managers.risk_manager.capture_agent_prompt",
             side_effect=lambda t, c, symbol=None: captured_prompts.append((t, c)),
@@ -278,6 +418,8 @@ class NodePromptInjectionTests(unittest.TestCase):
         self.assertIn("20.00%", first_prompt)
         self.assertIn("28.00%", second_prompt)
         self.assertNotIn("28.00%", first_prompt)
+        self.assertIn("original earnings thesis", first_prompt)
+        self.assertIn("original earnings thesis", second_prompt)
 
     def test_capture_failure_stops_the_node(self):
         from tradingagents.agents.managers.risk_manager import create_risk_manager
@@ -302,6 +444,67 @@ class NodePromptInjectionTests(unittest.TestCase):
             if template.startswith(("analysts/", "researchers/", "managers/research_manager")):
                 self.assertNotIn("position_stats_desc", text, template)
                 self.assertNotIn("Broker position context", text, template)
+
+    def test_historical_and_shadow_nodes_never_read_current_trade_plan_ledger(self):
+        from tradingagents.agents.managers.risk_manager import create_risk_manager
+        from tradingagents.agents.trader.trader import create_trader
+        from tradingagents.agents.schemas import ExecutableAction
+
+        class FakeStructured:
+            def invoke(self, prompt):
+                return SimpleNamespace(
+                    content="FINAL TRANSACTION PROPOSAL: **HOLD**",
+                    action=ExecutableAction.HOLD, confidence="medium",
+                    risk_rationale="maintain", required_controls="strict",
+                )
+
+        class FakeLLM:
+            def with_structured_output(self, schema, **kwargs):
+                return FakeStructured()
+
+            def invoke(self, prompt):
+                return SimpleNamespace(content="FINAL TRANSACTION PROPOSAL: **HOLD**")
+
+        for mode in ("historical", "shadow"):
+            with self.subTest(mode=mode):
+                state = self._state()
+                config = {"execution_db_path": "/path/that/must/not/be/read.sqlite3"}
+                if mode == "historical":
+                    state.update(
+                        trade_date="2020-01-02", current_position="LONG",
+                        position_stats="Historical as-of position: LONG",
+                        account_status="Historical as-of account",
+                    )
+                else:
+                    config["auto_trade"] = False
+                with patch(
+                    "tradingagents.agents.trader.trader.capture_position_context",
+                    side_effect=AssertionError("historical/shadow must not query broker"),
+                ), patch(
+                    "tradingagents.agents.managers.risk_manager.capture_position_context",
+                    side_effect=AssertionError("historical/shadow must not query broker"),
+                ), patch(
+                    "tradingagents.agents.trader.trader.load_active_trade_plan_context",
+                    side_effect=AssertionError("historical/shadow must not query ledger"),
+                ) as trader_plan, patch(
+                    "tradingagents.agents.managers.risk_manager.load_active_trade_plan_context",
+                    side_effect=AssertionError("historical/shadow must not query ledger"),
+                ) as risk_plan, patch(
+                    "tradingagents.agents.trader.trader.capture_agent_prompt"
+                ), patch(
+                    "tradingagents.agents.managers.risk_manager.capture_agent_prompt"
+                ), patch(
+                    "tradingagents.agents.trader.trader.TradingMemoryLog"
+                ) as trader_log, patch(
+                    "tradingagents.agents.managers.risk_manager.TradingMemoryLog"
+                ) as risk_log:
+                    trader_log.return_value.get_past_context.return_value = ""
+                    risk_log.return_value.get_past_context.return_value = ""
+                    memory = SimpleNamespace(get_memories=lambda *args, **kwargs: [])
+                    create_trader(FakeLLM(), memory, config=config)(state)
+                    create_risk_manager(FakeLLM(), memory, config=config)(state)
+                trader_plan.assert_not_called()
+                risk_plan.assert_not_called()
 
 
 if __name__ == "__main__":

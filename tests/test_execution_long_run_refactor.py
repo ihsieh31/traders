@@ -36,9 +36,14 @@ STAMP = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "tests/fixtures/execution_long_run_refactor_69388cc.json"
 ORIGINAL_HASHES = {'tradingagents/long_run.py': 'fa49cdfe3ea1d8f6aab54e1dfb3654aaff57dcd496c9f973fd99205f97db68be', 'tradingagents/execution/service.py': 'c9151d84f24b9b0a1d4a424a638bbbfff96e2c98d3c863abeaa83bf3d59a6e5a'}
-POST_CLOCK_GUARD_HASHES = {
-    "protected_close": "2e7b6bf471a2d179f5d95771e2eece0543cfdd69f44352b5f8d154794807a02b",
-    "gap_between_items": "da8054bdc20fe6eb7ddf93ea36e87192ca653438f95c83247ec89fa0fec0cef8",
+UPDATED_CANONICAL_HASHES = {
+    # These complete snapshots reflect the deterministic R/R and portfolio
+    # stop-risk gates. No trace, result, or ledger fields are normalized away.
+    "protected_close": "e489968434e1c4fbfeb0fda922f78dc3f64137b9c5f0f9f25161dda51c8b046b",
+    "adopt_unknown": "661f53c4d727bb4a8647cce70d59f35525ca68b07066241f4ea6110b3265ed3e",
+    "block_submitting": "3cbf0f6772631c053d6a093bc7a461c09fb96f58429c1710c790b3b05211436a",
+    "gap_between_items": "759f224a061863caebe919b40ff5e15d091ddb74228166c34fe906bea06f40a4",
+    "contracts": "e7f78fffa5fb228d62573f680bb33ba83cec8129c8dd0e7bab50e1eceafd22fe",
 }
 
 
@@ -101,9 +106,7 @@ def evidence(name, payload, tmp_path):
     digest = hashlib.sha256(text.encode()).hexdigest()
     if BASELINE.exists():
         baseline = json.loads(BASELINE.read_text())
-        # Two traces intentionally include new clock reads around protection
-        # cancellation; both new hashes were repeat-captured independently.
-        expected = POST_CLOCK_GUARD_HASHES.get(name, baseline["sha256"][name])
+        expected = UPDATED_CANONICAL_HASHES.get(name, baseline["sha256"][name])
         assert digest == expected, f"original/final difference: {output / (name + '.json')}"
     else:
         assert ORIGINAL_HASHES, "Original source hashes must be pinned before capture"

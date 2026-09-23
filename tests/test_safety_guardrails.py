@@ -416,6 +416,7 @@ class SafetyStatePersistenceTests(unittest.TestCase):
                 required_controls="test",
                 entry_policy=_ready_entry_policy(),
                 stop_loss_price=95,
+                take_profit_price=113,
             ),
         ).model_dump(mode="json")
 
@@ -458,6 +459,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 confidence="medium",
                 risk_rationale="test",
                 required_controls="test", entry_policy=_ready_entry_policy(), stop_loss_price=95,
+                take_profit_price=113,
             ),
         ).model_dump(mode="json")
 

@@ -99,7 +99,6 @@ _ISOLATED_PATH_KEYS = (
 
 _REQUIRED_MEMORY_FLAGS = (
     "memory_retrieval_enabled",
-    "reflection_on_outcome_enabled",
     "memory_maintenance_enabled",
 )
 
@@ -232,7 +231,6 @@ def build_ab_configs(
     shared.update(
         {
             "memory_retrieval_enabled": True,
-            "reflection_on_outcome_enabled": True,
             "memory_maintenance_enabled": True,
             "checkpoint_enabled": False,
             "auto_trade": bool(execute_paper),
@@ -1330,9 +1328,11 @@ def run_analysis_ab(
             "deep_model": base.get("deep_think_llm", ""),
             "research_depth": base.get("research_depth", ""),
             "max_tool_iterations": base.get("max_tool_iterations_per_agent", 0),
-            "memory_retrieval_enabled": True,
-            "reflection_on_outcome_enabled": True,
-            "memory_maintenance_enabled": True,
+            "memory_retrieval_enabled": configs["traders"]["memory_retrieval_enabled"],
+            "reflection_on_outcome_enabled": configs["traders"].get(
+                "reflection_on_outcome_enabled", False
+            ),
+            "memory_maintenance_enabled": configs["traders"]["memory_maintenance_enabled"],
             "memory_isolation": "per-backend persistent stores",
             "checkpoint_enabled": False,
             "auto_trade": bool(execute_paper),

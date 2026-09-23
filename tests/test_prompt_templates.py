@@ -47,6 +47,14 @@ class PromptTemplateTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(templates))
 
+    def test_reflection_prompt_separates_price_result_from_decision_quality(self):
+        prompt = load_prompt("graph/reflection_system")
+        self.assertIn("A single price result cannot prove", prompt)
+        self.assertIn("positive-expectation decision can lose money", prompt)
+        self.assertIn("actual position, fills, fees and other costs, exit reason, and rule compliance", prompt)
+        self.assertIn("report uncertainty and objective observations only", prompt)
+        self.assertNotIn("changing a decision from HOLD to BUY", prompt)
+
     def test_templates_are_grouped_for_searchability(self):
         templates = list_prompt_templates()
         root_files = {template for template in templates if "/" not in template}
@@ -257,6 +265,7 @@ class PromptTemplateTests(unittest.TestCase):
                                 ),
                                 "open_pos_desc": "We currently have an open LONG position in NVDA.",
                                 "position_stats_desc": "qty=100",
+                                "active_trade_plan_desc": "Original trade plan: unavailable.",
                                 "account_status_desc": "equity $100k",
                                 "claim_matrix": matrix,
                                 "all_reports_text": reports,
@@ -278,6 +287,7 @@ class PromptTemplateTests(unittest.TestCase):
                                 "analysis_date": "2026-09-08",
                                 "open_pos_desc": "We currently have an open LONG position in NVDA.",
                                 "position_stats_desc": "qty=100",
+                                "active_trade_plan_desc": "Original trade plan: unavailable.",
                                 "account_status_desc": "equity $100k",
                                 "trader_plan": "trader plan",
                                 "claim_matrix": matrix,

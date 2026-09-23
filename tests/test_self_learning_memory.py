@@ -260,5 +260,56 @@ class OutcomeReflectionWiringTests(unittest.TestCase):
             )
 
 
+class RawForwardOutcomeTests(unittest.TestCase):
+    def test_raw_five_bar_move_is_logged_without_causal_reflection_or_memory_deletion(self):
+        from tradingagents.default_config import DEFAULT_CONFIG
+
+        self.assertIs(DEFAULT_CONFIG["reflection_on_outcome_enabled"], False)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
+            config = {
+                "agent_memory_dir": root,
+                "memory_retrieval_enabled": True,
+                "reflection_on_outcome_enabled": True,
+                "memory_log_path": str(Path(root) / "trading_memory.md"),
+                "results_dir": root,
+            }
+            existing_memory = FinancialSituationMemory("raw_return_guard", config)
+            _enable_fake_embeddings(existing_memory)
+            existing_memory.add_situations(
+                [("existing situation", "existing causal memory")]
+            )
+
+            graph = object.__new__(TradingAgentsGraph)
+            graph.config = config
+            graph.memory_log = Mock()
+            graph.memory_log.get_pending_entries.return_value = [
+                {"date": "2026-01-05", "ticker": "AAPL"}
+            ]
+            graph._benchmark_for = Mock(return_value=None)
+            graph._fetch_return = Mock(return_value=0.04)
+            graph._reflect_agents_on_outcome = Mock()
+            with patch(
+                "tradingagents.backtest.signals.load_recorded_runs",
+                return_value={"2026-01-05": {"status": "completed"}},
+            ):
+                graph._resolve_memory_log_outcomes("AAPL", "2026-01-12")
+
+            graph.memory_log.update_with_outcome.assert_called_once()
+            kwargs = graph.memory_log.update_with_outcome.call_args.kwargs
+            self.assertEqual(kwargs["raw_return"], 0.04)
+            self.assertIsNone(kwargs["alpha_return"])
+            self.assertEqual(kwargs["holding_days"], 5)
+            self.assertIn("not strategy realized P&L", kwargs["reflection"])
+            graph._reflect_agents_on_outcome.assert_not_called()
+
+            reopened = FinancialSituationMemory("raw_return_guard", config)
+            _enable_fake_embeddings(reopened)
+            self.assertEqual(reopened.situation_collection.count(), 1)
+            self.assertEqual(
+                reopened.situation_collection.get()["metadatas"][0]["recommendation"],
+                "existing causal memory",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

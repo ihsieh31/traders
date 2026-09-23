@@ -120,7 +120,7 @@ class AnalysisABRunnerTests(unittest.TestCase):
             self.assertEqual(configs["traders"]["quick_think_llm"], configs["berkshire"]["quick_think_llm"])
             self.assertEqual(configs["traders"]["checkpoint_enabled"], False)
             self.assertEqual(configs["berkshire"]["memory_retrieval_enabled"], True)
-            self.assertEqual(configs["traders"]["reflection_on_outcome_enabled"], True)
+            self.assertEqual(configs["traders"]["reflection_on_outcome_enabled"], False)
             self.assertEqual(configs["berkshire"]["memory_maintenance_enabled"], True)
             self.assertNotEqual(configs["traders"]["analysis_backend"], configs["berkshire"]["analysis_backend"])
             self.assertEqual(configs["traders"]["analysis_profile"], configs["berkshire"]["analysis_profile"])
@@ -133,6 +133,25 @@ class AnalysisABRunnerTests(unittest.TestCase):
             self.assertNotEqual(configs["traders"]["screening_selection_cache_path"], configs["berkshire"]["screening_selection_cache_path"])
             self.assertIn("_profiles/traders", configs["traders"]["agent_memory_dir"])
             self.assertIn("_profiles/berkshire", configs["berkshire"]["agent_memory_dir"])
+
+    def test_reflection_setting_is_inherited_from_base_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for enabled in (False, True):
+                with self.subTest(enabled=enabled):
+                    base = dict(DEFAULT_CONFIG)
+                    base["reflection_on_outcome_enabled"] = enabled
+                    configs = build_ab_configs(
+                        base,
+                        symbol="NVDA",
+                        trade_date="2026-09-21",
+                        pair_dir=Path(tmp) / str(enabled),
+                    )
+                    self.assertIs(
+                        configs["traders"]["reflection_on_outcome_enabled"], enabled
+                    )
+                    self.assertIs(
+                        configs["berkshire"]["reflection_on_outcome_enabled"], enabled
+                    )
 
     def test_shared_memory_path_is_rejected(self):
         a = {
@@ -178,6 +197,7 @@ class AnalysisABRunnerTests(unittest.TestCase):
             manifest = json.loads((Path(tmp) / "ab" / "AB_CAMPAIGN.json").read_text(encoding="utf-8"))
             self.assertEqual(persisted["shared"]["checkpoint_enabled"], False)
             self.assertEqual(persisted["shared"]["memory_retrieval_enabled"], True)
+            self.assertEqual(persisted["shared"]["reflection_on_outcome_enabled"], False)
             self.assertEqual(persisted["shared"]["auto_trade"], False)
             self.assertEqual(len(persisted["campaign_fingerprint"]), 64)
             self.assertEqual(set(manifest["resolved_llm_routes"]), {"traders", "berkshire"})

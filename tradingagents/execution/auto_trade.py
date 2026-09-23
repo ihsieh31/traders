@@ -2,8 +2,8 @@
 
 Single home for the non-UI sizing/execution preparation previously embedded
 in the WebUI: typed ``TradeIntent`` required (fail-closed otherwise),
-regime-aware sizing then portfolio-intelligence sizing for opening long
-exposure, then one ``ExecutionService.execute`` call. Sizing only shrinks;
+long-oriented regime sizing then direction-aware portfolio sizing for new
+long/short exposure, then one ``ExecutionService.execute`` call. Sizing only shrinks;
 failures keep the requested amount untouched.
 """
 
@@ -51,7 +51,8 @@ def execute_auto_trade(
     action = trade_intent_action(trade_intent)
     amount = float(base_trade_notional_usd or 0.0)
 
-    if action and str(action).upper() in ("BUY", "LONG"):
+    normalized_action = str(action or "").upper()
+    if normalized_action in ("BUY", "LONG", "SHORT"):
         if config is None:
             try:
                 from tradingagents.dataflows.config import get_config
@@ -59,16 +60,19 @@ def execute_auto_trade(
                 config = get_config() or {}
             except Exception:
                 config = {}
-        try:
-            from tradingagents.regime import RegimeConfig, regime_risk_multiplier
+        # The current regime multiplier is long-oriented. Keep it off SHORT
+        # until a direction-aware regime policy exists.
+        if normalized_action in ("BUY", "LONG"):
+            try:
+                from tradingagents.regime import RegimeConfig, regime_risk_multiplier
 
-            multiplier = regime_risk_multiplier(
-                ticker, config=RegimeConfig.from_config(config)
-            )
-            if multiplier < 1.0:
-                amount = amount * multiplier
-        except Exception:
-            pass
+                multiplier = regime_risk_multiplier(
+                    ticker, config=RegimeConfig.from_config(config)
+                )
+                if multiplier < 1.0:
+                    amount = amount * multiplier
+            except Exception:
+                pass
         try:
             from tradingagents.portfolio import (
                 PortfolioLimitsConfig,

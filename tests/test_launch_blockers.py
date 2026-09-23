@@ -55,6 +55,7 @@ def _buy_intent(symbol="AAPL"):
             risk_rationale="test setup",
             required_controls="Stop below support.",
             entry_policy=_ready_entry_policy(), stop_loss_price=95.0,
+            take_profit_price=113.0,
         ),
     ).model_dump(mode="json")
 

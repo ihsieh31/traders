@@ -102,6 +102,7 @@ def _buy_intent(symbol="AAPL", action="BUY", current="NEUTRAL"):
             required_controls="strict",
             entry_policy=_ready_entry_policy(),
             stop_loss_price=95.0,
+            take_profit_price=113.0,
         ),
     ).model_dump(mode="json")
 
@@ -516,11 +517,22 @@ class F03PerSymbolQuoteTests(_GuardIsolated, unittest.TestCase):
         def quote_factory(symbol):
             return _fresh_quote(symbol, price=1000.0 if symbol == "XYZ" else 100.0)
 
+        from tradingagents.execution.store import client_order_id_for
+
+        decision_id = "seed-xyz-outstanding"
+        client_id = client_order_id_for(decision_id, "XYZ", "buy", role="open", seq=0)
         broker = _state_broker(orders=[
-            _order("XYZ", "buy", qty=10, client_id="manual-xyz"),
+            _order("XYZ", "buy", qty=10, client_id=client_id),
         ])
         with tempfile.TemporaryDirectory() as tmp:
             svc = _service(tmp, broker, quote_factory=quote_factory)
+            svc.store.ensure_account_binding("paper-1")
+            svc.store.create_outbox(
+                decision_id=decision_id, run_id=None, symbol="XYZ", action="BUY",
+                target_position="LONG", payload_json=json.dumps(_buy_intent("XYZ")),
+                orders=[{"client_order_id": client_id, "symbol": "XYZ", "side": "buy",
+                         "quantity": 10, "notional": None}],
+            )
             with _patch_caps(_caps_config(
                 max_symbol_concentration_pct=25.0,
                 portfolio_max_gross_exposure_pct=3.0,

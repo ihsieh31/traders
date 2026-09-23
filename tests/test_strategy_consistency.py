@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from tradingagents.agents.schemas import RiskDecision, EntryPolicy, build_trade_intent_from_risk_decision, extract_protective_price
-from tradingagents.execution.policy import entry_check
+from tradingagents.execution.policy import entry_check, worst_case_risk_reward
 from tradingagents.execution.service import ExecutionService
 from tradingagents.execution.lifecycle import due_positions
 from tradingagents.execution.store import ExecutionStore
@@ -24,7 +24,7 @@ NOW = datetime(2026, 9, 7, 14, tzinfo=timezone.utc)
 
 def intent(now=NOW):
     decision = RiskDecision(action="BUY", confidence="high", risk_rationale="test", required_controls="stop",
-                            stop_loss_price=90, take_profit_price=120, entry_guidance="only in range", time_horizon="5 days",
+                            stop_loss_price=90, take_profit_price=123, entry_guidance="only in range", time_horizon="5 days",
                             entry_policy=EntryPolicy(status="READY", minimum_price=99, maximum_price=101,
                                 expires_at=(now + timedelta(hours=1)).isoformat(),
                                 exit_by=(now + timedelta(days=5)).isoformat(),
@@ -47,6 +47,74 @@ def test_entry_preserves_conditions_and_bounds_actual_stop_risk():
     amount, reason = entry_check(data, now=NOW, price=100., equity=100000, requested=90000)
     assert reason is None
     assert amount * (101 - 90) / 101 <= 1000
+
+
+@pytest.mark.parametrize(("direction", "stop", "target"), [
+    ("LONG", 96, 114),  # worst entry 102: risk 6, reward 12
+    ("SHORT", 104, 86),  # worst entry 98: risk 6, reward 12
+])
+def test_worst_case_exact_two_to_one_passes(direction, stop, target):
+    terms = worst_case_risk_reward(
+        target_position=direction, minimum_price=98, maximum_price=102,
+        stop_loss_price=stop, take_profit_price=target,
+    )
+    assert terms is not None and terms.ratio == 2.0
+    data = intent()
+    data.update(action=direction, target_position=direction, current_position="NEUTRAL",
+                position_transition=f"OPEN_{direction}")
+    data["planned_actions"] = [{"action": f"open_{direction.lower()}"}]
+    data["entry_policy"].update(minimum_price=98, maximum_price=102)
+    data["risk_controls"].update(stop_loss_price=stop, take_profit_price=target)
+    assert entry_check(data, now=NOW, price=100., equity=100000, requested=1000)[1] is None
+
+
+@pytest.mark.parametrize(("direction", "stop", "target"), [
+    ("LONG", 96, 113.94),
+    ("SHORT", 104, 86.06),
+])
+def test_worst_case_below_two_to_one_is_rejected(direction, stop, target):
+    data = intent()
+    data.update(action=direction, target_position=direction, current_position="NEUTRAL",
+                position_transition=f"OPEN_{direction}")
+    data["planned_actions"] = [{"action": f"open_{direction.lower()}"}]
+    data["entry_policy"].update(minimum_price=98, maximum_price=102)
+    data["risk_controls"].update(stop_loss_price=stop, take_profit_price=target)
+    assert "2:1 R/R" in entry_check(data, now=NOW, price=100., equity=100000, requested=1000)[1]
+
+
+def test_reported_entry_range_case_fails_worst_case_ratio():
+    data = intent()
+    data["entry_policy"].update(minimum_price=98, maximum_price=102)
+    data["risk_controls"].update(stop_loss_price=95, take_profit_price=110)
+    terms = worst_case_risk_reward(
+        target_position="LONG", minimum_price=98, maximum_price=102,
+        stop_loss_price=95, take_profit_price=110,
+    )
+    assert terms is not None and terms.ratio == pytest.approx(8 / 7)
+    assert "2:1 R/R" in entry_check(data, now=NOW, price=100., equity=100000, requested=1000)[1]
+
+
+def test_ready_open_without_numeric_target_fails_closed():
+    data = intent()
+    data["risk_controls"]["take_profit_price"] = None
+    assert "numeric take-profit" in entry_check(data, now=NOW, price=100., equity=100000, requested=1000)[1]
+
+
+def test_ready_open_without_numeric_stop_fails_closed():
+    data = intent()
+    data["risk_controls"]["stop_loss_price"] = None
+    assert entry_check(data, now=NOW, price=100., equity=100000, requested=1000)[1]
+
+
+def test_wait_and_nonopening_intents_do_not_get_new_rr_rejection():
+    waiting = intent()
+    waiting["entry_policy"]["status"] = "WAIT"
+    assert "WAIT" in entry_check(waiting, now=NOW, price=100., equity=100000, requested=1000)[1]
+    holding = intent()
+    holding.update(action="HOLD", current_position="LONG", target_position="LONG", position_transition="HOLD_LONG")
+    holding["planned_actions"] = [{"action": "hold_long"}]
+    holding["risk_controls"]["take_profit_price"] = None
+    assert entry_check(holding, now=NOW, price=100., equity=100000, requested=1000)[1] is None
 
 
 @pytest.mark.parametrize("change", [
@@ -195,6 +263,9 @@ class PaperBrokerFixture:
     def get_order_by_id(self, order_id, filter=None):
         return next(o for o in self.orders if o.id == order_id)
 
+    def get_order_by_client_order_id(self, client_order_id):
+        return next((o for o in self.orders if o.client_order_id == client_order_id), None)
+
     def submit_order(self, request):
         self.submits.append(request)
         qty = float(request.qty)
@@ -246,6 +317,25 @@ def test_protected_entry_stop_fill_updates_lots_without_duplicate_exit(tmp_path)
     assert due_positions(service.store, now + timedelta(days=6)) == {}
     assert len(service.store.list_fills_since('')) == 2
     assert len(broker.submits) == 1
+
+
+def test_recovery_resubmit_uses_the_same_worst_case_rr_gate(tmp_path):
+    service, broker = live_fixture(tmp_path)
+    data = intent(datetime.now(timezone.utc))
+    data["risk_controls"]["take_profit_price"] = 110
+    service.store.ensure_account_binding("test-account")
+    service.store.create_outbox(
+        decision_id="rr-recovery", run_id=None, symbol="AAPL", action="BUY",
+        target_position="LONG", payload_json=json.dumps(data),
+        orders=[{"client_order_id": "ta-rr-recovery", "symbol": "AAPL",
+                 "side": "buy", "quantity": None, "notional": 1000}],
+    )
+    with patch('tradingagents.safety.get_safety_guard', return_value=SimpleNamespace(enabled=False)), \
+         patch('tradingagents.screening.gate.check_entry_allowed', return_value=None):
+        result = service.startup_recover()
+    assert not result["success"]
+    assert any("2:1 R/R" in reason for reason in result["reconciliation_reasons"])
+    assert broker.submits == []
 
 
 def test_due_exit_cancels_owned_stop_then_closes_once(tmp_path):

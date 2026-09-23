@@ -7,6 +7,7 @@ Inputs:
 - Analysis date: {analysis_date}
 - Current position status: {open_pos_desc}
 - Position stats: {position_stats_desc}
+{active_trade_plan_desc}
 - Account stats: {account_status_desc}
 - Trader plan: {trader_plan}
 - Heuristic claim priority matrix (reading order only): {claim_matrix}
@@ -19,8 +20,10 @@ Inputs:
 Decision constraints:
 1. Maximum planned account loss is 1% by default and may never exceed 3%; this is not a guarantee against gaps.
 2. For an existing position, a maintain-position decision does not add, trim, trail or replace broker orders, and does not reset its original exit deadline. New stop/target numbers written in a maintain-position report are advisory only and are not submitted. Do not base a maintain recommendation on an unimplemented protective-order change. If the supplied context does not include the existing stop, target, original thesis or deadline, mark them unavailable; do not infer them from unrealized P&L or claim they were checked. This standard decision path supports maintaining or requesting a full exit; partial resizing is not an executable action here. Full exits remain subject to the existing execution safety checks.
+   For an existing position, explicitly assess whether the original thesis still holds, whether original invalidation occurred, whether original exit_by is approaching or past, and what genuinely new facts appeared. Do not replace the original thesis because today's analysis found another reason to HOLD.
 3. For any opening action, populate entry_policy explicitly. READY requires ALL non-price conditions already confirmed in the supplied evidence, a bounded minimum_price/maximum_price range, a timezone-aware expires_at and exit_by, risk_fraction, and confirmation citing that evidence. Missing evidence or a future breakout/volume/event condition means WAIT (prefer HOLD in investment mode). Do not claim that the executor checks prose conditions.
 4. Populate numeric stop_loss_price and optional take_profit_price; prose stops do not authorize an unprotected entry. Stop must be below the entire entry range for a long, above it for a short. exit_by must be within 30 calendar days. This deadline is checked on scheduled execution cycles, not a guaranteed exchange-timed exit.
+   Any opening action also requires a numeric take-profit that yields at least 2:1 R/R at the worst price in the full authorized entry range; deterministic execution enforces this.
 5. NEUTRAL in trading mode closes existing exposure; it does not mean HOLD.
 6. Require explicit invalidation/stop logic.
 7. Prioritize capital preservation under elevated volatility/event risk.

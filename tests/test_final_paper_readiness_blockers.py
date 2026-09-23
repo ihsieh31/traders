@@ -34,7 +34,7 @@ def opening(action="BUY", current="NEUTRAL", *, stamp=None):
         action=action, confidence="high", risk_rationale="fixture",
         required_controls="stop",
         stop_loss_price=110 if short else 90,
-        take_profit_price=80 if short else 120,
+        take_profit_price=77 if short else 123,
         entry_policy=EntryPolicy(
             status="READY", minimum_price=99, maximum_price=101,
             expires_at=(stamp + timedelta(hours=1)).isoformat(),
@@ -278,7 +278,7 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
             },
             "risk_controls": {"required_controls": "stop",
                               "stop_loss_price": 90.0,
-                              "take_profit_price": 120.0},
+                              "take_profit_price": 123.0},
             "generated_at": stamp.isoformat(),
         }
         coid = client_order_id_for("r02-decision", "AAPL", "buy", role="open", seq=0)

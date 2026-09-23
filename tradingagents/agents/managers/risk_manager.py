@@ -23,8 +23,11 @@ from tradingagents.dataflows.interface_utils import (
 )
 from tradingagents.execution.context import (
     capture_position_context,
+    load_active_trade_plan_context,
     render_account_context,
     render_position_context,
+    render_trade_plan_context,
+    render_unavailable_trade_plan,
 )
 from tradingagents.prompts import render_prompt
 
@@ -60,6 +63,9 @@ def create_risk_manager(llm, memory, config=None):
         # closed: no opening READY intent, output is NO_TRADE / HOLD with an
         # explicit unavailability explanation.
         shadow_decision_only = bool(config and config.get("auto_trade") is False)
+        trade_plan_desc = render_unavailable_trade_plan(
+            "historical mode does not read the current execution ledger"
+        )
         if analysis_date_mode(state.get("trade_date")) == "historical":
             historical_position = state.get("current_position")
             historical_position_stats = state.get("position_stats")
@@ -122,6 +128,9 @@ def create_risk_manager(llm, memory, config=None):
                 "Shadow decision-only mode: broker account not queried; "
                 "auto_trade=False."
             )
+            trade_plan_desc = render_unavailable_trade_plan(
+                "shadow mode does not read the current execution ledger"
+            )
             state["current_position"] = current_position
         else:
             expected_account = state.get("broker_account_id")
@@ -130,6 +139,9 @@ def create_risk_manager(llm, memory, config=None):
             )
             position_stats_desc = render_position_context(context)
             account_status_desc = render_account_context(context)
+            trade_plan_desc = render_trade_plan_context(
+                load_active_trade_plan_context(context, config=config)
+            )
 
             current_position = context.side if context.side != "FLAT" else "NEUTRAL"
             state["current_position"] = current_position
@@ -180,6 +192,7 @@ def create_risk_manager(llm, memory, config=None):
             decision_format=decision_format,
             open_pos_desc=open_pos_desc,
             position_stats_desc=position_stats_desc,
+            active_trade_plan_desc=trade_plan_desc,
             account_status_desc=account_status_desc,
             trader_plan=trader_plan,
             claim_matrix=claim_matrix,

@@ -671,7 +671,8 @@ def _buy_intent_json(symbol="AAPL", price=100.0):
             "exit_by": (now + timedelta(days=5)).isoformat(),
             "confirmation": "fixture observed setup",
         },
-        "risk_controls": {"stop_loss_price": price - 5},
+        "risk_controls": {"stop_loss_price": price - 5,
+                           "take_profit_price": price + 13},
         "order_intent": {"order_type": "market", "side": "buy",
                          "sizing_basis": "configured_notional"},
     }
@@ -1086,6 +1087,7 @@ def _flip_intent(*, to_short=True):
                 "confirmation": "fixture observed setup",
             },
             stop_loss_price=105.0 if to_short else 95.0,
+            take_profit_price=87.0 if to_short else 113.0,
         ),
     ).model_dump(mode="json")
 
@@ -1252,7 +1254,7 @@ class F05ReversalCloseOnlyTests(_GuardIsolated):
                         "exit_by": (now + timedelta(days=5)).isoformat(),
                         "confirmation": "fixture observed setup",
                     },
-                    stop_loss_price=105.0,
+                    stop_loss_price=105.0, take_profit_price=87.0,
                 ),
             ).model_dump(mode="json")
             with patch("tradingagents.execution.service._get_execution_config",

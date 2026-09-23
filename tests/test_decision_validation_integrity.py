@@ -464,6 +464,7 @@ class BrokerLastEquityTests(unittest.TestCase):
                     "confirmation": "fixture observed setup",
                 },
                 stop_loss_price=95,
+                take_profit_price=113,
             ),
         ).model_dump(mode="json")
 

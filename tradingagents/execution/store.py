@@ -249,18 +249,25 @@ CREATE INDEX IF NOT EXISTS idx_fills_order ON fills(order_id);
 class ExecutionStore:
     """Single SQLite store for intents/orders/fills."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, *, read_only: bool = False):
         self.db_path = str(db_path)
-        parent = str(Path(self.db_path).parent)
-        if parent and parent != ".":
-            Path(parent).mkdir(parents=True, exist_ok=True)
-        self._init_schema()
+        self.read_only = bool(read_only)
+        if not self.read_only:
+            parent = str(Path(self.db_path).parent)
+            if parent and parent != ".":
+                Path(parent).mkdir(parents=True, exist_ok=True)
+            self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30.0, isolation_level=None)
+        if self.read_only:
+            uri = Path(self.db_path).resolve().as_uri() + "?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=30.0, isolation_level=None)
+        else:
+            conn = sqlite3.connect(self.db_path, timeout=30.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA journal_mode=WAL")
+        if not self.read_only:
+            conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     def _init_schema(self) -> None:

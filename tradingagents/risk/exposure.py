@@ -24,6 +24,7 @@ verified close's freed value credited deterministically from the snapshot.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any, Mapping, Optional
 
 from tradingagents.execution.authority import broker_status_to_local
@@ -148,6 +149,89 @@ def outstanding_increasing_notional(
 
 def _rejection(reason: str, details: Optional[dict] = None) -> ExposureDecision:
     return ExposureDecision(approved=False, notional=0.0, reason=reason, details=details or {})
+
+
+def remaining_position_stop_risk(*, qty: float, current_mark: float, stop_loss_price: float) -> float:
+    """Remaining planned stop risk for one signed active lot; invalid facts raise."""
+    if any(isinstance(value, bool) for value in (qty, current_mark, stop_loss_price)):
+        raise ValueError("invalid position stop-risk inputs")
+    try:
+        quantity, mark, stop = float(qty), float(current_mark), float(stop_loss_price)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("invalid position stop-risk inputs") from exc
+    if (not isfinite(quantity) or abs(quantity) <= 0 or not isfinite(mark) or mark <= 0
+            or not isfinite(stop) or stop <= 0):
+        raise ValueError("position stop-risk inputs must be finite and prices positive")
+    per_share = max(mark - stop, 0.0) if quantity > 0 else max(stop - mark, 0.0)
+    risk = abs(quantity) * per_share
+    if not isfinite(risk) or risk < 0:
+        raise ValueError("calculated position stop risk is invalid")
+    return risk
+
+
+def clip_to_portfolio_stop_risk(
+    *,
+    proposed_notional: float,
+    equity: float,
+    max_stop_risk_pct: float,
+    existing_position_risk: float,
+    reserved_pending_risk: float,
+    candidate_risk_fraction: float,
+) -> ExposureDecision:
+    """Clip candidate notional to remaining portfolio planned-stop-risk budget."""
+    if any(isinstance(value, bool) for value in (
+        proposed_notional, equity, max_stop_risk_pct, existing_position_risk,
+        reserved_pending_risk, candidate_risk_fraction,
+    )):
+        return _rejection("malformed portfolio stop-risk input; refusing new exposure")
+    try:
+        proposed, account_equity, max_pct, existing, pending, fraction = map(
+            float, (proposed_notional, equity, max_stop_risk_pct,
+                    existing_position_risk, reserved_pending_risk, candidate_risk_fraction)
+        )
+    except (TypeError, ValueError, OverflowError):
+        return _rejection("invalid portfolio stop-risk input")
+    if (not all(isfinite(value) for value in (proposed, account_equity, max_pct,
+                                               existing, pending, fraction))
+            or proposed <= 0 or account_equity <= 0 or not 0 < max_pct <= 100
+            or existing < 0 or pending < 0 or fraction <= 0):
+        return _rejection("malformed portfolio stop-risk input; refusing new exposure")
+    budget = account_equity * max_pct / 100.0
+    if not isfinite(budget) or budget <= 0:
+        return _rejection("portfolio stop-risk budget is invalid")
+    available = budget - existing - pending
+    if not isfinite(available) or available <= 0:
+        return _rejection(
+            "portfolio stop-risk budget has no remaining headroom",
+            {"risk_budget": budget, "existing_position_risk": existing,
+             "reserved_pending_risk": pending, "available_risk": max(available, 0.0)},
+        )
+    risk_limited = available / fraction
+    if not isfinite(risk_limited) or risk_limited <= 0:
+        return _rejection("portfolio stop-risk clip is invalid")
+    clipped = min(proposed, risk_limited)
+    if clipped < proposed:
+        clipped = int(clipped * 100) / 100.0
+    if clipped < MIN_ORDER_NOTIONAL:
+        return _rejection(
+            f"portfolio stop-risk budget leaves ${clipped:.2f}, below the ${MIN_ORDER_NOTIONAL:.2f} minimum",
+            {"risk_budget": budget, "existing_position_risk": existing,
+             "reserved_pending_risk": pending, "available_risk": available,
+             "candidate_risk_fraction": fraction},
+        )
+    return ExposureDecision(
+        approved=True,
+        notional=clipped,
+        reason="portfolio stop-risk budget allows the candidate",
+        details={
+            "risk_budget": budget,
+            "existing_position_risk": existing,
+            "reserved_pending_risk": pending,
+            "available_risk": available,
+            "candidate_risk_fraction": fraction,
+            "stop_risk_clipped": clipped < proposed,
+        },
+    )
 
 
 def evaluate_opening_exposure(

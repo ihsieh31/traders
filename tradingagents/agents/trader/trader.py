@@ -21,8 +21,11 @@ from tradingagents.dataflows.interface_utils import (
 )
 from tradingagents.execution.context import (
     capture_position_context,
+    load_active_trade_plan_context,
     render_account_context,
     render_position_context,
+    render_trade_plan_context,
+    render_unavailable_trade_plan,
 )
 from tradingagents.prompts import render_prompt
 
@@ -48,6 +51,9 @@ def create_trader(llm, memory, config=None):
         # fields are labeled rather than substituted with present-day
         # account facts.
         shadow_decision_only = bool(config and config.get("auto_trade") is False)
+        trade_plan_desc = render_unavailable_trade_plan(
+            "historical mode does not read the current execution ledger"
+        )
         if analysis_date_mode(state.get("trade_date")) == "historical":
             current_position = state.get("current_position") or HISTORICAL_SOURCE_UNAVAILABLE
             position_stats_desc = state.get("position_stats") or HISTORICAL_SOURCE_UNAVAILABLE
@@ -68,11 +74,17 @@ def create_trader(llm, memory, config=None):
                 "Shadow decision-only mode: broker account not queried; "
                 "auto_trade=False."
             )
+            trade_plan_desc = render_unavailable_trade_plan(
+                "shadow mode does not read the current execution ledger"
+            )
             broker_account_id = None
         else:
             context = capture_position_context(company_name)
             position_stats_desc = render_position_context(context)
             account_status_desc = render_account_context(context)
+            trade_plan_desc = render_trade_plan_context(
+                load_active_trade_plan_context(context, config=config)
+            )
 
             current_position = context.side if context.side != "FLAT" else "NEUTRAL"
             broker_account_id = context.account_id
@@ -130,6 +142,7 @@ def create_trader(llm, memory, config=None):
             agent_context=agent_context,
             open_pos_desc=open_pos_desc,
             position_stats_desc=position_stats_desc,
+            active_trade_plan_desc=trade_plan_desc,
             account_status_desc=account_status_desc,
             claim_matrix=claim_matrix,
             all_reports_text=all_reports_text,

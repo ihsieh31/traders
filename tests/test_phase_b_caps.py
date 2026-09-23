@@ -308,6 +308,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 risk_rationale="caps test",
                 required_controls="strict",
                 entry_policy=_ready_entry_policy(), stop_loss_price=95.0,
+                take_profit_price=113.0,
             ),
         ).model_dump(mode="json")
 
@@ -400,7 +401,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 first = svc.execute(
                     trade_intent=self._intent(), dollar_amount=18000.0
                 )
-                self.assertTrue(first["success"])
+                self.assertTrue(first["success"], first)
                 self.assertEqual(first["broker_calls"], 1)
                 # Simulate the fill: the broker now holds the true filled
                 # state (entry_check risk-clipped 18000 to 16835 -> 166
@@ -415,6 +416,11 @@ class ExecutionIntegrationTests(unittest.TestCase):
                         row.status = "filled"
                         row.filled_qty = row.qty
                         row.filled_avg_price = "100"
+                first_local = svc.store.get_order_by_client(first_client_id)
+                svc.store.record_fill(
+                    execution_id="fill-first-buy", order_id=first_local["order_id"],
+                    qty=166.0, price=100.0,
+                )
                 # N09: a same-symbol increase can no longer be expressed as a
                 # hand-crafted OPEN_LONG intent claiming current=LONG (the
                 # canonical plan for BUY+LONG is a HOLD). The durably
@@ -453,7 +459,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 first = svc.execute(
                     trade_intent=self._intent(), dollar_amount=5000.0
                 )
-                self.assertTrue(first["success"])
+                self.assertTrue(first["success"], first)
                 self.assertEqual(first["broker_calls"], 1)
                 # The first order stays live at the broker (accepted, 0 filled).
                 second = svc.execute(
@@ -507,6 +513,46 @@ class ExecutionIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             svc = self._service(tmp, broker)
             svc.store.ensure_account_binding("paper-1")
+            prior_payload = self._intent()
+            # Keep the prior held stop-risk under the 5% book budget while
+            # the symbol cap remains the binding limit for this test.
+            prior_payload["risk_controls"].update(
+                stop_loss_price=98.0, take_profit_price=107.0,
+            )
+            _, prior_orders, _ = svc.store.create_outbox(
+                decision_id="dec-prior-position", run_id=None, symbol="AAPL",
+                action="BUY", target_position="LONG",
+                payload_json=json.dumps(prior_payload),
+                orders=[{"client_order_id": "ta-prior-position", "symbol": "AAPL",
+                         "side": "buy", "quantity": 150.0, "notional": None}],
+            )
+            svc.store.record_fill(
+                execution_id="fill-prior-position", order_id=prior_orders[0]["order_id"],
+                qty=150.0, price=130.0,
+            )
+            svc.store.transition_order(prior_orders[0]["order_id"], "FILLED")
+            svc.store.sync_order_from_broker(
+                prior_orders[0]["order_id"], "FILLED",
+                broker_order_id="prior-broker-order", filled_qty=150.0,
+            )
+            prior_parent = svc.store.get_order(prior_orders[0]["order_id"])
+            prior_child = SimpleNamespace(
+                broker_order_id="prior-stop-order", client_order_id="ta-prior-stop",
+                symbol="AAPL", side="sell", qty=150.0,
+            )
+            svc.store.register_protective_child(prior_parent, prior_child)
+            broker.state["orders"].extend([
+                SimpleNamespace(
+                    id="prior-broker-order", client_order_id="ta-prior-position",
+                    symbol="AAPL", side="buy", status="filled", qty="150",
+                    filled_qty="150", filled_avg_price="130", updated_at=_now(),
+                ),
+                SimpleNamespace(
+                    id="prior-stop-order", client_order_id="ta-prior-stop",
+                    symbol="AAPL", side="sell", status="new", type="stop",
+                    qty="150", filled_qty="0", filled_avg_price=None, updated_at=_now(),
+                ),
+            ])
             svc.store.create_outbox(
                 decision_id="dec-cap", run_id=None, symbol="AAPL", action="BUY",
                 target_position="LONG", payload_json=json.dumps(self._intent()),
@@ -523,7 +569,8 @@ class ExecutionIntegrationTests(unittest.TestCase):
             self.assertEqual(row["status"], "ACCEPTED")
             # The resubmitted request carried the clipped notional (500),
             # not the original 4000: 20000 cap - 19500 held = 500.
-            submitted = broker.state["orders"][0]
+            submitted = next(o for o in broker.state["orders"]
+                             if o.client_order_id == "ta-cap-1")
             self.assertEqual(float(submitted.qty), 4.0)
             self.assertIsNone(submitted.notional)
 

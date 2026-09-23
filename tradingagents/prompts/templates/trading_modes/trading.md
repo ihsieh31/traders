@@ -11,7 +11,7 @@ Available swing trading actions:
 - **Holding Period:** 2-10 trading days, capturing intermediate price swings
 - **Entry Signals:** Multi-timeframe confluence (1h/4h/1d), pullbacks, breakouts, trend continuation
 - **Exit Signals:** Swing targets at key levels, explicit full-exit decisions, or thesis invalidation
-- **Risk Management:** 1-3% risk per trade, minimum 2:1 R/R ratio
+- **Risk Management:** 1-3% risk per trade. Opening orders require at least 2:1 R/R across the full authorized entry range; execution checks this deterministically.
 - **Position Management:** Daily monitoring; use the existing broker protective orders and explicit full-exit decisions. This pipeline does not automatically trail or replace protective orders for a maintained position.
 
 **SWING POSITION CRITERIA:**

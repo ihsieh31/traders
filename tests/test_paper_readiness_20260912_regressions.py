@@ -167,26 +167,32 @@ def test_N02_recovery_blocks_crossing_buy_over_fresh_short(isolated):
     assert len(e.service.store.list_all_orders()) == 1
 
 
-def test_N02_same_direction_buy_onto_fresh_long_is_not_blocked_by_crossing(isolated):
+def test_N02_unmatched_fresh_long_fails_closed_even_for_same_direction_buy(isolated):
     e = isolated
-    seed_pending(e, opening("BUY", "NEUTRAL"))
+    row = seed_pending(e, opening("BUY", "NEUTRAL"))
     e.broker.qty = 5
     result = e.service.startup_recover()
-    assert len(e.broker.submits) == 1, result
-    assert e.broker.qty == 14  # same-direction increase: 5 held + 9 resubmitted
-    assert "stale position transition" not in result.get("error", "")
+    # Same-direction status does not prove the original stop or active lot.
+    # F05 therefore blocks adding risk against this unrecorded broker holding.
+    assert len(e.broker.submits) == 0, result
+    assert e.broker.qty == 5
+    assert result["success"] is False and result["account_execution_state"] == "PAUSED"
+    assert "broker/ledger active position mismatch" in result["error"]
+    assert e.service.store.get_order(row["order_id"])["status"] == "PENDING"
 
 
-def test_N02_same_direction_sell_onto_fresh_short_is_not_blocked_by_crossing(isolated):
+def test_N02_unmatched_fresh_short_fails_closed_even_for_same_direction_sell(isolated):
     e = isolated
     e.config["allow_shorts"] = True  # current policy permits the increase
     set_account_shorting_enabled(e, True)
-    seed_pending(e, opening("SHORT"))
+    row = seed_pending(e, opening("SHORT"))
     e.broker.qty = -2
     result = e.service.startup_recover()
-    assert len(e.broker.submits) == 1, result
-    assert e.broker.qty == -11
-    assert "stale position transition" not in result.get("error", "")
+    assert len(e.broker.submits) == 0, result
+    assert e.broker.qty == -2
+    assert result["success"] is False and result["account_execution_state"] == "PAUSED"
+    assert "broker/ledger active position mismatch" in result["error"]
+    assert e.service.store.get_order(row["order_id"])["status"] == "PENDING"
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +323,31 @@ def test_N04_control_kill_switch_already_engaged_blocks_close_and_keeps_protecti
 # ---------------------------------------------------------------------------
 
 def _seed_delisted(env, status):
-    env.broker.orders.append(NS(id="old", client_order_id="manual-old", symbol="DELISTED",
-                                side="buy", status=status, qty=10, filled_qty=0,
-                                filled_avg_price=None, updated_at=now(), legs=[], notional=None))
+    if status in {"canceled", "rejected", "expired", "filled"}:
+        env.broker.orders.append(NS(id="old", client_order_id="manual-old", symbol="DELISTED",
+                                    side="buy", status=status, qty=10, filled_qty=0,
+                                    filled_avg_price=None, updated_at=now(), legs=[], notional=None))
+    else:
+        # Live program orders need a durable intent/stop before they can be
+        # valued as pending exposure. This lets the test reach the missing
+        # per-symbol quote check instead of the unowned-order fail-closed gate.
+        did = "delisted-live-opening"
+        coid = client_order_id_for(did, "DELISTED", "buy", role="open", seq=0)
+        payload = opening()
+        payload["symbol"] = "DELISTED"
+        env.service.store.ensure_account_binding("audit-fixture")
+        _, rows, _ = env.service.store.create_outbox(
+            decision_id=did, run_id=None, symbol="DELISTED", action="BUY",
+            target_position="LONG", payload_json=json.dumps(payload),
+            orders=[{"client_order_id": coid, "symbol": "DELISTED", "side": "buy",
+                     "quantity": 10, "notional": None}],
+        )
+        env.service.store.sync_order_from_broker(
+            rows[0]["order_id"], "ACCEPTED", broker_order_id="old", filled_qty=0,
+        )
+        env.broker.orders.append(NS(id="old", client_order_id=coid, symbol="DELISTED",
+                                    side="buy", status=status, qty=10, filled_qty=0,
+                                    filled_avg_price=None, updated_at=now(), legs=[], notional=None))
     original = env.service._quote_factory
 
     def quote(symbol):

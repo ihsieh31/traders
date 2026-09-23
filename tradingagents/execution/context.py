@@ -22,7 +22,10 @@ Fail-closed contract:
 
 from __future__ import annotations
 
+import json
+import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from tradingagents.execution.authority import (
@@ -53,6 +56,161 @@ class PositionContext:
     unrealized_pl_pct: Optional[float]
     position_weight_pct: Optional[float]
     current_price: Optional[float]
+
+
+@dataclass(frozen=True)
+class ActiveTradePlanContext:
+    """Original plan proven by the active filled lot in the execution ledger."""
+
+    symbol: str
+    availability: str
+    decision_id: Optional[str] = None
+    trade_date: Optional[str] = None
+    original_thesis: Optional[str] = None
+    invalidation: Optional[str] = None
+    original_stop_loss_price: Optional[float] = None
+    original_take_profit_price: Optional[float] = None
+    entry_minimum_price: Optional[float] = None
+    entry_maximum_price: Optional[float] = None
+    entry_expires_at: Optional[str] = None
+    exit_by: Optional[str] = None
+    risk_fraction: Optional[float] = None
+    time_horizon: Optional[str] = None
+    active_lot_qty: Optional[float] = None
+    source: str = "execution ledger"
+    reason: Optional[str] = None
+
+
+def _unavailable_trade_plan(symbol: str, reason: str, *, availability: str = "unavailable") -> ActiveTradePlanContext:
+    return ActiveTradePlanContext(
+        symbol=(symbol or "").upper().replace("/", ""),
+        availability=availability,
+        reason=reason,
+    )
+
+
+def load_active_trade_plan_context(
+    position: PositionContext,
+    config: Optional[dict] = None,
+) -> ActiveTradePlanContext:
+    """Load a single matching active lot's original plan without DB writes.
+
+    Missing, unbound, mismatched, malformed, or ambiguous ledger evidence is
+    rendered unavailable; current analysis prose is never used as a fallback.
+    """
+    symbol = (position.symbol or "").upper().replace("/", "")
+    if position.side == "FLAT" or abs(position.qty) <= 1e-9:
+        return _unavailable_trade_plan(symbol, "broker position is flat")
+    try:
+        from tradingagents.execution.service import resolve_execution_db_path
+        from tradingagents.execution.store import ExecutionStore
+        from tradingagents.execution.lifecycle import remaining_lots
+
+        db_path = resolve_execution_db_path((config or {}).get("execution_db_path"))
+        if not Path(db_path).is_file():
+            return _unavailable_trade_plan(symbol, "configured execution ledger does not exist")
+        store = ExecutionStore(db_path, read_only=True)
+        if store.account_binding_owner() != position.account_id:
+            return _unavailable_trade_plan(symbol, "execution ledger account binding does not match broker snapshot")
+        all_lots = remaining_lots(store)
+        lots = [lot for lot in all_lots.get(symbol, []) if abs(float(lot.get("qty") or 0)) > 1e-9]
+        if not lots:
+            return _unavailable_trade_plan(symbol, "no matching active filled lot in execution ledger")
+        signed_qty = sum(float(lot["qty"]) for lot in lots)
+        if any((float(lot["qty"]) > 0) != (position.qty > 0) for lot in lots):
+            return _unavailable_trade_plan(symbol, "ledger lot direction conflicts with broker position")
+        if not math.isclose(signed_qty, position.qty, rel_tol=0, abs_tol=1e-6):
+            return _unavailable_trade_plan(symbol, "ledger active quantity does not match broker position")
+
+        plans = []
+        for lot in lots:
+            intent = lot.get("intent") or {}
+            if str(intent.get("symbol") or "").upper().replace("/", "") != symbol:
+                return _unavailable_trade_plan(symbol, "durable intent symbol does not match active lot")
+            payload = json.loads(intent.get("payload_json") or "")
+            controls = payload.get("risk_controls") or {}
+            policy = payload.get("entry_policy") or {}
+            plans.append((intent, payload, controls, policy))
+        decision_ids = {str(row[0].get("decision_id") or "") for row in plans}
+        if "" in decision_ids:
+            return _unavailable_trade_plan(symbol, "durable decision identity is missing")
+        if len(decision_ids) != 1:
+            return _unavailable_trade_plan(
+                symbol, "multiple active trade plans cannot be represented as one original thesis",
+                availability="ambiguous",
+            )
+
+        intent, payload, controls, policy = plans[0]
+        thesis = payload.get("rationale_summary")
+        stop = _positive_number(controls.get("stop_loss_price"))
+        target = _positive_number(controls.get("take_profit_price"))
+        minimum = _positive_number(policy.get("minimum_price"))
+        maximum = _positive_number(policy.get("maximum_price"))
+        risk_fraction = _positive_number(policy.get("risk_fraction"))
+        trade_date = payload.get("trade_date")
+        expiry = policy.get("expires_at")
+        exit_by = policy.get("exit_by")
+        horizon = payload.get("time_horizon")
+        required = (thesis, stop, target, minimum, maximum, risk_fraction,
+                    trade_date, expiry, exit_by, horizon)
+        if not all(value is not None and str(value).strip() for value in required):
+            return _unavailable_trade_plan(symbol, "durable original plan is incomplete")
+        if minimum > maximum:
+            return _unavailable_trade_plan(symbol, "durable entry range is invalid")
+        return ActiveTradePlanContext(
+            symbol=symbol,
+            availability="available",
+            decision_id=next(iter(decision_ids)),
+            trade_date=str(trade_date),
+            original_thesis=str(thesis).strip(),
+            invalidation=(str(controls.get("invalidation")).strip()
+                          if controls.get("invalidation") is not None else None),
+            original_stop_loss_price=stop,
+            original_take_profit_price=target,
+            entry_minimum_price=minimum,
+            entry_maximum_price=maximum,
+            entry_expires_at=str(expiry),
+            exit_by=str(exit_by),
+            risk_fraction=risk_fraction,
+            time_horizon=str(horizon).strip(),
+            active_lot_qty=signed_qty,
+        )
+    except Exception as exc:
+        return _unavailable_trade_plan(symbol, f"execution ledger evidence unavailable ({type(exc).__name__})")
+
+
+def _positive_number(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def render_trade_plan_context(context: ActiveTradePlanContext) -> str:
+    if context.availability != "available":
+        detail = f" ({context.reason})" if context.reason else ""
+        return f"Original trade plan: {context.availability}{detail}."
+    def price(value):
+        return f"${value:,.2f}" if value is not None else "unavailable"
+    return "\n".join((
+        f"Original trade plan: available (source: {context.source})",
+        f"- Symbol / decision: {context.symbol} / {context.decision_id}",
+        f"- Trade date: {context.trade_date}",
+        f"- Original thesis: {context.original_thesis}",
+        f"- Original invalidation: {context.invalidation or 'unavailable'}",
+        f"- Original stop / target: {price(context.original_stop_loss_price)} / {price(context.original_take_profit_price)}",
+        f"- Authorized entry range: {price(context.entry_minimum_price)}–{price(context.entry_maximum_price)}",
+        f"- Entry expiry / exit_by: {context.entry_expires_at} / {context.exit_by}",
+        f"- Original risk fraction / horizon: {context.risk_fraction:.4f} / {context.time_horizon}",
+        f"- Active lot quantity: {context.active_lot_qty:g}",
+    ))
+
+
+def render_unavailable_trade_plan(reason: str) -> str:
+    return f"Original trade plan: unavailable ({reason})."
 
 
 def capture_position_context(

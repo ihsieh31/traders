@@ -32,6 +32,18 @@ def _hold_intent():
     }
 
 
+def _short_intent():
+    return {
+        "symbol": "AAPL",
+        "action": "SHORT",
+        "target_position": "SHORT",
+        "planned_actions": [
+            {"action": "open_short", "order_type": "market",
+             "side": "sell", "sizing_basis": "configured_notional"},
+        ],
+    }
+
+
 class FakeService:
     def __init__(self):
         self.calls = []
@@ -107,6 +119,34 @@ class AutoTradeSharedTest(unittest.TestCase):
                 base_trade_notional_usd=1000.0, allow_shorts=False,
                 config={}, execution_service=service,
             )
+        self.assertEqual(service.calls[0]["dollar_amount"], 1000.0)
+
+    def test_short_uses_portfolio_sizing_but_skips_long_regime_multiplier(self):
+        service = FakeService()
+        with patch("tradingagents.regime.regime_risk_multiplier") as regime, \
+             patch("tradingagents.portfolio.adjust_new_position_notional", return_value=700.0) as portfolio:
+            execute_auto_trade(
+                ticker="AAPL", trade_intent=_short_intent(),
+                base_trade_notional_usd=1000.0, allow_shorts=True,
+                config={}, execution_service=service,
+            )
+        regime.assert_not_called()
+        portfolio.assert_called_once()
+        self.assertEqual(portfolio.call_args.args[:3], ("AAPL", "SHORT", 1000.0))
+        self.assertEqual(service.calls[0]["dollar_amount"], 700.0)
+
+    def test_short_portfolio_failure_preserves_existing_fallback(self):
+        service = FakeService()
+        with patch("tradingagents.regime.regime_risk_multiplier") as regime, \
+             patch("tradingagents.portfolio.adjust_new_position_notional",
+                   side_effect=RuntimeError("gather failed")) as portfolio:
+            execute_auto_trade(
+                ticker="AAPL", trade_intent=_short_intent(),
+                base_trade_notional_usd=1000.0, allow_shorts=True,
+                config={}, execution_service=service,
+            )
+        regime.assert_not_called()
+        portfolio.assert_called_once()
         self.assertEqual(service.calls[0]["dollar_amount"], 1000.0)
 
     def test_decision_identity_passthrough(self):

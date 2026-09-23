@@ -30,9 +30,9 @@ DEFAULT_CONFIG = {
         get_env("AGENT_MEMORY_DIR", str(APP_HOME / "memory" / "agent_memory")),
         field="agent_memory_dir",
     )),
-    # Feed realized outcomes back into the per-agent memories (5 quick-LLM
-    # reflection calls per resolved decision). Requires OpenAI embeddings.
-    "reflection_on_outcome_enabled": True,
+    # Causal agent-memory reflection is opt-in. The default 5-bar asset move
+    # is an objective diagnostic, not broker P&L or proof of decision quality.
+    "reflection_on_outcome_enabled": False,
     # FinMem-style memory maintenance (arXiv:2311.13743): Ebbinghaus time
     # decay with importance-scaled stability, near-duplicate pruning, and a
     # per-collection size cap. Runs after outcome reflections.
@@ -147,13 +147,14 @@ DEFAULT_CONFIG = {
     "alert_webhook_url": None,  # Generic JSON webhook; or env TRADINGBUFFETT_ALERT_WEBHOOK_URL
     "alert_cooldown_seconds": 900,  # Identical alerts suppressed within this window
     # Portfolio-level intelligence (deterministic sizing above per-symbol decisions)
-    "portfolio_intelligence_enabled": True,  # Master switch for portfolio-aware sizing of new long exposure
+    "portfolio_intelligence_enabled": True,  # Master switch for portfolio-aware sizing of new long/short exposure
     "portfolio_lookback_bars": 60,  # Daily bars used for correlation / volatility estimates
-    "portfolio_high_correlation": 0.6,  # Positive correlation above this = duplicated risk
+    "portfolio_high_correlation": 0.6,  # Positive P&L correlation above this = duplicated risk
     "portfolio_correlated_size_factor": 0.5,  # Size multiplier applied on a correlation hit
     "portfolio_vol_sizing_enabled": True,  # Inverse-volatility (simplified risk parity) sizing
     "portfolio_target_daily_vol_pct": 2.0,  # Realized daily vol above this scales size by target/realized
     "portfolio_max_gross_exposure_pct": 100.0,  # Total book value cap as % of equity; 0 = uncapped
+    "portfolio_max_stop_risk_pct": 5.0,  # Conservative paper-research starting safety value; not an optimized strategy parameter
     "portfolio_min_size_factor": 0.25,  # Floor on combined penalties so trades never silently vanish
     # Market regime detection (deterministic, fit-free; filter not signal)
     "regime_detection_enabled": True,  # Inject regime block into the market report and scale sizing

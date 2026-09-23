@@ -763,7 +763,8 @@ def _intent(symbol, action="BUY", current="NEUTRAL"):
         allow_shorts=False,
         trade_date="2026-09-04",
         decision=RiskDecision(
-            action=ExecutableAction(action), confidence="medium", risk_rationale="r2", required_controls="strict", entry_policy=_ready_entry_policy(), stop_loss_price=95
+            action=ExecutableAction(action), confidence="medium", risk_rationale="r2", required_controls="strict", entry_policy=_ready_entry_policy(), stop_loss_price=95,
+            take_profit_price=113
         ),
     ).model_dump(mode="json")
 

@@ -356,6 +356,7 @@ def _execute_core(
             quote=_quote,
             intent_dict=intent_dict,
             quote_factory=self._quote_factory,
+            execution_store=self._store,
         )
         if not cap_result.approved:
             return {
