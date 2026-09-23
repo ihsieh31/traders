@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin unattended launcher for the existing resumable A/B campaign.
+"""DEPRECATED single-symbol A/B campaign auto launcher.
 
 It owns waiting (across sessions and within a session) and bounded
 same-session retries only.  Campaign state, calendar freezing, pair
@@ -7,6 +7,9 @@ execution, recovery/reconciliation, settlement refresh, and finalization
 stay in their existing owners: every iteration is a plain --resume of the
 same campaign root, so a completed session is never rerun and no second
 campaign state machine exists here.
+The supported full-system entry is ``python -m cli.main long-run --mode ab``.
+The callable ``run_auto`` remains for legacy offline tests; this CLI no longer
+starts a second Paper campaign engine.
 """
 
 from __future__ import annotations
@@ -258,7 +261,10 @@ def run_auto(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Use: python -m cli.main long-run --mode ab",
+    )
     parser.add_argument("--symbol")
     parser.add_argument("--start-date")
     parser.add_argument("--days", type=int)
@@ -289,13 +295,12 @@ def main(argv: list[str] | None = None) -> int:
         # held for the whole unattended campaign so no single long-run or
         # second A/B runner can start concurrently.
         with global_runner_lock():
-            result = run_auto(
-                symbol=args.symbol, start_date=args.start_date, days=args.days,
-                results_root=args.results_root, resume=args.resume,
-                execute_paper=args.execute, paper_notional_usd=args.paper_notional_usd,
-                continuous=args.continuous,
-                base_config=_load_config(args.config_json),
+            print(
+                "[AB campaign auto] DEPRECATED: use the full-market unified "
+                "runner `python -m cli.main long-run --mode ab`.",
+                file=sys.stderr,
             )
+            return 2
     except GlobalRunnerLockBusy as exc:
         print(f"[AB campaign auto] ERROR: {exc}", file=sys.stderr)
         return 2

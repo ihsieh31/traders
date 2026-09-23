@@ -22,10 +22,9 @@ def _prepare_symbol_graph_config(
 ):
     """Return ``(graph_config, evidence_identity)`` for one symbol.
 
-    Traders shares the round-level graph config unchanged. Berkshire gets a
-    per-symbol config bound to a deterministic frozen-evidence packet under
-    the run's own isolated results namespace; capture/build reuses the shared
-    A/B evidence module so hashing and integrity semantics are identical.
+    In a full-market A/B run both backends get a per-symbol graph config
+    bound to the same deterministic frozen-evidence packet. The backend value
+    remains arm-specific; only the source packet is shared.
 
     Fail-closed: when the journal already pinned a packet hash, that hash is
     installed as the expected sha256 BEFORE build_or_load runs — a missing or
@@ -33,7 +32,8 @@ def _prepare_symbol_graph_config(
     producing different evidence.
     """
     backend = str(runtime.get("analysis_backend") or "traders").strip().lower()
-    if backend != "berkshire":
+    shared_evidence_dir = runtime.get("shared_evidence_dir")
+    if backend != "berkshire" and not shared_evidence_dir:
         return dict(graph_config), None
 
     from pathlib import Path
@@ -45,15 +45,20 @@ def _prepare_symbol_graph_config(
     )
 
     config = dict(graph_config)
-    config["analysis_backend"] = "berkshire"
-    # Berkshire consumes the same five-analyst Traders topology prompts; the
-    # profile key keeps that explicit in every audit/log record.
+    config["analysis_backend"] = backend
+    # Berkshire consumes the same canonical report contract as Traders; this
+    # profile key keeps downstream Trader/Risk prompts identical.
     config["analysis_profile"] = "traders"
     config["analysis_input_mode"] = "frozen_evidence"
     results_dir = validate_app_path(
         runtime.get("results_dir") or DEFAULT_RESULTS_DIR, field="results_dir"
     )
     packet_path = (
+        Path(shared_evidence_dir)
+        / safe_ticker_component(session_date)
+        / safe_ticker_component(symbol)
+        / "evidence_packet.json"
+        if shared_evidence_dir else
         Path(results_dir)
         / "_long_run_evidence"
         / safe_ticker_component(run_id)
@@ -62,6 +67,7 @@ def _prepare_symbol_graph_config(
         / "evidence_packet.json"
     )
     config["evidence_packet_path"] = str(packet_path)
+    config["analysis_input_mode"] = "frozen_evidence"
     if expected_sha256:
         config["evidence_packet_sha256"] = str(expected_sha256)
         if not packet_path.exists():
@@ -77,6 +83,10 @@ def _prepare_symbol_graph_config(
     packet = build_or_load_evidence_packet(
         packet_path, symbol=symbol, trade_date=session_date, config=config
     )
+    if shared_evidence_dir:
+        from tradingagents.experiments.evidence_snapshot import validate_evidence_completeness
+
+        validate_evidence_completeness(packet)
     config["evidence_packet_sha256"] = packet["sha256"]
     return config, {"path": str(packet_path), "sha256": str(packet["sha256"])}
 
@@ -289,7 +299,7 @@ def run_symbol_work(
         save_round_journal(run_id, journal)
         try:
             backend = str(runtime.get("analysis_backend") or "traders").strip().lower()
-            if backend == "berkshire":
+            if backend == "berkshire" or runtime.get("shared_evidence_dir"):
                 # Berkshire: per-symbol frozen evidence + a dedicated graph.
                 # The packet identity is pinned into the journal BEFORE the
                 # graph runs; a resume re-verifies the same bytes and any

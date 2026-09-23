@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Run one due session of a resumable Traders versus Berkshire A/B campaign.
+"""Deprecated single-symbol A/B campaign implementation.
 
-This module is intentionally only a thin campaign coordinator.  It freezes an
-authoritative NYSE session list, calls the existing single-pair runner once per
-invocation, and writes a broker-authoritative final equity comparison after all
-sessions complete.  It is not a daemon: invoke it from the existing daily
-scheduler/cron while the market is open, then use ``--resume`` on later days.
+The supported full-system entry is ``python -m cli.main long-run --mode ab``.
+The functions in this module remain temporarily for existing offline campaign
+tests and state migration. Its command-line entry refuses to start the legacy
+Paper campaign.
 """
 
 from __future__ import annotations
@@ -1185,7 +1184,7 @@ def run_campaign(
     settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
     continuous: bool | None = None,
 ) -> dict[str, Any]:
-    """Serialize the entire campaign lifecycle before touching its state."""
+    """Legacy single-symbol campaign API retained for migration/tests only."""
 
     root = validate_app_path(
         resume if resume is not None else results_root or (default_results_dir() / "ab"),
@@ -1215,7 +1214,10 @@ def run_campaign(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Use: python -m cli.main long-run --mode ab",
+    )
     parser.add_argument("--symbol")
     parser.add_argument("--start-date")
     parser.add_argument("--days", type=int)
@@ -1240,18 +1242,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         # Outermost lock: exactly one Paper runner process application-wide.
         with global_runner_lock():
-            result = run_campaign(
-                symbol=args.symbol,
-                start_date=args.start_date,
-                days=args.days,
-                results_root=args.results_root,
-                resume=args.resume,
-                base_config=_load_config(args.config_json),
-                execute_paper=args.execute_paper,
-                paper_notional_usd=args.paper_notional_usd,
-                debug=args.debug,
-                continuous=args.continuous,
+            print(
+                "[AB campaign] DEPRECATED: this single-symbol campaign is not "
+                "the full-system A/B runner. Use `python -m cli.main "
+                "long-run --mode ab`.",
+                file=sys.stderr,
             )
+            return 2
     except GlobalRunnerLockBusy as exc:
         print(f"[AB campaign] ERROR: {exc}", file=sys.stderr)
         return 2

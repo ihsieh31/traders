@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+import hashlib
+import json
 from typing import Any, Callable, Dict, List, Optional
 
 from tradingagents.dataflows.alpaca_utils import (
@@ -52,6 +54,7 @@ from tradingagents.screening.selection_store import (
     SCHEMA_VERSION,
     SCREENING_DATA_FEED,
     SelectionStore,
+    _integrity_digest,
     default_selection_cache_path,
     eastern_timestamp,
 )
@@ -84,6 +87,7 @@ class RoundPlan:
     other_asset_holdings: List[dict] = field(default_factory=list)
     scan_stats: Optional[dict] = None
     screening_description: str = ""
+    selection_hash: Optional[str] = None
 
     @property
     def stopped(self) -> bool:
@@ -330,7 +334,152 @@ def _run_scan(
         ],
     }
     store.save(payload)
-    return RoundPlan(status="ok", selection=payload)
+    # Carry the exact sealed bytes forward so the long-run A/B coordinator
+    # can persist and revalidate this same authoritative selection.
+    payload = store.load_raw() or payload
+    return RoundPlan(
+        status="ok", selection=payload,
+        selection_hash=hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest(),
+    )
+
+
+def _attach_holdings(
+    plan: RoundPlan,
+    config: Dict[str, Any],
+    deps: ScreeningDeps,
+) -> RoundPlan:
+    """Add only this account's safely reviewable holdings to a frozen Top20."""
+    try:
+        positions = (deps.positions_fn or _default_positions)()
+    except Exception as exc:
+        return _stopped(
+            "HOLDINGS_UNAVAILABLE",
+            f"broker positions could not be verified: {exc}",
+        )
+
+    us_holdings = [p for p in positions if "/" not in p["symbol"]]
+    plan.other_asset_holdings = [
+        {"symbol": p["symbol"], "qty": p["qty"]}
+        for p in positions if "/" in p["symbol"]
+    ]
+    top20_symbols = [entry["symbol"] for entry in plan.top20]
+
+    try:
+        checker = (deps.quarantine_fn or _default_quarantine)(config)
+    except ScreeningStop as exc:
+        return _stopped(exc.reason, exc.detail)
+
+    overlap: List[str] = []
+    extras: List[str] = []
+    blocked: List[dict] = []
+    seen = set(top20_symbols)
+    for holding in sorted(us_holdings, key=lambda p: p["symbol"]):
+        symbol = holding["symbol"]
+        if symbol in seen:
+            overlap.append(symbol)
+            continue
+        seen.add(symbol)
+        reason = checker(symbol)
+        if reason:
+            blocked.append({"symbol": symbol, "reason": f"quarantined: {reason}"})
+            continue
+        try:
+            asset = (deps.asset_fn or _default_asset)(symbol)
+            tradable = bool(getattr(asset, "tradable", False))
+            status = enum_value(getattr(asset, "status", ""))
+        except Exception as exc:
+            blocked.append({"symbol": symbol, "reason": f"asset status unavailable: {exc}"})
+            continue
+        if not tradable or status != "active":
+            blocked.append({
+                "symbol": symbol,
+                "reason": f"not safely analyzable (tradable={tradable}, status={status})",
+            })
+            continue
+        extras.append(symbol)
+
+    plan.overlap_holdings = sorted(overlap)
+    plan.extra_holdings = extras
+    plan.blocked_holdings = blocked
+    plan.deep_analysis_set = [*top20_symbols, *extras]
+    return plan
+
+
+def prepare_screening_round_from_selection(
+    config: Dict[str, Any],
+    selection: Dict[str, Any],
+    *,
+    deps: Optional[ScreeningDeps] = None,
+    session_date: Optional[str] = None,
+) -> RoundPlan:
+    """Build an account-specific held-review plan without scanning or invoking an LLM.
+
+    Used by the long-run A/B coordinator after it has durably frozen the
+    authoritative shared selection. The seal, session identity and
+    selection-affecting config fingerprint are checked before account
+    holdings are added.
+    """
+    deps = deps or ScreeningDeps()
+    resolved = resolve_screening_config(config)
+    if not resolved.get("enabled"):
+        raise ScreeningConfigError(
+            "prepare_screening_round_from_selection requires auto_screening_enabled"
+        )
+    store = SelectionStore(default_selection_cache_path(config))
+    if not isinstance(selection, dict):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection is not an object")
+    seal = selection.get("integrity")
+    if not isinstance(seal, str) or seal != _integrity_digest(selection):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection integrity seal mismatch")
+    if selection.get("schema_version") != SCHEMA_VERSION:
+        return _stopped("FROZEN_SELECTION_INVALID", "selection schema is unsupported")
+    spec = resolved.get("spec")
+    if selection.get("config_fingerprint") != store.config_fingerprint(config, spec):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection config fingerprint mismatch")
+    selected_date = str(selection.get("trading_date") or "")
+    if session_date and selected_date != str(session_date):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection session date mismatch")
+    try:
+        as_of = date.fromisoformat(str(selection.get("as_of")))
+        selected_day = date.fromisoformat(selected_date)
+    except ValueError:
+        return _stopped("FROZEN_SELECTION_INVALID", "selection has an invalid date")
+    if as_of > selected_day:
+        return _stopped("FROZEN_SELECTION_INVALID", "selection uses future market data")
+    top20 = selection.get("top20")
+    top40 = selection.get("top40")
+    if not isinstance(top20, list) or not isinstance(top40, list):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection is missing Top40 or Top20")
+    if len(top20) != int(config.get("screening_select_n", 20)):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection Top20 count is invalid")
+    top40_symbols = {
+        row.get("symbol") for row in top40 if isinstance(row, dict)
+    }
+    top20_symbols = [row.get("symbol") for row in top20 if isinstance(row, dict)]
+    if (
+        len(top20_symbols) != len(top20)
+        or any(not isinstance(symbol, str) or symbol not in top40_symbols for symbol in top20_symbols)
+        or len(set(top20_symbols)) != len(top20_symbols)
+    ):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection Top20 membership is invalid")
+
+    digest = hashlib.sha256(
+        json.dumps(selection, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    plan = RoundPlan(
+        selection=selection,
+        selection_date=selected_date,
+        as_of=str(selection.get("as_of")),
+        cached=True,
+        entry_allowed=True,
+        top20=list(top20),
+        scan_stats=selection.get("stats"),
+        screening_description=describe_screening_role(resolved),
+        selection_hash=digest,
+    )
+    return _attach_holdings(plan, config, deps)
 
 
 def prepare_screening_round(
@@ -429,20 +578,6 @@ def prepare_screening_round(
                     selection = scan_plan.selection
                     cached = False
 
-    # ---- fresh holdings (every round; never cached with the selection) ----
-    try:
-        positions = (deps.positions_fn or _default_positions)()
-    except Exception as exc:
-        return _stopped(
-            "HOLDINGS_UNAVAILABLE",
-            f"broker positions could not be verified: {exc}",
-        )
-
-    us_holdings = [p for p in positions if "/" not in p["symbol"]]
-    plan.other_asset_holdings = [
-        {"symbol": p["symbol"], "qty": p["qty"]} for p in positions if "/" in p["symbol"]
-    ]
-
     if not trading_day:
         # Held-risk review only: no scan ran, no Top20, no new entries.
         plan.mode = "held_review"
@@ -462,46 +597,8 @@ def prepare_screening_round(
 
     top20_symbols = [entry["symbol"] for entry in plan.top20]
 
-    try:
-        checker = (deps.quarantine_fn or _default_quarantine)(config)
-    except ScreeningStop as exc:
-        return _stopped(exc.reason, exc.detail)
-
-    overlap: List[str] = []
-    extras: List[str] = []
-    blocked: List[dict] = []
-    seen = set(top20_symbols)
-    for holding in sorted(us_holdings, key=lambda p: p["symbol"]):
-        symbol = holding["symbol"]
-        if symbol in seen:
-            overlap.append(symbol)
-            continue
-        seen.add(symbol)
-        reason = checker(symbol)
-        if reason:
-            blocked.append({"symbol": symbol, "reason": f"quarantined: {reason}"})
-            continue
-        try:
-            asset = (deps.asset_fn or _default_asset)(symbol)
-            tradable = bool(getattr(asset, "tradable", False))
-            status = enum_value(getattr(asset, "status", ""))
-        except Exception as exc:
-            blocked.append(
-                {"symbol": symbol, "reason": f"asset status unavailable: {exc}"}
-            )
-            continue
-        if not tradable or status != "active":
-            blocked.append(
-                {
-                    "symbol": symbol,
-                    "reason": f"not safely analyzable (tradable={tradable}, status={status})",
-                }
-            )
-            continue
-        extras.append(symbol)
-
-    plan.overlap_holdings = sorted(overlap)
-    plan.extra_holdings = extras
-    plan.blocked_holdings = blocked
-    plan.deep_analysis_set = [*top20_symbols, *extras]
-    return plan
+    if plan.selection is not None:
+        plan.selection_hash = hashlib.sha256(
+            json.dumps(plan.selection, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+    return _attach_holdings(plan, config, deps)

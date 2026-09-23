@@ -387,6 +387,68 @@ def apply_single_backend_runtime_paths(
     return runtime
 
 
+def apply_ab_backend_runtime_paths(
+    runtime: Dict[str, Any], backend: str, root: str | Path
+) -> Dict[str, Any]:
+    """Build one isolated A/B execution namespace around a shared selection.
+
+    The daily selection cache and frozen evidence directory are deliberately
+    shared. Everything that can learn, execute, recover, or hold a kill switch
+    is stored under this arm's own directory.
+    """
+    from tradingagents.app_identity import validate_app_path
+
+    backend = str(backend).strip().lower()
+    if backend not in {"traders", "berkshire"}:
+        raise ValueError("A/B backend must be traders or berkshire")
+    root_path = validate_app_path(root, field="results_dir")
+    arm = validate_app_path(root_path / "arms" / backend, field="results_dir")
+    shared = validate_app_path(root_path / "shared", field="results_dir")
+    runtime = dict(runtime)
+    runtime.update({
+        "analysis_backend": backend,
+        "analysis_profile": "traders",
+        "analysis_input_mode": "frozen_evidence",
+        "shared_evidence_dir": str(
+            validate_app_path(shared / "evidence", field="results_dir")
+        ),
+        "_alpaca_account_profile": "A" if backend == "traders" else "B",
+        "auto_trade": True,
+        "checkpoint_enabled": False,
+        "memory_retrieval_enabled": True,
+        "memory_maintenance_enabled": True,
+        "results_dir": str(validate_app_path(arm / "results", field="results_dir")),
+        "data_cache_dir": str(validate_app_path(arm / "data_cache", field="data_cache_dir")),
+        "execution_db_path": str(
+            validate_app_path(arm / "execution" / "execution.sqlite3", field="execution_db")
+        ),
+        "recovery_ledger_db_path": str(
+            validate_app_path(
+                arm / "execution" / "recovery_ledger.sqlite3", field="execution_db"
+            )
+        ),
+        "memory_log_path": str(
+            validate_app_path(arm / "memory" / "trading_memory.md", field="memory_log_path")
+        ),
+        "agent_memory_dir": str(
+            validate_app_path(arm / "memory" / "agent_memory", field="agent_memory_dir")
+        ),
+        "safety_state_path": str(
+            validate_app_path(arm / "safety" / "state.json", field="safety_state_path")
+        ),
+        "safety_kill_switch_path": str(
+            validate_app_path(arm / "safety" / "KILL_SWITCH", field="safety_kill_switch_path")
+        ),
+        # Screening is one shared authoritative daily artifact. Keeping this
+        # exact path in both runtime configs also preserves the existing
+        # execution entry gate's safety semantics.
+        "screening_selection_cache_path": str(
+            validate_app_path(shared / "screening_selection_cache.json", field="screening_selection_cache_path")
+        ),
+    })
+    return runtime
+
+
 def git_baseline_commit() -> str:
     try:
         out = subprocess.run(

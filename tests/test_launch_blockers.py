@@ -893,28 +893,28 @@ class AutoRootResolutionTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     main(argv)
 
-    def test_o_cli_valid_invocations_still_accepted(self):
+    def test_o_cli_legacy_campaign_is_deprecated(self):
+        from contextlib import contextmanager
         import scripts.run_analysis_ab_campaign_auto as auto_mod
+        import tradingagents.long_run as lr
 
-        with patch.object(
-            auto_mod, "run_auto", return_value={"outcome": "completed"}
+        @contextmanager
+        def lock():
+            yield
+
+        with patch.object(lr, "global_runner_lock", lock), patch.object(
+            auto_mod, "run_auto"
         ) as run_auto_mock:
             self.assertEqual(
-                auto_mod.main(["--symbol", "AAPL", "--start-date", "2026-06-01"]), 0
+                auto_mod.main(["--symbol", "AAPL", "--start-date", "2026-06-01"]), 2
             )
-            self.assertEqual(run_auto_mock.call_count, 1)
-            self.assertEqual(run_auto_mock.call_args.kwargs["symbol"], "AAPL")
-            self.assertEqual(
-                run_auto_mock.call_args.kwargs["start_date"], "2026-06-01"
-            )
-            self.assertIsNone(run_auto_mock.call_args.kwargs["resume"])
+            run_auto_mock.assert_not_called()
 
-        with patch.object(
-            auto_mod, "run_auto", return_value={"outcome": "completed"}
+        with patch.object(lr, "global_runner_lock", lock), patch.object(
+            auto_mod, "run_auto"
         ) as run_auto_mock:
-            self.assertEqual(auto_mod.main(["--resume", "/tmp/ab-auto"]), 0)
-            self.assertEqual(run_auto_mock.call_args.kwargs["resume"], "/tmp/ab-auto")
-            self.assertIsNone(run_auto_mock.call_args.kwargs["symbol"])
+            self.assertEqual(auto_mod.main(["--resume", "/tmp/ab-auto"]), 2)
+            run_auto_mock.assert_not_called()
 
         for argv in (
             ["--resume", "/tmp/ab-auto", "--symbol", "AAPL"],
@@ -1348,7 +1348,7 @@ class CampaignLifecycleGuardTests(unittest.TestCase):
             cam._validate_state({**valid, "continuous": True, "window_chunk_days": None})
         cam._validate_state({**valid, "continuous": True, "window_chunk_days": 3})
 
-    def test_direct_campaign_cli_only_completed_exits_zero(self):
+    def test_direct_campaign_cli_refuses_deprecated_single_symbol_engine(self):
         from contextlib import contextmanager
         import scripts.run_analysis_ab_campaign as cam
         import tradingagents.long_run as lr
@@ -1357,20 +1357,8 @@ class CampaignLifecycleGuardTests(unittest.TestCase):
         def lock():
             yield
 
-        for outcome in (
-            "awaiting_final_settlement",
-            "recovery_not_clean",
-            "pair_unfinished",
-            "previous_session_unfinished",
-            "market_closed",
-            "session_completed",
-            "not_due",
-        ):
-            with self.subTest(outcome=outcome), patch.object(lr, "global_runner_lock", lock), patch.object(
-                cam, "run_campaign", return_value={"outcome": outcome}
-            ):
-                self.assertEqual(cam.main(["--resume", "/tmp/existing-campaign"]), 1)
         with patch.object(lr, "global_runner_lock", lock), patch.object(
-            cam, "run_campaign", return_value={"outcome": "completed"}
-        ):
-            self.assertEqual(cam.main(["--resume", "/tmp/existing-campaign"]), 0)
+            cam, "run_campaign"
+        ) as run_campaign_mock:
+            self.assertEqual(cam.main(["--resume", "/tmp/existing-campaign"]), 2)
+            run_campaign_mock.assert_not_called()

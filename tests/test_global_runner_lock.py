@@ -142,34 +142,25 @@ class UnifiedLongRunEntryTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 2)
         self.assertIn("already active", result.output)
 
-    def test_ab_mode_delegates_to_campaign_launcher(self):
+    def test_ab_mode_delegates_to_unified_coordinator_without_symbol(self):
         calls = []
-
-        def _run(command, cwd=None):
-            calls.append(list(command))
-            return SimpleNamespace(returncode=0)
-
-        with patch("subprocess.run", side_effect=_run):
+        with patch("cli.main._long_run_ab_locked", side_effect=lambda overrides, resume=None: calls.append((overrides, resume))):
             result = self._invoke([
-                "--mode", "ab", "--symbol", "AAPL",
-                "--start-date", "2026-06-22", "--duration-days", "45",
-                "--continuous", "--execute", "--paper-notional-usd", "500",
+                "--mode", "ab", "--duration-days", "45",
+                "--continuous", "--paper-notional-usd", "500",
             ])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(len(calls), 1)
-        command = calls[0]
-        self.assertIn("scripts.run_analysis_ab_campaign_auto", command)
-        for expected in ("--symbol", "AAPL", "--start-date", "2026-06-22",
-                         "--days", "45", "--continuous", "--execute",
-                         "--paper-notional-usd", "500.0"):
-            self.assertIn(expected, command)
+        overrides, resume = calls[0]
+        self.assertIsNone(resume)
+        self.assertEqual(overrides["duration_calendar_days"], 45)
+        self.assertTrue(overrides["continuous"])
+        self.assertEqual(overrides["base_trade_notional_usd"], 500)
 
-    def test_ab_mode_propagates_launcher_exit_code(self):
-        with patch("subprocess.run", return_value=SimpleNamespace(returncode=2)):
-            result = self._invoke([
-                "--mode", "ab", "--symbol", "AAPL", "--start-date", "2026-06-22",
-            ])
+    def test_ab_mode_rejects_symbol(self):
+        result = self._invoke(["--mode", "ab", "--symbol", "AAPL"])
         self.assertEqual(result.exit_code, 2)
+        self.assertIn("does not accept --symbol", result.output)
 
 
 if __name__ == "__main__":

@@ -250,6 +250,12 @@ def apply_single_backend_runtime_paths(
     return _long_run_config.apply_single_backend_runtime_paths(runtime, backend)
 
 
+def apply_ab_backend_runtime_paths(
+    runtime: Dict[str, Any], backend: str, root: str | Path
+) -> Dict[str, Any]:
+    return _long_run_config.apply_ab_backend_runtime_paths(runtime, backend, root)
+
+
 def git_baseline_commit() -> str:
     return _long_run_config.git_baseline_commit()
 
@@ -581,7 +587,15 @@ def _apply_runtime_config(runtime: Dict[str, Any]) -> None:
     and misclassify a gated PENDING opening as a manual-mode recovery. The
     merge keeps every key the run did not explicitly override.
     """
-    return _long_run_config._apply_runtime_config(runtime, LongRunStop=LongRunStop)
+    _long_run_config._apply_runtime_config(runtime, LongRunStop=LongRunStop)
+    # Runtime switching is intentional inside the single A/B coordinator.
+    # Rebuild the cached guard so each arm uses its own safety paths.
+    try:
+        from tradingagents.safety import reset_safety_guard
+
+        reset_safety_guard()
+    except Exception:
+        pass
 
 
 def _validate_long_run_execution_config(runtime: Dict[str, Any]) -> None:
@@ -764,6 +778,12 @@ def run_daily_round(
     from tradingagents.agents.schemas import trade_intent_action
     from tradingagents.llm_clients.retry import ProviderFailure
 
+    # Keep the long-standing public function signature stable. The unified A/B
+    # coordinator passes its immutable per-arm plan through reserved private
+    # keys, which are removed before the config reaches any downstream code.
+    long_cfg = dict(long_cfg)
+    screening_plan = long_cfg.pop("_ab_screening_plan", None)
+    ab_mode = bool(long_cfg.pop("_ab_mode", False))
     deps = deps or LongRunDeps()
     service_factory = deps.execution_service_factory or _default_execution_service
     screening_fn = deps.screening_fn or _default_screening
@@ -956,7 +976,11 @@ def run_daily_round(
         and not needs_new_llm_work
     )
 
-    if not resume_without_new_llm and _session_submit_allowed():
+    if resume_without_new_llm:
+        plan = None
+    elif screening_plan is not None:
+        plan = screening_plan
+    elif _session_submit_allowed():
         try:
             from tradingagents.safety import get_safety_guard
 
@@ -988,7 +1012,7 @@ def run_daily_round(
             )
     else:
         plan = None
-        if not resume_without_new_llm:
+        if screening_plan is None and not resume_without_new_llm:
             journal.setdefault("screening", {})["skipped_reason"] = (
                 "SESSION_SUBMISSION_DEADLINE"
             )
@@ -1008,7 +1032,7 @@ def run_daily_round(
     else:
         # Step 4 — persist screening summary (metadata only, no second cache).
         top20 = getattr(plan, "top20", []) or []
-        journal["screening"] = {
+        screening_summary = {
             "selection_date": getattr(plan, "selection_date", None),
             "as_of": getattr(plan, "as_of", None),
             "cached": bool(getattr(plan, "cached", False)),
@@ -1023,6 +1047,13 @@ def run_daily_round(
             "deep_analysis_set": list(getattr(plan, "deep_analysis_set", []) or []),
             "description": sanitize_for_log(getattr(plan, "screening_description", "")),
         }
+        if ab_mode:
+            screening_summary.update({
+                "selection_hash": getattr(plan, "selection_hash", None),
+                "config_fingerprint": (getattr(plan, "selection", None) or {}).get("config_fingerprint"),
+                "data_feed": (getattr(plan, "selection", None) or {}).get("data_feed"),
+            })
+        journal["screening"] = screening_summary
         for symbol in journal["screening"]["deep_analysis_set"]:
             journal["symbols"].setdefault(symbol, {
                 "status": SYMBOL_PENDING, "analysis_run_ref": None, "signal": None,
@@ -1121,6 +1152,354 @@ def run_daily_round(
     journal["finished_at"] = utc_now_iso()
     save_round_journal(run_id, journal)
     log_event(run_id, "round_completed", {"session": session_date})
+    return journal
+
+
+AB_BACKENDS = ("traders", "berkshire")
+
+
+def _ab_arm_run_id(run_id: str, backend: str) -> str:
+    return f"{run_id}-{backend}"
+
+
+def _ab_selection_hash(selection: Dict[str, Any]) -> str:
+    canonical = json.dumps(selection, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _ab_selection_artifact_path(run_id: str, root: str | Path, session_date: str) -> Path:
+    from tradingagents.dataflows.utils import safe_ticker_component
+
+    return (
+        Path(root) / "shared" / safe_ticker_component(session_date)
+        / "screening_selection.json"
+    )
+
+
+def _read_ab_selection_artifact(
+    path: Path, *, session_date: str, expected_config_fingerprint: Optional[str] = None,
+    expected_top20_count: int = 20,
+) -> Optional[Dict[str, Any]]:
+    payload = read_json(path)
+    if payload is None:
+        if path.exists():
+            raise LongRunStop("STATE_CORRUPT", f"shared A/B selection artifact is unreadable: {path}")
+        return None
+    if not isinstance(payload, dict) or payload.get("status") != "SCREENING_COMPLETE":
+        raise LongRunStop("STATE_CORRUPT", f"shared A/B selection artifact is invalid: {path}")
+    selection = payload.get("selection")
+    if not isinstance(selection, dict):
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection artifact has no selection object")
+    digest = _ab_selection_hash(selection)
+    if payload.get("selection_hash") != digest:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection hash mismatch")
+    if payload.get("session_date") != session_date:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection session mismatch")
+    if expected_config_fingerprint and selection.get("config_fingerprint") != expected_config_fingerprint:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection config fingerprint changed")
+    try:
+        from datetime import date as _date
+
+        selected_day = _date.fromisoformat(str(selection.get("trading_date") or ""))
+        as_of = _date.fromisoformat(str(selection.get("as_of") or ""))
+    except ValueError as exc:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection has invalid dates") from exc
+    if selected_day.isoformat() != session_date or as_of > selected_day:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection contains a future or mismatched date")
+    if payload.get("as_of") != selection.get("as_of"):
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection cutoff metadata mismatch")
+    from tradingagents.screening.selection_store import SCREENING_DATA_FEED
+
+    if selection.get("data_feed") != SCREENING_DATA_FEED:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection data feed changed")
+    top40 = selection.get("top40")
+    top20 = selection.get("top20")
+    if not isinstance(top40, list) or not isinstance(top20, list) or len(top20) != expected_top20_count:
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection Top40/Top20 is invalid")
+    top40_symbols = {
+        row.get("symbol") for row in top40
+        if isinstance(row, dict) and isinstance(row.get("symbol"), str)
+    }
+    top20_symbols = [
+        row.get("symbol") for row in top20 if isinstance(row, dict)
+    ]
+    if (
+        len(top20_symbols) != len(top20)
+        or any(not isinstance(symbol, str) or symbol not in top40_symbols for symbol in top20_symbols)
+        or len(set(top20_symbols)) != len(top20_symbols)
+    ):
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection Top20 membership is invalid")
+    from tradingagents.screening.selection_store import _integrity_digest
+
+    if selection.get("integrity") != _integrity_digest(selection):
+        raise LongRunStop("STATE_CORRUPT", "shared A/B selection seal mismatch")
+    return payload
+
+
+def run_ab_daily_round(
+    *,
+    run_id: str,
+    session_date: str,
+    long_cfg: Dict[str, Any],
+    runtime: Dict[str, Any],
+    schedule_info: Optional[Dict[str, Any]] = None,
+    deps: Optional[LongRunDeps] = None,
+    ends_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """One shared-screening A/B round, using the existing single-arm worker twice."""
+    deps = deps or LongRunDeps()
+    from tradingagents.screening.pipeline import (
+        RoundPlan,
+        prepare_screening_round_from_selection,
+    )
+
+    root = long_cfg.get("ab_results_root")
+    if not root:
+        raise LongRunStop("CONFIG_INVALID", "A/B observation has no results root")
+    root = str(root)
+    arm_runtimes = {
+        backend: apply_ab_backend_runtime_paths(runtime, backend, root)
+        for backend in AB_BACKENDS
+    }
+    journal = load_round_journal(run_id, session_date)
+    if journal is None:
+        journal_path = round_path(run_id, session_date)
+        if journal_path.exists():
+            raise LongRunStop("STATE_CORRUPT", f"A/B round journal is unreadable: {journal_path}")
+        journal = new_round_journal(
+            session_date, [],
+            scheduled_at=(schedule_info or {}).get("effective_at", ""),
+            schedule_adjustment=(schedule_info or {}).get("schedule_adjustment", "NONE"),
+        )
+        journal["mode"] = "ab"
+        journal["shared_screening"] = {"status": "SCREENING_PENDING"}
+        journal["arms"] = {
+            backend: {"run_id": _ab_arm_run_id(run_id, backend), "status": "PENDING"}
+            for backend in AB_BACKENDS
+        }
+        save_round_journal(run_id, journal)
+    elif journal.get("mode") != "ab":
+        raise LongRunStop("STATE_CORRUPT", "A/B round journal mode mismatch")
+    elif journal.get("status") in ("COMPLETED", "MISSED", "STOPPED"):
+        if journal.get("status") == "COMPLETED":
+            return journal
+        raise LongRunStop("SESSION_SETTLED", f"{session_date} is already {journal.get('status')}")
+
+    artifact_path = _ab_selection_artifact_path(run_id, root, session_date)
+    from tradingagents.screening.llm import resolve_screening_config
+    from tradingagents.screening.selection_store import SelectionStore, default_selection_cache_path
+
+    screening_store = SelectionStore(default_selection_cache_path(arm_runtimes["traders"]))
+    resolved_screening = resolve_screening_config(arm_runtimes["traders"])
+    expected_fingerprint = screening_store.config_fingerprint(
+        arm_runtimes["traders"], resolved_screening.get("spec")
+    )
+    selection_record = _read_ab_selection_artifact(
+        artifact_path, session_date=session_date,
+        expected_config_fingerprint=expected_fingerprint,
+        expected_top20_count=int(arm_runtimes["traders"].get("screening_select_n", 20)),
+    )
+    shared_plan = None
+    if selection_record is None:
+        if (journal.get("shared_screening") or {}).get("status") == "SCREENING_COMPLETE":
+            raise LongRunStop("STATE_CORRUPT", "completed shared selection artifact is missing")
+        if _control_stop_reason(deps, ends_at):
+            return journal
+        _apply_runtime_config(arm_runtimes["traders"])
+        _validate_long_run_execution_config(arm_runtimes["traders"])
+        try:
+            from tradingagents.safety import get_safety_guard
+
+            budget = get_safety_guard().check_llm_budget()
+            if not budget.allowed:
+                raise LongRunStop("LLM_BUDGET_EXHAUSTED", f"before shared screening: {'; '.join(budget.reasons)}")
+        except LongRunStop:
+            raise
+        except Exception as exc:
+            raise LongRunStop("LLM_BUDGET_EXHAUSTED", f"shared screening budget check unavailable: {exc}")
+
+        screening_fn = deps.screening_fn or _default_screening
+        shared_plan = _screening_with_audit_scope(
+            screening_fn, arm_runtimes["traders"], run_id, session_date
+        )
+        if getattr(shared_plan, "stopped", False):
+            raise LongRunStop(
+                "SCREENING_STOPPED",
+                f"shared screening stopped: {shared_plan.stop_reason_text()}",
+            )
+        selection = getattr(shared_plan, "selection", None)
+        if not isinstance(selection, dict):
+            raise LongRunStop("SCREENING_STOPPED", "shared screening returned no frozen selection")
+        if str(selection.get("trading_date") or "") != session_date:
+            raise LongRunStop(
+                "SCREENING_STOPPED",
+                f"shared selection date {selection.get('trading_date')!r} does not match {session_date}",
+            )
+        selection_record = {
+            "status": "SCREENING_COMPLETE",
+            "session_date": session_date,
+            "as_of": selection.get("as_of"),
+            "cached": bool(getattr(shared_plan, "cached", False)),
+            "selection_hash": _ab_selection_hash(selection),
+            "selection": selection,
+        }
+        # Artifact first, state second. If the process dies between writes,
+        # resume trusts this sealed/hash-checked selection without a new scan.
+        atomic_write_json(artifact_path, selection_record)
+        journal["shared_screening"] = {
+            "status": "SCREENING_COMPLETE",
+            "selection_path": str(artifact_path),
+            "selection_hash": selection_record["selection_hash"],
+            "selection_date": selection.get("trading_date"),
+            "as_of": selection.get("as_of"),
+            "cached": selection_record.get("cached", False),
+            "config_fingerprint": selection.get("config_fingerprint"),
+            "data_feed": selection.get("data_feed"),
+            "top40": [row.get("symbol") for row in selection.get("top40", []) if isinstance(row, dict)],
+            "top20": [row.get("symbol") for row in selection.get("top20", []) if isinstance(row, dict)],
+        }
+        journal["status"] = "RUNNING"
+        if not journal.get("started_at"):
+            journal["started_at"] = utc_now_iso()
+        save_round_journal(run_id, journal)
+    else:
+        selection = selection_record["selection"]
+        journal["shared_screening"] = {
+            "status": "SCREENING_COMPLETE",
+            "selection_path": str(artifact_path),
+            "selection_hash": selection_record["selection_hash"],
+            "selection_date": selection.get("trading_date"),
+            "as_of": selection.get("as_of"),
+            "cached": selection_record.get("cached", False),
+            "config_fingerprint": selection.get("config_fingerprint"),
+            "data_feed": selection.get("data_feed"),
+            "top40": [row.get("symbol") for row in selection.get("top40", []) if isinstance(row, dict)],
+            "top20": [row.get("symbol") for row in selection.get("top20", []) if isinstance(row, dict)],
+        }
+        journal["status"] = "RUNNING"
+        if not journal.get("started_at"):
+            journal["started_at"] = utc_now_iso()
+        save_round_journal(run_id, journal)
+
+    # Re-establish the exact selection cache consumed by the existing
+    # execution entry gate if a crash removed it. Never replace a different
+    # or unreadable file with a new selection.
+    selection_store = screening_store
+    cached_selection = selection_store.load_raw()
+    if cached_selection is None:
+        if selection_store.path.exists():
+            raise LongRunStop("STATE_CORRUPT", "shared screening cache is unreadable")
+        selection_store.save(selection)
+    elif _ab_selection_hash(cached_selection) != selection_record["selection_hash"]:
+        raise LongRunStop("STATE_CORRUPT", "shared screening cache differs from frozen A/B selection")
+
+    for backend in AB_BACKENDS:
+        arm_id = _ab_arm_run_id(run_id, backend)
+        prior = load_round_journal(arm_id, session_date)
+        arm_path = round_path(arm_id, session_date)
+        if prior is None and arm_path.exists():
+            raise LongRunStop("STATE_CORRUPT", f"A/B arm journal is unreadable: {arm_path}")
+        arm_entry = journal["arms"].setdefault(backend, {"run_id": arm_id})
+        arm_entry["run_id"] = arm_id
+        if prior is not None and prior.get("status") == "COMPLETED":
+            arm_entry["status"] = "COMPLETED"
+            arm_entry["selection_hash"] = (prior.get("screening") or {}).get("selection_hash")
+            save_round_journal(run_id, journal)
+            continue
+        if arm_entry.get("status") == "COMPLETED":
+            raise LongRunStop(
+                "STATE_CORRUPT",
+                f"coordinator marks {backend} complete but its arm journal does not",
+            )
+
+        frozen_symbols = arm_entry.get("candidate_symbols")
+        if isinstance(frozen_symbols, list):
+            top20_symbols = [str(row.get("symbol")) for row in selection.get("top20", [])]
+            if frozen_symbols[:len(top20_symbols)] != top20_symbols:
+                raise LongRunStop("STATE_CORRUPT", f"{backend} frozen candidate pool changed")
+            if arm_entry.get("selection_hash") != selection_record["selection_hash"]:
+                raise LongRunStop("STATE_CORRUPT", f"{backend} frozen selection hash changed")
+            arm_plan = RoundPlan(
+                selection=selection,
+                selection_date=str(selection.get("trading_date")),
+                as_of=str(selection.get("as_of")),
+                cached=bool(selection_record.get("cached", False)),
+                entry_allowed=True,
+                top20=list(selection.get("top20") or []),
+                overlap_holdings=list(arm_entry.get("overlap_holdings") or []),
+                extra_holdings=list(arm_entry.get("extra_holdings") or []),
+                blocked_holdings=list(arm_entry.get("blocked_holdings") or []),
+                deep_analysis_set=list(frozen_symbols),
+                scan_stats=selection.get("stats"),
+                screening_description="shared A/B screening selection",
+                selection_hash=selection_record["selection_hash"],
+            )
+        elif backend == "traders" and shared_plan is not None:
+            arm_plan = shared_plan
+        else:
+            _apply_runtime_config(arm_runtimes[backend])
+            arm_plan = prepare_screening_round_from_selection(
+                arm_runtimes[backend], selection, session_date=session_date
+            )
+        if getattr(arm_plan, "stopped", False):
+            raise LongRunStop("SCREENING_STOPPED", f"{backend} held-review plan stopped: {arm_plan.stop_reason_text()}")
+        arm_plan.cached = bool(selection_record.get("cached", False))
+        if arm_plan.selection_hash != selection_record["selection_hash"]:
+            raise LongRunStop("STATE_CORRUPT", f"{backend} arm plan does not match shared selection")
+        arm_entry["candidate_symbols"] = list(arm_plan.deep_analysis_set or [])
+        arm_entry["overlap_holdings"] = list(arm_plan.overlap_holdings or [])
+        arm_entry["extra_holdings"] = list(arm_plan.extra_holdings or [])
+        arm_entry["blocked_holdings"] = list(arm_plan.blocked_holdings or [])
+        arm_entry["selection_hash"] = selection_record["selection_hash"]
+        arm_entry["status"] = "RUNNING"
+        save_round_journal(run_id, journal)
+        arm_journal = run_daily_round(
+            run_id=arm_id,
+            session_date=session_date,
+            long_cfg={
+                **long_cfg,
+                "_ab_mode": True,
+                "_ab_screening_plan": arm_plan,
+            },
+            runtime=arm_runtimes[backend],
+            schedule_info=schedule_info,
+            deps=deps,
+            ends_at=ends_at,
+        )
+        if arm_journal.get("status") == "COMPLETED":
+            arm_entry["status"] = "COMPLETED"
+        else:
+            arm_entry["status"] = "RUNNING"
+        arm_entry["selection_hash"] = (arm_journal.get("screening") or {}).get(
+            "selection_hash", selection_record["selection_hash"]
+        )
+        save_round_journal(run_id, journal)
+        if arm_entry["status"] != "COMPLETED":
+            journal["status"] = "RUNNING"
+            save_round_journal(run_id, journal)
+            return journal
+
+    if any(journal["arms"].get(backend, {}).get("status") != "COMPLETED" for backend in AB_BACKENDS):
+        journal["status"] = "RUNNING"
+        save_round_journal(run_id, journal)
+        return journal
+    journal["status"] = "COMPLETED"
+    journal["screening"] = {
+        "selection_date": selection.get("trading_date"),
+        "as_of": selection.get("as_of"),
+        "cached": bool(selection_record.get("cached", False)),
+        "top20": [
+            {"symbol": row.get("symbol"), "rank": row.get("rank"),
+             "score": row.get("screening_score"), "reason": row.get("short_reason")}
+            for row in selection.get("top20", []) if isinstance(row, dict)
+        ],
+        "selection_hash": selection_record["selection_hash"],
+        "shared_selection_path": str(artifact_path),
+    }
+    journal["finished_at"] = utc_now_iso()
+    save_round_journal(run_id, journal)
+    log_event(run_id, "ab_round_completed", {"session": session_date,
+                                               "selection_hash": selection_record["selection_hash"]})
     return journal
 
 
@@ -1421,7 +1800,8 @@ def run_observation_loop(
             log_event(run_id, "interrupted", {})
             print(
                 "\n[Phase-D] Interrupted. Resume with the same command:\n"
-                "  python -m cli.main long-run"
+                + ("  python -m cli.main long-run --mode ab"
+                   if state.get("mode") == "ab" else "  python -m cli.main long-run")
             )
             return {"outcome": "interrupted", "run_id": run_id}
 
@@ -1575,7 +1955,8 @@ def run_observation_loop(
         if settled_here:
             continue
         try:
-            run_daily_round(
+            round_runner = run_ab_daily_round if state.get("mode") == "ab" else run_daily_round
+            round_runner(
                 run_id=run_id,
                 session_date=target["session_date"],
                 long_cfg=long_cfg,
@@ -1647,6 +2028,178 @@ def aggregate_final_report(
         compute_drawdown=compute_drawdown, _sum_unrealized=_sum_unrealized,
         run_dir=run_dir, SYMBOL_DONE=SYMBOL_DONE, datetime=datetime,
     )
+
+
+def aggregate_ab_final_report(
+    state: Dict[str, Any], long_cfg: Dict[str, Any], runtime: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Combine existing per-arm long-run reports and persisted shared decisions."""
+    root = str(long_cfg.get("ab_results_root") or "")
+    if not root:
+        raise LongRunStop("CONFIG_INVALID", "A/B report has no results root")
+    arm_reports: Dict[str, Dict[str, Any]] = {}
+    for backend in AB_BACKENDS:
+        arm_id = _ab_arm_run_id(state["run_id"], backend)
+        arm_runtime = apply_ab_backend_runtime_paths(runtime, backend, root)
+        arm_state = {
+            "run_id": arm_id, "status": state.get("status"),
+            "stop": state.get("stop"), "started_at": state.get("started_at"),
+            "ends_at": state.get("ends_at"),
+            "expected_sessions": state.get("expected_sessions") or [],
+            "restart_count": state.get("restart_count", 0),
+            "baseline_commit": state.get("baseline_commit", "unknown"),
+        }
+        arm_reports[backend] = aggregate_final_report(arm_state, long_cfg, arm_runtime)
+
+    top20_by_day: Dict[str, List[str]] = {}
+    selection_hashes: Dict[str, str] = {}
+    screening_cutoffs: Dict[str, Dict[str, Any]] = {}
+    signals: Dict[str, Dict[tuple[str, str], str]] = {b: {} for b in AB_BACKENDS}
+    for session in state.get("expected_sessions") or []:
+        coordinator = load_round_journal(state["run_id"], session)
+        if not isinstance(coordinator, dict):
+            continue
+        screening = coordinator.get("screening") or {}
+        top20_by_day[session] = [
+            str(row["symbol"]) for row in screening.get("top20", [])
+            if isinstance(row, dict) and row.get("symbol")
+        ]
+        shared = coordinator.get("shared_screening") or {}
+        if shared.get("selection_hash"):
+            selection_hashes[session] = str(shared["selection_hash"])
+        screening_cutoffs[session] = {
+            "as_of": shared.get("as_of"),
+            "data_feed": shared.get("data_feed"),
+            "config_fingerprint": shared.get("config_fingerprint"),
+            "top40": shared.get("top40") or [],
+        }
+        for backend in AB_BACKENDS:
+            arm_round = load_round_journal(_ab_arm_run_id(state["run_id"], backend), session) or {}
+            for symbol, entry in (arm_round.get("symbols") or {}).items():
+                if entry.get("signal"):
+                    signals[backend][(session, symbol)] = str(entry["signal"]).upper()
+
+    turnover = []
+    previous: Optional[set[str]] = None
+    for session, symbols in sorted(top20_by_day.items()):
+        current = set(symbols)
+        if previous is not None:
+            turnover.append({"session": session, "entered": sorted(current - previous),
+                             "exited": sorted(previous - current)})
+        previous = current
+    shared_signals = set(signals["traders"]) & set(signals["berkshire"])
+    disagreements = [
+        {"session": session, "symbol": symbol,
+         "traders": signals["traders"][(session, symbol)],
+         "berkshire": signals["berkshire"][(session, symbol)]}
+        for session, symbol in sorted(shared_signals)
+        if signals["traders"][(session, symbol)] != signals["berkshire"][(session, symbol)]
+    ]
+
+    comparison: Dict[str, Any] = {}
+    for backend, report in arm_reports.items():
+        account = report.get("account") or {}
+        execution_db = report.get("execution_db") or {"available": False}
+        order_statuses = execution_db.get("by_status") or {}
+        rejected_orders = sum(
+            int(count or 0) for status, count in order_statuses.items()
+            if str(status).upper().startswith("REJECT")
+        )
+        failed_rows = [
+            row for row in (report.get("decisions") or {}).get("per_symbol", [])
+            if row.get("error") or row.get("status") == SYMBOL_FAILED
+        ]
+        positions = account.get("ending_positions")
+        equity = account.get("ending_equity")
+        exposure_pct = None
+        if isinstance(positions, list) and equity not in (None, 0):
+            values = []
+            for position in positions:
+                try:
+                    value = float(position.get("market_value"))
+                except (AttributeError, TypeError, ValueError):
+                    values = []
+                    break
+                if not math.isfinite(value):
+                    values = []
+                    break
+                values.append(abs(value))
+            if values or not positions:
+                exposure_pct = sum(values) / float(equity)
+        comparison[backend] = {
+            "account": "A" if backend == "traders" else "B",
+            "account_ref": ((state.get("arms") or {}).get(backend) or {}).get("account_ref"),
+            "starting_equity": account.get("starting_equity"),
+            "ending_equity": account.get("ending_equity"),
+            "equity_change": account.get("absolute_pl"),
+            "equity_return": account.get("total_return"),
+            "max_drawdown": account.get("max_drawdown"),
+            "daily_equity": account.get("daily_equity_series") or [],
+            "realized_pl": {"available": False, "reason": "not reliably exposed by broker snapshots"},
+            "unrealized_pl": account.get("ending_unrealized_pl"),
+            "positions": account.get("ending_positions"),
+            "exposure_pct_of_equity": exposure_pct,
+            "signals": (report.get("decisions") or {}).get("signal_counts") or {},
+            "execution": report.get("execution") or {},
+            "execution_db": execution_db,
+            "rejected_order_rows": rejected_orders if execution_db.get("available") else None,
+            "execution_failures": len(failed_rows),
+            "llm_operations": report.get("llm_operations") or {"available": False},
+            "safety": report.get("safety") or {},
+            "trades": {"available": False, "reason": "no reliable round-trip trade attribution"},
+            "fills": {"available": False, "reason": "distinct fill count is not exposed by the report contract"},
+            "turnover": {"available": False, "reason": "order notional is not reliably available from persisted report data"},
+            "wins_losses": {"available": False, "reason": "closed-trade outcomes are not reliably attributed"},
+        }
+    return {
+        "run_id": state["run_id"], "mode": "ab",
+        "final_status": state.get("status"), "stop": state.get("stop"),
+        "started_at": state.get("started_at"), "ends_at": state.get("ends_at"),
+        "duration_calendar_days": long_cfg.get("duration_calendar_days"),
+        "restart_count": int(state.get("restart_count") or 0),
+        "shared_screening": {"selection_hashes": selection_hashes,
+                             "top20_by_day": top20_by_day,
+                             "cutoffs_by_day": screening_cutoffs, "turnover": turnover},
+        "arms": arm_reports, "comparison": comparison,
+        "signal_disagreement": {"shared_symbol_session_count": len(shared_signals),
+                                 "disagreements": disagreements},
+        "metrics_unavailable": {
+            "realized_pl": "broker snapshots do not provide reliable realized P/L attribution",
+            "trades": "no reliable round-trip trade attribution is available",
+            "fills": "the report contract does not expose distinct fill counts",
+            "turnover": "order notional is not reliably available from persisted report data",
+            "wins_losses": "closed-trade outcomes are not reliably attributed",
+        },
+    }
+
+
+def write_ab_final_report(report: Dict[str, Any]) -> Tuple[str, str]:
+    directory = run_dir(str(report["run_id"]))
+    json_path = directory / "ab_final_report.json"
+    md_path = directory / "ab_final_report.md"
+    atomic_write_json(json_path, sanitize_for_log(report))
+    lines = [f"# Long-run A/B Paper report — {report['run_id']}", "",
+             f"- Status: {report.get('final_status')}",
+             f"- Window: {report.get('started_at')} → {report.get('ends_at')}", "",
+             "## Shared screening"]
+    for session, symbols in sorted((report.get("shared_screening", {}).get("top20_by_day") or {}).items()):
+        lines.append(f"- {session} Top20: {', '.join(symbols)}")
+    lines += ["", "## Account comparison", "",
+              "| Arm | Account | Start equity | End equity | Change | Return | Max drawdown |",
+              "|---|---|---:|---:|---:|---:|---:|"]
+    for backend in AB_BACKENDS:
+        row = report["comparison"][backend]
+        lines.append(f"| {backend} | {row['account']} | {row['starting_equity']} | "
+                     f"{row['ending_equity']} | {row['equity_change']} | "
+                     f"{row['equity_return']} | {row['max_drawdown']} |")
+    lines += ["", "## Signal disagreement", "",
+              json.dumps(report.get("signal_disagreement"), ensure_ascii=False, sort_keys=True),
+              "", "## Metrics marked unavailable"]
+    for key, reason in report.get("metrics_unavailable", {}).items():
+        lines.append(f"- {key}: {reason}")
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(md_path), str(json_path)
 
 
 def _fmt_pct(value: Any) -> str:
@@ -1728,6 +2281,24 @@ def finalize_observation(
                        {"session": session_day, "reason": journal["stop_reason"]})
         journal["finished_at"] = journal.get("finished_at") or utc_now_iso()
         atomic_write_json(journal_file, journal)
+        if state.get("mode") == "ab":
+            for backend in AB_BACKENDS:
+                arm_id = _ab_arm_run_id(run_id, backend)
+                arm_journal = load_round_journal(arm_id, session_day)
+                arm_file = round_path(arm_id, session_day)
+                if arm_journal is None and arm_file.exists():
+                    log_event(run_id, "ab_arm_round_unreadable", {
+                        "session": session_day, "backend": backend,
+                    })
+                    continue
+                if arm_journal is None:
+                    arm_journal = new_round_journal(session_day, [])
+                if arm_journal.get("status") in TERMINAL_ROUND_STATUSES:
+                    continue
+                arm_journal["status"] = journal["status"]
+                arm_journal["stop_reason"] = journal.get("stop_reason")
+                arm_journal["finished_at"] = arm_journal.get("finished_at") or utc_now_iso()
+                save_round_journal(arm_id, arm_journal)
     state["status"] = final_status
     if final_status == "STOPPED":        state["stop"] = {
             "code": stop_code or "STOPPED",
@@ -1749,23 +2320,45 @@ def finalize_observation(
     # positions would silently misrepresent the final state. If the capture
     # fails, ending values are reported as unavailable instead of being
     # labeled with stale data; no broker mutation happens either way.
-    try:
-        broker_factory = deps.broker_client_factory or _default_broker_client
-        final_snapshot = capture_account_snapshot(broker_factory())
-        append_jsonl(
-            run_dir(run_id) / "account_snapshots.jsonl",
-            {"phase": "final", **final_snapshot},
-        )
-    except Exception as exc:
-        log_event(
-            run_id,
-            "final_snapshot_unavailable",
-            {"error": f"{type(exc).__name__}: {exc}"[:300]},
-        )
-        print(f"[Phase-D] Final snapshot unavailable: {exc}")
-
-    report = aggregate_final_report(state, long_cfg, runtime)
-    md_path, json_path = write_final_report(report)
+    if state.get("mode") == "ab":
+        root = str(long_cfg.get("ab_results_root") or "")
+        for backend in AB_BACKENDS:
+            arm_id = _ab_arm_run_id(run_id, backend)
+            arm_runtime = apply_ab_backend_runtime_paths(runtime, backend, root)
+            try:
+                _apply_runtime_config(arm_runtime)
+                broker_factory = deps.broker_client_factory or _default_broker_client
+                final_snapshot = capture_account_snapshot(broker_factory())
+                expected_ref = ((state.get("arms") or {}).get(backend) or {}).get("account_ref")
+                if expected_ref and final_snapshot.get("account_ref") != expected_ref:
+                    raise SnapshotUnavailable(f"{backend} final Paper account identity changed")
+                append_jsonl(run_dir(arm_id) / "account_snapshots.jsonl",
+                             {"phase": "final", **final_snapshot})
+            except Exception as exc:
+                log_event(run_id, "ab_final_snapshot_unavailable", {
+                    "backend": backend,
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                })
+                print(f"[Phase-D A/B {backend}] Final snapshot unavailable: {exc}")
+        report = aggregate_ab_final_report(state, long_cfg, runtime)
+        md_path, json_path = write_ab_final_report(report)
+    else:
+        try:
+            broker_factory = deps.broker_client_factory or _default_broker_client
+            final_snapshot = capture_account_snapshot(broker_factory())
+            append_jsonl(
+                run_dir(run_id) / "account_snapshots.jsonl",
+                {"phase": "final", **final_snapshot},
+            )
+        except Exception as exc:
+            log_event(
+                run_id,
+                "final_snapshot_unavailable",
+                {"error": f"{type(exc).__name__}: {exc}"[:300]},
+            )
+            print(f"[Phase-D] Final snapshot unavailable: {exc}")
+        report = aggregate_final_report(state, long_cfg, runtime)
+        md_path, json_path = write_final_report(report)
     log_event(run_id, "observation_finalized",
               {"status": final_status, "md": md_path, "json": json_path})
     if final_status == "STOPPED":

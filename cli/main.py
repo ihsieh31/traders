@@ -1396,7 +1396,9 @@ def _prompt_secret(label: str) -> str:
     return value
 
 
-def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
+def collect_long_run_config(
+    existing: dict, *, require_ab_accounts: bool = False
+) -> tuple[dict, dict[str, str]]:
     """Prompt only for missing/invalid Phase-D values. Returns (config, secrets)."""
     import sys as _sys
 
@@ -1620,13 +1622,21 @@ def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
             console.print("[bold]Azure OpenAI endpoint required.[/bold]")
             endpoint_env = app_env_name("AZURE_OPENAI_ENDPOINT")
             secrets[endpoint_env] = typer.prompt(endpoint_env).strip()
-    if not (get_env("ALPACA_API_KEY") or "").strip():
-        console.print("[bold]Missing Alpaca Paper credentials.[/bold]")
-        key_env = app_env_name("ALPACA_API_KEY")
-        secrets[key_env] = _prompt_secret(key_env)
-    if not (get_env("ALPACA_SECRET_KEY") or "").strip():
-        secret_env = app_env_name("ALPACA_SECRET_KEY")
-        secrets[secret_env] = _prompt_secret(secret_env)
+    if require_ab_accounts:
+        for account in ("A", "B"):
+            for suffix, label in (("API_KEY", "API key"), ("SECRET_KEY", "secret key")):
+                env_key = f"ALPACA_ACCOUNT_{account}_{suffix}"
+                if not (get_env(env_key) or "").strip():
+                    console.print(f"[bold]Missing Alpaca Paper account {account} {label}.[/bold]")
+                    secrets[app_env_name(env_key)] = _prompt_secret(app_env_name(env_key))
+    else:
+        if not (get_env("ALPACA_API_KEY") or "").strip():
+            console.print("[bold]Missing Alpaca Paper credentials.[/bold]")
+            key_env = app_env_name("ALPACA_API_KEY")
+            secrets[key_env] = _prompt_secret(key_env)
+        if not (get_env("ALPACA_SECRET_KEY") or "").strip():
+            secret_env = app_env_name("ALPACA_SECRET_KEY")
+            secrets[secret_env] = _prompt_secret(secret_env)
     return cfg, secrets
 
 
@@ -1634,7 +1644,7 @@ def collect_long_run_config(existing: dict) -> tuple[dict, dict[str, str]]:
 def long_run(
     mode: str = typer.Option(
         "single", "--mode",
-        help="Runner mode: 'single' (default) or 'ab' (Traders x Berkshire A/B campaign)",
+        help="Runner mode: 'single' (default) or full-market Paper A/B",
     ),
     backend: str = typer.Option(
         "", "--backend",
@@ -1648,18 +1658,14 @@ def long_run(
         None, "--duration-days",
         help="Observation window in calendar days (any positive integer; default 30)",
     ),
-    symbol: str | None = typer.Option(None, "--symbol", help="A/B mode: campaign symbol"),
-    start_date: str | None = typer.Option(None, "--start-date", help="A/B mode: campaign start date YYYY-MM-DD"),
-    resume: str | None = typer.Option(None, "--resume", help="A/B mode: resume an existing campaign root"),
-    results_root: str | None = typer.Option(None, "--results-root", help="A/B mode: campaign results root"),
-    execute: bool = typer.Option(False, "--execute", help="A/B mode: execute paper orders"),
-    paper_notional_usd: float | None = typer.Option(None, "--paper-notional-usd", help="A/B mode: paper order notional in USD"),
+    symbol: str | None = typer.Option(None, "--symbol", help="Legacy single-pair A/B option; unsupported by full-market mode"),
+    start_date: str | None = typer.Option(None, "--start-date", help="Legacy single-pair A/B option; unsupported by full-market mode"),
+    resume: str | None = typer.Option(None, "--resume", help="Resume the active A/B results root"),
+    results_root: str | None = typer.Option(None, "--results-root", help="Parent directory for A/B arm artifacts"),
+    execute: bool = typer.Option(False, "--execute", help="Accepted for compatibility; A/B mode always uses Paper execution"),
+    paper_notional_usd: float | None = typer.Option(None, "--paper-notional-usd", help="Override per-trade Paper notional in A/B mode"),
 ) -> None:
-    """Configure, start, or resume a long Paper observation or an A/B campaign."""
-    import subprocess as _subprocess
-    import sys as _sys
-    from pathlib import Path as _Path
-
+    """Configure, start, or resume a single or full-market A/B Paper observation."""
     from tradingagents import long_run as lr
 
     mode_value = mode.strip().lower()
@@ -1669,37 +1675,33 @@ def long_run(
     if duration_days is not None and duration_days < 1:
         console.print("[red]ERROR[/red]: --duration-days must be a positive integer")
         raise typer.Exit(code=2)
+    if paper_notional_usd is not None and paper_notional_usd <= 0:
+        console.print("[red]ERROR[/red]: --paper-notional-usd must be positive")
+        raise typer.Exit(code=2)
     if mode_value == "ab":
         if backend:
             console.print("[red]ERROR[/red]: --backend is a single-mode option; "
                           "A/B always runs Traders x Berkshire")
             raise typer.Exit(code=2)
-        # The campaign launcher acquires the application-wide runner lock
-        # itself (outermost), covering the whole campaign process.
-        repo_root = _Path(__file__).resolve().parent.parent
-        command = [_sys.executable, "-m", "scripts.run_analysis_ab_campaign_auto"]
-        if symbol:
-            command += ["--symbol", symbol]
-        if start_date:
-            command += ["--start-date", start_date]
-        if duration_days is not None:
-            command += ["--days", str(duration_days)]
-        if results_root:
-            command += ["--results-root", results_root]
-        if resume:
-            command += ["--resume", resume]
-        if execute:
-            command += ["--execute"]
-        if paper_notional_usd is not None:
-            command += ["--paper-notional-usd", str(paper_notional_usd)]
-        if continuous:
-            command += ["--continuous"]
-        console.print(f"[dim]A/B campaign launcher: {' '.join(command)}[/dim]")
-        completed = _subprocess.run(command, cwd=repo_root)
-        if completed.returncode != 0:
-            raise typer.Exit(code=completed.returncode)
+        if symbol or start_date:
+            console.print("[red]ERROR[/red]: full-market A/B does not accept --symbol or --start-date; use scripts/run_analysis_ab.py for a research pair")
+            raise typer.Exit(code=2)
+        overrides = {
+            "continuous": True if continuous else None,
+            "duration_calendar_days": duration_days,
+            "ab_results_parent": results_root,
+            "base_trade_notional_usd": paper_notional_usd,
+        }
+        try:
+            # One application-wide lock and one Phase-D runner lock cover
+            # the whole two-arm coordinator.
+            with lr.global_runner_lock():
+                _long_run_ab_locked(overrides, resume=resume)
+        except lr.GlobalRunnerLockBusy as exc:
+            console.print(f"[bold red]ERROR: {exc}[/bold red]")
+            raise typer.Exit(code=2)
         return
-    if resume is not None or results_root is not None or symbol is not None             or start_date is not None or execute:
+    if resume is not None or results_root is not None or symbol is not None             or start_date is not None or execute or paper_notional_usd is not None:
         console.print("[red]ERROR[/red]: --resume/--results-root/--symbol/"
                       "--start-date/--execute are A/B-mode options")
         raise typer.Exit(code=2)
@@ -1773,6 +1775,9 @@ def _long_run_single_locked(overrides: dict) -> None:
                                   "it). Re-run the command.[/bold yellow]")
                     raise typer.Exit(code=2)
                 active = fresh
+                if active.get("mode") == "ab":
+                    console.print("[bold red]Active observation is full-market A/B; resume it with --mode ab.[/bold red]")
+                    raise typer.Exit(code=2)
                 # Resume drift guard: the persisted observation is
                 # authoritative for its lifecycle identity. Backend,
                 # continuous mode and duration are create-time decisions;
@@ -1970,6 +1975,248 @@ def _long_run_single_locked(overrides: dict) -> None:
         raise typer.Exit(code=2)
     except lr.LongRunStop as exc:
         console.print(f"[bold red]Observation stopped: {exc.code}: {exc.detail}[/bold red]")
+        raise typer.Exit(code=1)
+    raise typer.Exit(code=0 if result.get("outcome") == "completed" else 1)
+
+
+def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
+    """Full-market Paper A/B using one Phase-D state machine and global lock."""
+    from datetime import date as _date
+    from datetime import timedelta as _timedelta
+    from pathlib import Path as _Path
+
+    from tradingagents import long_run as lr
+    from tradingagents.app_identity import app_home, default_results_dir, validate_app_path
+
+    try:
+        active = lr.load_active_state()
+    except lr.LongRunStop as exc:
+        console.print(f"[bold red]Active state unusable: {exc.code}: {exc.detail}[/bold red]")
+        raise typer.Exit(code=1)
+
+    if active is not None:
+        try:
+            with lr.runner_lock():
+                active = lr.load_active_state()
+                if active is None or active.get("mode") != "ab":
+                    console.print("[bold red]The active observation is not full-market A/B; resume it with the matching mode.[/bold red]")
+                    raise typer.Exit(code=2)
+                active_cfg = dict(active.get("config") or {})
+                active_root = str(active_cfg.get("ab_results_root") or "")
+                requested_root = overrides.get("ab_results_parent")
+                if requested_root:
+                    requested = validate_app_path(
+                        _Path(requested_root) / active["run_id"], field="results_dir"
+                    )
+                    if str(requested) != active_root:
+                        console.print("[bold red]A/B results root differs from the active observation.[/bold red]")
+                        raise typer.Exit(code=2)
+                if resume and str(validate_app_path(resume, field="results_dir")) != active_root:
+                    console.print("[bold red]--resume must name the active A/B results root.[/bold red]")
+                    raise typer.Exit(code=2)
+                if (overrides.get("continuous") is not None
+                        and bool(overrides["continuous"]) != bool(active.get("continuous", False))):
+                    console.print("[bold red]Active A/B continuous setting does not match.[/bold red]")
+                    raise typer.Exit(code=2)
+                if (overrides.get("duration_calendar_days") is not None
+                        and int(overrides["duration_calendar_days"])
+                        != int(active_cfg.get("duration_calendar_days") or 0)):
+                    console.print("[bold red]Active A/B duration does not match --duration-days.[/bold red]")
+                    raise typer.Exit(code=2)
+                if (overrides.get("base_trade_notional_usd") is not None
+                        and float(overrides["base_trade_notional_usd"])
+                        != float(active_cfg.get("base_trade_notional_usd") or 0)):
+                    console.print("[bold red]Active A/B notional does not match --paper-notional-usd.[/bold red]")
+                    raise typer.Exit(code=2)
+                cfg = dict(lr.default_long_run_config())
+                cfg.update(active_cfg)
+                runtime = lr.build_runtime_config(cfg)
+                from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+
+                stored_arms = active.get("arms")
+                if not isinstance(stored_arms, dict):
+                    console.print("[bold red]Active A/B state has no account bindings.[/bold red]")
+                    raise typer.Exit(code=1)
+                resolved_refs = {}
+                for backend in lr.AB_BACKENDS:
+                    arm_runtime = lr.apply_ab_backend_runtime_paths(
+                        runtime, backend, active_root
+                    )
+                    lr._apply_runtime_config(arm_runtime)
+                    account = "A" if backend == "traders" else "B"
+                    try:
+                        snapshot = lr.capture_account_snapshot(
+                            get_alpaca_trading_client(account=account, read_only=True)
+                        )
+                    except Exception as exc:
+                        console.print(f"[bold red]Cannot verify Paper account {account} on resume: {exc}[/bold red]")
+                        raise typer.Exit(code=1)
+                    resolved_refs[backend] = snapshot.get("account_ref")
+                    if snapshot.get("account_ref") != (stored_arms.get(backend) or {}).get("account_ref"):
+                        console.print(f"[bold red]Paper account identity changed for {backend}; refusing resume.[/bold red]")
+                        raise typer.Exit(code=1)
+                if len(set(resolved_refs.values())) != len(lr.AB_BACKENDS):
+                    console.print("[bold red]A/B resume did not prove two distinct Paper accounts.[/bold red]")
+                    raise typer.Exit(code=1)
+                active["restart_count"] = int(active.get("restart_count") or 0) + 1
+                lr.save_active_state(active)
+                console.print(f"[green]Resuming full-market A/B observation {active['run_id']} (restart #{active['restart_count']}).[/green]")
+                result = lr.run_observation_loop(active, cfg, runtime, lr.LongRunDeps())
+        except lr.RunnerLockBusy:
+            console.print("[bold yellow]A Phase-D runner is already active.[/bold yellow]")
+            raise typer.Exit(code=2)
+        except lr.LongRunStop as exc:
+            console.print(f"[bold red]A/B observation stopped: {exc.code}: {exc.detail}[/bold red]")
+            raise typer.Exit(code=1)
+        raise typer.Exit(code=0 if result.get("outcome") == "completed" else 1)
+
+    if resume:
+        console.print("[bold red]No active A/B observation exists to resume.[/bold red]")
+        raise typer.Exit(code=2)
+
+    cfg, secrets = collect_long_run_config(
+        lr.load_long_run_config(), require_ab_accounts=True
+    )
+    for key, value in overrides.items():
+        if value is not None and key in {
+            "continuous", "duration_calendar_days", "base_trade_notional_usd"
+        }:
+            cfg[key] = value
+    cfg["analysis_backend"] = "traders"  # arm runtimes select each backend below
+    if secrets:
+        _write_env_updates(_long_run_env_path(), secrets)
+        console.print("[green]Saved credentials to .env (never printed back).[/green]")
+    lr.save_long_run_config(cfg)
+
+    candidate = lr.new_observation_state(cfg, expected_sessions=[])
+    parent = overrides.get("ab_results_parent") or (app_home() / "long_run_ab")
+    root = validate_app_path(_Path(parent) / candidate["run_id"], field="results_dir")
+    run_cfg = dict(cfg)
+    run_cfg["ab_results_root"] = str(root)
+    base_runtime = lr.build_runtime_config(run_cfg)
+
+    from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+
+    calendar_client = get_alpaca_trading_client(account="A", read_only=True)
+    preflights = {}
+    for backend in lr.AB_BACKENDS:
+        arm_runtime = lr.apply_ab_backend_runtime_paths(base_runtime, backend, root)
+        lr._apply_runtime_config(arm_runtime)
+        account = "A" if backend == "traders" else "B"
+        account_deps = lr.LongRunDeps(
+            broker_client_factory=lambda account=account: get_alpaca_trading_client(
+                account=account, read_only=True
+            ),
+            calendar_client=calendar_client,
+        )
+        try:
+            preflights[backend] = lr.run_preflight(run_cfg, arm_runtime, account_deps)
+        except lr.LongRunStop as exc:
+            console.print(f"[bold red]A/B preflight failed for {backend}: {exc.code}: {exc.detail}[/bold red]")
+            raise typer.Exit(code=1)
+    account_refs = {
+        backend: str(preflights[backend]["snapshot"].get("account_ref") or "")
+        for backend in lr.AB_BACKENDS
+    }
+    if not all(account_refs.values()) or account_refs["traders"] == account_refs["berkshire"]:
+        console.print("[bold red]A/B preflight did not prove two distinct Paper accounts.[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print("\n[bold]Full-market A/B Paper observation[/bold]")
+    console.print(f"Duration: {cfg['duration_calendar_days']} calendar days | daily at {cfg['run_time_et']} ET")
+    console.print(f"Shared screening: US equity universe → Top40 → Top20 | paper notional: ${float(cfg['base_trade_notional_usd']):,.0f}")
+    console.print(f"Traders account A: {account_refs['traders']} | Berkshire account B: {account_refs['berkshire']}")
+    console.print("Both arms use the same Trader, risk, sizing, execution, and short policies; only the analysis backend changes.")
+    if not typer.confirm("Authorize this full-market A/B PAPER test? The process must stay running; rerun `python -m cli.main long-run --mode ab` after a crash.", default=False):
+        console.print("Not authorized; no observation was created.")
+        raise typer.Exit(code=1)
+
+    try:
+        with lr.runner_lock():
+            fresh_active = lr.load_active_state()
+            if fresh_active is not None:
+                console.print("[bold yellow]Another runner created an observation during setup. Nothing was modified.[/bold yellow]")
+                raise typer.Exit(code=2)
+            startup_snapshots = {}
+            for backend in lr.AB_BACKENDS:
+                arm_runtime = lr.apply_ab_backend_runtime_paths(base_runtime, backend, root)
+                recovery_deps = lr.LongRunDeps(calendar_client=calendar_client)
+                try:
+                    eastern_now = lr.eastern_now(recovery_deps.now_fn())
+                    recovery_schedule = lr.effective_target_for_session(
+                        eastern_now.date(), str(cfg.get("run_time_et") or lr.DEFAULT_RUN_TIME_ET),
+                        calendar_client=calendar_client,
+                    )
+                    from tradingagents.long_run_support.sessions import make_session_submit_guard
+                    recovery_deps._startup_recovery_can_submit = make_session_submit_guard(
+                        session_date=eastern_now.date(),
+                        effective_target=str(recovery_schedule["effective_target"]),
+                        now_fn=recovery_deps.now_fn,
+                    )
+                except Exception:
+                    recovery_deps._startup_recovery_can_submit = lambda: False
+                try:
+                    recovery = lr.run_post_authorization_recovery(recovery_deps, arm_runtime)
+                except lr.LongRunStop as exc:
+                    console.print(f"[bold red]Paper recovery failed for {backend}: {exc.code}: {exc.detail}[/bold red]")
+                    raise typer.Exit(code=1)
+                snapshot = recovery["snapshot"]
+                if snapshot.get("account_ref") != account_refs[backend]:
+                    console.print(f"[bold red]Paper account identity changed for {backend} during setup.[/bold red]")
+                    raise typer.Exit(code=1)
+                startup_snapshots[backend] = snapshot
+
+            eastern = lr.eastern_now()
+            end_day = eastern.date() + _timedelta(days=int(cfg["duration_calendar_days"]))
+            try:
+                expected = [
+                    d.isoformat() for d in lr.fetch_session_dates(
+                        eastern.date(), end_day, client=calendar_client
+                    ) if d < end_day
+                ]
+            except Exception as exc:
+                console.print(f"[bold red]Cannot prove A/B observation sessions: {exc}[/bold red]")
+                raise typer.Exit(code=1)
+            state = candidate
+            state["expected_sessions"] = expected
+            state["mode"] = "ab"
+            state["config"] = lr.sanitize_for_log(run_cfg)
+            state["arms"] = {
+                backend: {
+                    "run_id": lr._ab_arm_run_id(state["run_id"], backend),
+                    "account": "A" if backend == "traders" else "B",
+                    "account_ref": account_refs[backend],
+                    "status": "READY",
+                } for backend in lr.AB_BACKENDS
+            }
+            manifest = {
+                "run_id": state["run_id"], "mode": "ab",
+                "created_at": state["started_at"], "starts_at": state["started_at"],
+                "ends_at": state["ends_at"], "config": state["config"],
+                "expected_sessions": expected, "baseline_commit": state["baseline_commit"],
+                "arms": state["arms"],
+            }
+            lr.atomic_write_json(lr.run_dir(state["run_id"]) / "manifest.json", manifest)
+            for backend in lr.AB_BACKENDS:
+                arm_id = lr._ab_arm_run_id(state["run_id"], backend)
+                lr.append_jsonl(
+                    lr.run_dir(arm_id) / "account_snapshots.jsonl",
+                    {"phase": "startup", **startup_snapshots[backend]},
+                )
+            lr.log_event(state["run_id"], "ab_observation_created", {
+                "expected_sessions": len(expected), "account_refs": account_refs,
+            })
+            lr.save_active_state(state)
+            console.print(f"[green]A/B observation {state['run_id']} entering RUNNING. No further input is required.[/green]")
+            result = lr.run_observation_loop(
+                state, run_cfg, base_runtime,
+                lr.LongRunDeps(calendar_client=calendar_client),
+            )
+    except lr.RunnerLockBusy:
+        console.print("[bold yellow]A Phase-D runner is already active; no A/B observation was created.[/bold yellow]")
+        raise typer.Exit(code=2)
+    except lr.LongRunStop as exc:
+        console.print(f"[bold red]A/B observation stopped: {exc.code}: {exc.detail}[/bold red]")
         raise typer.Exit(code=1)
     raise typer.Exit(code=0 if result.get("outcome") == "completed" else 1)
 
