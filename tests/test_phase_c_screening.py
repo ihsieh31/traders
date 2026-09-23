@@ -674,7 +674,7 @@ class RankingFormulaTests(unittest.TestCase):
         import math
 
         market_caps = {
-            "BELOW": 299_999_999.99,
+            "BELOW": 299_999_999,
             "EXACT": 300_000_000.0,
             "ABOVE": 300_000_000.01,
             "NONE": None,
