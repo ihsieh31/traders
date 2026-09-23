@@ -15,6 +15,8 @@ Data-quality contract (fail-closed per symbol, never forward-filled):
 - One explicit adjustment policy per scan (config ``screening_bar_adjustment``);
   a symbol whose quarantine ledger reports an unresolved split is excluded
   before ranking, so adjusted and raw prices are never mixed.
+- A finite positive market cap is required and must be at least the configured
+  ``screening_min_market_cap_usd``; missing or unusable metadata is excluded.
 """
 
 from __future__ import annotations
@@ -51,17 +53,35 @@ SCORE_WEIGHTS = {
 class EligibilityThresholds:
     min_price: float = 5.0
     min_adv20_usd: float = 20_000_000.0
+    min_market_cap_usd: float = 300_000_000.0
     required_bars: int = 61
     vol_window: int = 20
     vol_mean_window: int = 20
     ratio_recent_window: int = 5
 
+    def __post_init__(self) -> None:
+        try:
+            threshold = float(self.min_market_cap_usd)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "screening_min_market_cap_usd must be positive and finite"
+            ) from exc
+        if isinstance(self.min_market_cap_usd, bool) or not math.isfinite(threshold) or threshold <= 0:
+            raise ValueError("screening_min_market_cap_usd must be positive and finite")
+        object.__setattr__(self, "min_market_cap_usd", threshold)
+
     @classmethod
     def from_config(cls, config: Optional[dict]) -> "EligibilityThresholds":
         cfg = config or {}
+        raw_market_cap_threshold = cfg.get(
+            "screening_min_market_cap_usd", cls.min_market_cap_usd
+        )
+        if isinstance(raw_market_cap_threshold, bool):
+            raise ValueError("screening_min_market_cap_usd must be positive and finite")
         return cls(
             min_price=float(cfg.get("screening_min_price", cls.min_price)),
             min_adv20_usd=float(cfg.get("screening_min_adv20_usd", cls.min_adv20_usd)),
+            min_market_cap_usd=raw_market_cap_threshold,
             required_bars=int(cfg.get("screening_required_bars", cls.required_bars)),
         )
 
@@ -369,6 +389,19 @@ def scan_universe(
 
     for entry in universe:
         symbol = entry["symbol"]
+        raw_market_cap = entry.get("market_cap")
+        try:
+            if isinstance(raw_market_cap, bool):
+                raise ValueError("boolean is not a market cap")
+            market_cap = float(raw_market_cap)
+        except (TypeError, ValueError):
+            market_cap = float("nan")
+        if not math.isfinite(market_cap) or market_cap <= 0:
+            stats.record("missing_market_cap")
+            continue
+        if market_cap < thresholds.min_market_cap_usd:
+            stats.record("below_min_market_cap")
+            continue
         if quarantine_checker is not None:
             reason = quarantine_checker(symbol)
             if reason:

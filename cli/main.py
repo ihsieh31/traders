@@ -1899,10 +1899,35 @@ def _long_run_single_locked(overrides: dict) -> None:
                 raise typer.Exit(code=2)
             # Mandatory recovery gate BEFORE any observation exists.
             # Preflight above was genuinely read-only (F06); only now may
-            # recovery resubmit a missing PENDING/UNKNOWN order. Failure
-            # exits without creating an active observation.
+            # recovery resubmit a missing PENDING/UNKNOWN order, and only
+            # inside this session's target-plus-grace window. Failure exits
+            # without creating an active observation.
             try:
-                recovery = lr.run_post_authorization_recovery(lr.LongRunDeps(), runtime)
+                recovery_deps = lr.LongRunDeps()
+                try:
+                    from tradingagents.long_run_support.sessions import (
+                        make_session_submit_guard,
+                    )
+
+                    recovery_now = recovery_deps.now_fn()
+                    recovery_session = lr.eastern_now(recovery_now).date()
+                    recovery_schedule = lr.effective_target_for_session(
+                        recovery_session,
+                        str(cfg.get("run_time_et") or lr.DEFAULT_RUN_TIME_ET),
+                        calendar_client=recovery_deps.calendar_client,
+                        calendar_rows=recovery_deps.calendar_rows,
+                    )
+                    recovery_guard = make_session_submit_guard(
+                        session_date=recovery_session,
+                        effective_target=str(recovery_schedule["effective_target"]),
+                        now_fn=recovery_deps.now_fn,
+                    )
+                except Exception:
+                    # Calendar authority failure still permits read-only
+                    # broker lookup/reconciliation, never an opening resubmit.
+                    recovery_guard = lambda: False
+                recovery_deps._startup_recovery_can_submit = recovery_guard
+                recovery = lr.run_post_authorization_recovery(recovery_deps, runtime)
             except lr.LongRunStop as exc:
                 console.print(f"[bold red]Execution recovery failed: {exc.code}: {exc.detail}[/bold red]")
                 raise typer.Exit(code=1)

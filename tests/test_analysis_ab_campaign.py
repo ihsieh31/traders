@@ -150,10 +150,19 @@ def _preflight_snapshot(traders, berkshire):
     }
 
 
+def _clean_recovery(_root, _state):
+    return {
+        "traders": {"success": True, "account_execution_state": "CLEAN"},
+        "berkshire": {"success": True, "account_execution_state": "CLEAN"},
+    }
+
+
 class AnalysisABCampaignTests(unittest.TestCase):
     def _run(self, root, *, start="2026-06-20", days=2, now=None, **kwargs):
         pair_runner = kwargs.pop("pair_runner", _completed_pair)
         summarize_fn = kwargs.pop("summarize_fn", _summary_with(days))
+        if kwargs.get("execute_paper") and "settlement_refresh_fn" not in kwargs:
+            kwargs["settlement_refresh_fn"] = _clean_recovery
         return run_campaign(
             symbol="AAPL",
             start_date=start,
@@ -482,6 +491,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
                 pair_runner=lambda **_kwargs: self.fail("completed campaign must not rerun pair"),
                 broker_snapshotter=lambda: self.fail("completed campaign must not reread broker"),
                 summarize_fn=_summary,
+                settlement_refresh_fn=_clean_recovery,
             )
             self.assertEqual(resumed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
 
@@ -505,6 +515,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
                 pair_runner=lambda **_kwargs: self.fail("finalizer restart must not rerun pair"),
                 broker_snapshotter=lambda: self.fail("finalizer restart must not reread broker"),
                 summarize_fn=_summary,
+                settlement_refresh_fn=_clean_recovery,
             )
             self.assertEqual(resumed["summary"]["performance"]["traders"]["ending_equity"], 103000.0)
 

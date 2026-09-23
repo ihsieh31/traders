@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -448,6 +448,63 @@ class AnalysisABRunnerTests(unittest.TestCase):
             self.assertEqual(result["signal_agreement_pairs"], 1)
             self.assertEqual(result["profiles"]["traders"]["signals"], {"BUY": 1})
             self.assertEqual(result["profiles"]["berkshire"]["report_context_runs"], 1)
+
+    def test_paper_arm_uses_shared_session_cutoff_at_execution_and_recovery(self):
+        import scripts.run_analysis_ab as ab
+
+        class Service:
+            instances = []
+
+            def __init__(self, **_kwargs):
+                self.instances.append(self)
+
+            def startup_recover(self, can_submit=None):
+                self.recovery_allowed = bool(can_submit and can_submit())
+                return {"success": True, "account_execution_state": "CLEAN"}
+
+        def invoke_execution(**kwargs):
+            allowed = bool(kwargs["can_submit"]())
+            return {
+                "success": allowed,
+                "broker_attempted": allowed,
+                "broker_calls": int(allowed),
+                "orders": [],
+            }
+
+        cases = (
+            ("11:00", datetime(2026, 9, 8, 15, 29, tzinfo=timezone.utc), True),
+            ("11:00", datetime(2026, 9, 8, 15, 30, tzinfo=timezone.utc), True),
+            ("11:00", datetime(2026, 9, 8, 16, 0, tzinfo=timezone.utc), False),
+            # Simulated authoritative early-close target; the executor must
+            # use the calendar's value instead of replacing it with 11:00.
+            ("12:30", datetime(2026, 9, 8, 16, 45, tzinfo=timezone.utc), True),
+        )
+        for target, now, expected in cases:
+            with self.subTest(target=target, now=now):
+                Service.instances.clear()
+                with patch("tradingagents.dataflows.config.set_config"), patch(
+                    "tradingagents.safety.reset_safety_guard"
+                ), patch("tradingagents.execution.ExecutionService", Service), patch(
+                    "tradingagents.execution.auto_trade.execute_auto_trade",
+                    side_effect=invoke_execution,
+                ), patch(
+                    "tradingagents.long_run.effective_target_for_session",
+                    return_value={"effective_target": target},
+                ) as effective_target:
+                    result = ab._execute_paper_arm_inner(
+                        "traders",
+                        {"execution_db_path": "/tmp/fake-execution.sqlite3"},
+                        {"trade_intent": {"symbol": "AAPL", "action": "BUY"}},
+                        symbol="AAPL",
+                        trade_date="2026-09-08",
+                        pair_id="pair-test",
+                        paper_notional_usd=1.0,
+                        now_fn=lambda: now,
+                    )
+                self.assertEqual(Service.instances[0].recovery_allowed, expected)
+                self.assertEqual(result["broker_calls"], int(expected))
+                effective_target.assert_called_once()
+                self.assertEqual(effective_target.call_args.args[1], "11:00")
 
 
 if __name__ == "__main__":

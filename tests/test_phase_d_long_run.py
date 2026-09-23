@@ -10,7 +10,7 @@ import json
 import os
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -156,6 +156,14 @@ def _deps(service=None, graph=None, symbols=("AAA", "BBB"), **overrides):
         "broker_client_factory": lambda: FakeBroker(),
         "alert_fn": lambda subject, body, runtime: {"sent": False},
         "sleep_fn": lambda seconds: None,
+        "calendar_rows": _rows(*[
+            ((datetime(2026, 9, 1) + timedelta(days=i)).date().isoformat(), "16:00")
+            for i in range(60)
+            if (datetime(2026, 9, 1) + timedelta(days=i)).weekday() < 5
+        ]),
+        # Most round tests represent the scheduled 11:00 ET session on the
+        # fixture date. Tests for deadline edges inject their own clock.
+        "now_fn": lambda: _ET.localize(datetime(2026, 9, 8, 11, 0)).astimezone(timezone.utc),
     }
     kwargs.update(overrides)
     return lr.LongRunDeps(**kwargs), service, graph
@@ -445,6 +453,8 @@ class LockAndAtomicTest(IsolatedTest):
         with self.assertRaises(lr.LongRunStop) as ctx:
             lr.load_active_state()
         self.assertEqual(ctx.exception.code, "ACTIVE_STATE_CORRUPT")
+        self.assertIn("inspect the run_id reports", ctx.exception.detail.lower())
+        self.assertIn("before an operator removes active.json", ctx.exception.detail.lower())
 
     def test_terminal_stopped_state_fails_closed(self):
         path = lr.active_path()
@@ -517,6 +527,41 @@ class LockAndAtomicTest(IsolatedTest):
 
 
 class SchedulingTest(IsolatedTest):
+    def test_session_submit_guard_uses_target_plus_inclusive_grace(self):
+        from tradingagents.long_run_support.sessions import make_session_submit_guard
+
+        clock = {"now": _ET.localize(datetime(2026, 9, 8, 11, 29)).astimezone(timezone.utc)}
+        guard = make_session_submit_guard(
+            session_date=SESSION_A,
+            effective_target="11:00",
+            now_fn=lambda: clock["now"],
+        )
+        self.assertTrue(guard())
+        clock["now"] = _ET.localize(datetime(2026, 9, 8, 11, 30)).astimezone(timezone.utc)
+        self.assertTrue(guard())  # inclusive now <= target + 30 minutes
+        clock["now"] = _ET.localize(datetime(2026, 9, 8, 12, 0)).astimezone(timezone.utc)
+        self.assertFalse(guard())
+        clock["now"] = _ET.localize(datetime(2026, 9, 9, 11, 1)).astimezone(timezone.utc)
+        self.assertFalse(guard())  # a later session date cannot reuse yesterday's grant
+
+    def test_early_close_guard_uses_authoritative_effective_target(self):
+        from tradingagents.long_run_support.sessions import make_session_submit_guard
+
+        info = lr.effective_target_for_session(
+            lr.date(2026, 9, 8), "14:00",
+            calendar_rows=_rows((SESSION_A, "13:00")),
+        )
+        clock = {"now": _ET.localize(datetime(2026, 9, 8, 13, 0)).astimezone(timezone.utc)}
+        guard = make_session_submit_guard(
+            session_date=SESSION_A,
+            effective_target=info["effective_target"],
+            now_fn=lambda: clock["now"],
+        )
+        self.assertEqual(info["effective_target"], "12:30")
+        self.assertTrue(guard())
+        clock["now"] += timedelta(seconds=1)
+        self.assertFalse(guard())
+
     def test_normal_day_uses_configured_target(self):
         info = lr.effective_target_for_session(
             lr.date(2026, 9, 8), "11:00",
@@ -649,6 +694,123 @@ class DailyRoundTest(IsolatedTest):
         self.assertEqual(graph2.calls, [])
         self.assertEqual(service2.execute_calls, [])
 
+    def test_analysis_finishing_after_session_deadline_keeps_evidence_but_posts_zero(self):
+        class DeadlineService:
+            def __init__(self):
+                self.recovery_authority = []
+                self.execute_calls = []
+                self.broker_posts = 0
+
+            def startup_recover(self, can_submit=None):
+                self.recovery_authority.append(bool(can_submit and can_submit()))
+                # Reconciliation is clean; a false opening authority only
+                # prevents a recovery POST and must not suppress lookups.
+                return {"success": True, "account_execution_state": "CLEAN"}
+
+            def enforce_exit_deadlines(self, can_submit=None):
+                return {"success": True, "deadline_exits": [], "broker_calls": 0}
+
+            def execute(self, **kwargs):
+                self.execute_calls.append(kwargs)
+                if kwargs["can_submit"]():
+                    self.broker_posts += 1
+                    return {"success": True, "broker_attempted": True, "broker_calls": 1}
+                return {
+                    "success": False, "fail_closed": True,
+                    "broker_attempted": False, "broker_calls": 0,
+                    "error": "session submission deadline expired",
+                }
+
+        clock = {"now": _ET.localize(datetime(2026, 9, 8, 11, 29)).astimezone(timezone.utc)}
+        service = DeadlineService()
+        graph = FakeGraph()
+        graph.propagate = lambda symbol, day: (
+            clock.update({"now": _ET.localize(datetime(2026, 9, 8, 12, 0)).astimezone(timezone.utc)})
+            or graph.calls.append((symbol, day))
+            or ({"final_trade_intent": _buy_intent(symbol), "final_trade_decision": "BUY"}, "BUY")
+        )
+        deps, _, _ = _deps(
+            service=service, graph=graph, symbols=("AAA", "BBB"),
+            now_fn=lambda: clock["now"],
+        )
+        cfg = _valid_cfg()
+        journal = lr.run_daily_round(
+            run_id="deadline-run",
+            session_date=SESSION_A,
+            long_cfg=cfg,
+            runtime=lr.build_runtime_config(cfg),
+            schedule_info={"effective_target": "11:00", "effective_at": f"{SESSION_A}T11:00:00-04:00"},
+            deps=deps,
+            ends_at=clock["now"] + timedelta(days=1),
+        )
+
+        self.assertEqual(graph.calls, [("AAA", SESSION_A)])
+        self.assertIsNotNone(journal["symbols"]["AAA"]["trade_intent"])
+        self.assertEqual(journal["symbols"]["AAA"]["execution_result_summary"]["broker_calls"], 0)
+        self.assertEqual(journal["symbols"]["BBB"]["execution_result_summary"]["error"],
+                         "SESSION_SUBMISSION_DEADLINE")
+        self.assertEqual(service.broker_posts, 0)
+
+    def test_analyzed_resume_after_deadline_is_fenced_but_executing_resume_recovers(self):
+        class ResumeService:
+            def __init__(self):
+                self.recovery_calls = []
+                self.execute_calls = []
+                self.broker_posts = 0
+
+            def startup_recover(self, can_submit=None):
+                allowed = bool(can_submit and can_submit())
+                self.recovery_calls.append(allowed)
+                return {"success": True, "account_execution_state": "CLEAN",
+                        "lookup_calls": 1}
+
+            def enforce_exit_deadlines(self, can_submit=None):
+                return {"success": True, "deadline_exits": [], "broker_calls": 0}
+
+            def execute(self, **kwargs):
+                self.execute_calls.append(kwargs)
+                if kwargs["can_submit"]():
+                    self.broker_posts += 1
+                return {"success": True, "deduped": True,
+                        "broker_attempted": False, "broker_calls": 0}
+
+        stamp = _ET.localize(datetime(2026, 9, 8, 12, 0)).astimezone(timezone.utc)
+        for symbol_status in ("ANALYZED", "EXECUTING"):
+            with self.subTest(symbol_status=symbol_status):
+                service = ResumeService()
+                journal = lr.new_round_journal(SESSION_A, ["AAA"])
+                journal["status"] = "RUNNING"
+                journal["screening"] = {
+                    "selection_date": SESSION_A,
+                    "as_of": SESSION_A,
+                    "top20": [{"symbol": "AAA", "rank": 1}],
+                    "deep_analysis_set": ["AAA"],
+                }
+                journal["symbols"]["AAA"].update(
+                    status=symbol_status,
+                    trade_intent=_buy_intent("AAA"),
+                    signal="BUY",
+                )
+                lr.save_round_journal("deadline-resume", journal)
+                deps, _, graph = _deps(
+                    service=service, symbols=("AAA",), now_fn=lambda: stamp,
+                    screening_fn=lambda *_a, **_k: self.fail("resume must reuse selection"),
+                )
+                result = lr.run_daily_round(
+                    run_id="deadline-resume", session_date=SESSION_A,
+                    long_cfg=_valid_cfg(), runtime=lr.build_runtime_config(_valid_cfg()),
+                    schedule_info={"effective_target": "11:00", "effective_at": f"{SESSION_A}T11:00:00-04:00"},
+                    deps=deps,
+                    ends_at=stamp + timedelta(days=1),
+                )
+                self.assertEqual(result["status"], "COMPLETED")
+                self.assertEqual(service.broker_posts, 0)
+                self.assertTrue(service.recovery_calls)
+                self.assertEqual(service.recovery_calls, [False] * len(service.recovery_calls))
+                self.assertEqual(service.execute_calls[0]["decision_id"],
+                                 f"deadline-resume-{SESSION_A}-AAA")
+                self.assertEqual(graph.calls, [])
+
     def test_crash_at_executing_resumes_without_duplicate_post(self):
         # Simulate a crash after EXECUTING was persisted but before execute ran.
         journal = lr.new_round_journal(SESSION_A, ["AAA", "BBB"])
@@ -676,6 +838,8 @@ class DailyRoundTest(IsolatedTest):
             graph_factory=lambda config: graph,
             execution_service_factory=lambda: service,
             broker_client_factory=lambda: FakeBroker(),
+            calendar_rows=_rows((SESSION_A, "16:00")),
+            now_fn=lambda: _ET.localize(datetime(2026, 9, 8, 11, 0)).astimezone(timezone.utc),
             alert_fn=lambda s, b, r: {},
             sleep_fn=lambda s: None,
         )
@@ -741,6 +905,8 @@ class DailyRoundTest(IsolatedTest):
             graph_factory=lambda config: graph,
             execution_service_factory=lambda: service,
             broker_client_factory=lambda: FakeBroker(),
+            calendar_rows=_rows((SESSION_A, "16:00")),
+            now_fn=lambda: _ET.localize(datetime(2026, 9, 8, 11, 0)).astimezone(timezone.utc),
             sleep_fn=lambda s: None,
         )
         out = lr.run_daily_round(
@@ -777,6 +943,28 @@ class DailyRoundTest(IsolatedTest):
                 long_cfg=_valid_cfg(),
                 runtime=lr.build_runtime_config(_valid_cfg()), deps=deps)
         self.assertEqual(ctx.exception.code, "SCREENING_STOPPED")
+
+    def test_stopped_screening_persists_market_cap_exclusion_stats(self):
+        plan = _fake_plan(("AAA",), stopped=True)
+        plan.reason = "INSUFFICIENT_CANDIDATES"
+        plan.scan_stats = {
+            "universe_total": 2,
+            "eligible": 0,
+            "excluded": {"below_min_market_cap": 1, "missing_market_cap": 1},
+        }
+        plan.stop_reason_text = lambda: "INSUFFICIENT_CANDIDATES"
+        deps, _, _ = _deps(symbols=("AAA",), screening_fn=lambda *_a, **_k: plan)
+        with self.assertRaises(lr.LongRunStop):
+            lr.run_daily_round(
+                run_id="run-market-cap-stats", session_date=SESSION_A,
+                long_cfg=_valid_cfg(), runtime=lr.build_runtime_config(_valid_cfg()),
+                deps=deps,
+            )
+        journal = lr.load_round_journal("run-market-cap-stats", SESSION_A)
+        self.assertEqual(journal["screening"]["scan_stats"], plan.scan_stats)
+        self.assertEqual(
+            journal["screening"]["stop_reason"], "INSUFFICIENT_CANDIDATES"
+        )
 
     def test_paused_account_hard_stops(self):
         service = FakeService()
@@ -1091,6 +1279,8 @@ class LateResumeTest(IsolatedTest):
             _ET.localize(datetime(2026, 9, 10, 11, 4)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 5)).astimezone(timezone.utc),
             _ET.localize(datetime(2026, 9, 10, 11, 6)).astimezone(timezone.utc),
+            *[_ET.localize(datetime(2026, 9, 10, 11, 6)).astimezone(timezone.utc)
+              for _ in range(20)],
             started + lr.timedelta(days=30, hours=1),
         ]
         calls = {"n": 0}

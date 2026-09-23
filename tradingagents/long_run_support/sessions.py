@@ -9,12 +9,86 @@ from __future__ import annotations
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+
+SESSION_SUBMISSION_GRACE_SECONDS = 30 * 60
+AB_RUN_TIME_ET = "11:00"
+_EASTERN = ZoneInfo("America/New_York")
 
 
 def eastern_now(now: Any = None) -> datetime:
     from tradingagents.screening.sessions import eastern_now as _eastern_now
 
     return _eastern_now(now)
+
+
+def session_submission_deadline(
+    session_date: str | date,
+    effective_target: str,
+    *,
+    grace_seconds: int = SESSION_SUBMISSION_GRACE_SECONDS,
+) -> datetime:
+    """Return the inclusive ET exposure-submission cutoff for one session."""
+    day = date.fromisoformat(session_date) if isinstance(session_date, str) else session_date
+    if not isinstance(day, date):
+        raise ValueError("session_date must be an ISO date or date")
+    if isinstance(grace_seconds, bool) or not isinstance(grace_seconds, int) or grace_seconds < 0:
+        raise ValueError("grace_seconds must be a non-negative integer")
+    try:
+        target = datetime.strptime(effective_target, "%H:%M").time()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("effective_target must be HH:MM") from exc
+    return datetime.combine(day, target, tzinfo=_EASTERN) + timedelta(seconds=grace_seconds)
+
+
+def session_submission_allowed(
+    session_date: str | date,
+    effective_target: str,
+    now: datetime,
+    *,
+    grace_seconds: int = SESSION_SUBMISSION_GRACE_SECONDS,
+) -> bool:
+    """Check the session-date and inclusive target+grace submission fence."""
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        return False
+    try:
+        day = date.fromisoformat(session_date) if isinstance(session_date, str) else session_date
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(day, date):
+        return False
+    current = now.astimezone(_EASTERN)
+    if current.date() != day:
+        return False
+    try:
+        deadline = session_submission_deadline(
+            day, effective_target, grace_seconds=grace_seconds
+        )
+    except (TypeError, ValueError):
+        return False
+    return current <= deadline
+
+
+def make_session_submit_guard(
+    *,
+    session_date: str | date,
+    effective_target: str,
+    now_fn: Callable[[], datetime],
+    stop_requested: Optional[Callable[[], bool]] = None,
+) -> Callable[[], bool]:
+    """Build a fail-closed callback for the final opening-submit boundary."""
+    def allowed() -> bool:
+        try:
+            if stop_requested is not None and stop_requested():
+                return False
+            return session_submission_allowed(
+                session_date, effective_target, now_fn()
+            )
+        except Exception:
+            return False
+
+    return allowed
 
 
 def effective_target_for_session(

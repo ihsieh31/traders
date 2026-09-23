@@ -161,6 +161,7 @@ class SelectionStore:
             "backend_url": backend,
             "min_price": config.get("screening_min_price"),
             "min_adv20_usd": config.get("screening_min_adv20_usd"),
+            "min_market_cap_usd": config.get("screening_min_market_cap_usd"),
             "required_bars": config.get("screening_required_bars"),
             "top_k": config.get("screening_top_k"),
             "select_n": config.get("screening_select_n"),

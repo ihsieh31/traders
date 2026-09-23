@@ -335,6 +335,7 @@ def run_post_authorization_recovery(
     deps: Optional['LongRunDeps'] = None,
     runtime: Optional[Dict[str, Any]] = None,
     *,
+    can_submit: Optional[Callable[[], bool]] = None,
     LongRunDeps: Any,
     LongRunStop: type[RuntimeError],
     _apply_runtime_config: Callable[[Dict[str, Any]], None],
@@ -364,7 +365,11 @@ def run_post_authorization_recovery(
     service_factory = deps.execution_service_factory or _default_execution_service
     try:
         service = service_factory()
-        recovery = service.startup_recover()
+        recovery = (
+            service.startup_recover(can_submit=can_submit)
+            if can_submit is not None
+            else service.startup_recover()
+        )
     except LongRunStop:
         raise
     except Exception as exc:

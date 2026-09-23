@@ -269,6 +269,13 @@ def load_active_state(*, active_path: Callable[[], Path], LongRunStop: type[Runt
     status = data.get("status")
     if status in ("RUNNING", "INTERRUPTED"):
         return data
+    if status in ("COMPLETED", "STOPPED"):
+        raise LongRunStop(
+            "ACTIVE_STATE_CORRUPT",
+            f"active state {active_path()} is terminal ({status}); this likely "
+            "indicates interrupted finalization. Inspect the run_id reports "
+            "before an operator removes active.json; it is never auto-cleared.",
+        )
     raise LongRunStop(
         "ACTIVE_STATE_CORRUPT",
         f"active state {active_path()} exists with unexpected/non-resumable "

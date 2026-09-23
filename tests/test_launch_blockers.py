@@ -288,6 +288,26 @@ def _campaign_state(sessions):
     }
 
 
+def _valid_campaign_state(*, continuous=False, target_days=1):
+    from datetime import date, timedelta
+    from scripts.run_analysis_ab_campaign import _new_state
+
+    first = date(2026, 6, 22)
+    sessions = [(first + timedelta(days=index)).isoformat() for index in range(target_days)]
+    return _new_state(
+        symbol="AAPL",
+        start_date=date.fromisoformat(sessions[0]),
+        target_days=target_days,
+        sessions=sessions,
+        execute_paper=False,
+        paper_notional_usd=None,
+        config_fingerprint="a" * 64,
+        resolved_routes={"traders": {}, "berkshire": {}},
+        starting_equity=None,
+        continuous=continuous,
+    )
+
+
 def _write_pairs(root, sessions, symbol="AAPL", status="COMPLETED", symbol_override=None):
     for session in sessions:
         pair_dir = root / session / symbol
@@ -924,6 +944,13 @@ def _paper_state(sessions):
     return state
 
 
+def _clean_ab_recovery():
+    return {
+        backend: {"success": True, "account_execution_state": "CLEAN"}
+        for backend in ("traders", "berkshire")
+    }
+
+
 class SettlementRefreshTests(unittest.TestCase):
     def test_h_local_accepted_recovers_to_broker_filled_then_completes(self):
         from scripts.run_analysis_ab_campaign import (
@@ -952,6 +979,7 @@ class SettlementRefreshTests(unittest.TestCase):
                 refresh_calls.append((r, s))
                 ok, _ = store.transition_order(order["order_id"], "FILLED", filled_qty=5)
                 assert ok
+                return _clean_ab_recovery()
 
             res = _complete_campaign(
                 root, _campaign_state_path(root), state,
@@ -990,7 +1018,9 @@ class SettlementRefreshTests(unittest.TestCase):
                 root, _campaign_state_path(root), state,
                 broker_snapshotter=unittest.mock.Mock(),
                 summarize_fn=_summarize_stub(len(sessions)),
-                settlement_refresh_fn=lambda r, s: refresh_calls.append((r, s)),
+                settlement_refresh_fn=lambda r, s: (
+                    refresh_calls.append((r, s)) or _clean_ab_recovery()
+                ),
             )
             self.assertEqual(res["outcome"], "awaiting_final_settlement")
             self.assertEqual(len(refresh_calls), 1)
@@ -1002,6 +1032,9 @@ class SettlementRefreshTests(unittest.TestCase):
         import scripts.run_analysis_ab_campaign as cam
 
         sessions = ["2026-06-22"]
+        after_cutoff = datetime(
+            2026, 6, 22, 15, 31, tzinfo=ZoneInfo("America/New_York")
+        )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for backend in ("traders", "berkshire"):
@@ -1013,9 +1046,19 @@ class SettlementRefreshTests(unittest.TestCase):
                 "tradingagents.execution.service.ExecutionService"
             ) as service_cls, patch(
                 "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client"
-            ) as client_factory:
-                cam._refresh_broker_settlement(root, _paper_state(sessions))
+            ) as client_factory, patch(
+                "tradingagents.long_run.effective_target_for_session",
+                return_value={"effective_target": "11:00"},
+            ):
+                cam._refresh_broker_settlement(
+                    root, _paper_state(sessions), now_fn=lambda: after_cutoff
+                )
             self.assertEqual(service_cls.call_count, 2)
+            recovery_calls = service_cls.return_value.startup_recover.call_args_list
+            self.assertEqual(len(recovery_calls), 2)
+            self.assertTrue(
+                all(call.kwargs["can_submit"]() is False for call in recovery_calls)
+            )
             db_paths = [c.kwargs["db_path"] for c in service_cls.call_args_list]
             self.assertEqual(
                 db_paths,
@@ -1057,6 +1100,7 @@ class SettlementRefreshTests(unittest.TestCase):
                 calls.append((r, s))
                 ok, _ = store.transition_order(order["order_id"], "FILLED", filled_qty=5)
                 assert ok
+                return _clean_ab_recovery()
 
             with patch.object(cam, "_refresh_broker_settlement", real_refresh):
                 res = cam._complete_campaign(
@@ -1068,6 +1112,126 @@ class SettlementRefreshTests(unittest.TestCase):
             self.assertEqual(res["outcome"], "completed")
             self.assertEqual(res["state"]["status"], "COMPLETED")
             self.assertIsNotNone(res["state"]["ending_equity"])
+
+    def test_recovery_a_not_clean_blocks_terminal_orders_and_equity_pin(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for backend in ("traders", "berkshire"):
+                _seed_order(
+                    root / "_profiles" / backend / "execution.sqlite3",
+                    f"dec-clean-{backend}", "FILLED",
+                )
+            _write_pairs(root, sessions)
+            state = _paper_state(sessions)
+            snapshotter = unittest.mock.Mock()
+            summarizer = unittest.mock.Mock()
+            calls = []
+
+            def recover(_root, _state):
+                calls.append("both")
+                return {
+                    "traders": {"success": False, "reconciliation_reasons": ["mismatch"]},
+                    "berkshire": {"success": True},
+                }
+
+            result = cam._complete_campaign(
+                root, cam._campaign_state_path(root), state,
+                broker_snapshotter=snapshotter,
+                summarize_fn=summarizer,
+                settlement_refresh_fn=recover,
+            )
+            self.assertEqual(result["outcome"], "awaiting_final_settlement")
+            self.assertEqual(calls, ["both"])
+            self.assertEqual(result["state"]["status"], "RUNNING")
+            self.assertIsNone(result["state"]["ending_equity"])
+            snapshotter.assert_not_called()
+            summarizer.assert_not_called()
+
+    def test_recovery_b_paused_blocks_clean_a_finalization(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for backend in ("traders", "berkshire"):
+                _seed_order(
+                    root / "_profiles" / backend / "execution.sqlite3",
+                    f"dec-paused-{backend}", "FILLED",
+                )
+            _write_pairs(root, sessions)
+            snapshotter = unittest.mock.Mock()
+            result = cam._complete_campaign(
+                root, cam._campaign_state_path(root), _paper_state(sessions),
+                broker_snapshotter=snapshotter,
+                summarize_fn=unittest.mock.Mock(),
+                settlement_refresh_fn=lambda _r, _s: {
+                    "traders": {"success": True},
+                    "berkshire": {"success": False, "account_execution_state": "PAUSED"},
+                },
+            )
+            self.assertEqual(result["outcome"], "awaiting_final_settlement")
+            snapshotter.assert_not_called()
+            self.assertIsNone(result["state"]["ending_equity"])
+
+    def test_completed_resume_recovery_anomaly_does_not_render_success_report(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for backend in ("traders", "berkshire"):
+                _seed_order(
+                    root / "_profiles" / backend / "execution.sqlite3",
+                    f"dec-completed-{backend}", "FILLED",
+                )
+            _write_pairs(root, sessions)
+            state = _paper_state(sessions)
+            state["status"] = "COMPLETED"
+            state["ending_equity"] = _equity_snapshot("2026-06-22T20:00:00Z")
+            state_path = cam._campaign_state_path(root)
+            summarizer = unittest.mock.Mock()
+            result = cam._complete_campaign(
+                root, state_path, state,
+                broker_snapshotter=unittest.mock.Mock(),
+                summarize_fn=summarizer,
+                settlement_refresh_fn=lambda _r, _s: {
+                    "traders": {"success": True},
+                    "berkshire": {"success": False},
+                },
+            )
+            self.assertEqual(result["outcome"], "recovery_not_clean")
+            self.assertEqual(state["status"], "RUNNING")
+            self.assertIsNone(state["ending_equity"])
+            summarizer.assert_not_called()
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["status"], "RUNNING")
+
+    def test_execution_db_binding_mismatch_fails_before_recovery(self):
+        import scripts.run_analysis_ab_campaign as cam
+        from tradingagents.execution.store import ExecutionStore
+
+        sessions = ["2026-06-22"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            traders_db = root / "_profiles" / "traders" / "execution.sqlite3"
+            traders_db.parent.mkdir(parents=True)
+            ExecutionStore(str(traders_db)).ensure_account_binding("wrong-account")
+            _seed_order(
+                root / "_profiles" / "berkshire" / "execution.sqlite3",
+                "dec-binding", "FILLED",
+            )
+            recover = unittest.mock.Mock(return_value=_clean_ab_recovery())
+            with self.assertRaisesRegex(RuntimeError, "binding does not match"):
+                cam._complete_campaign(
+                    root, cam._campaign_state_path(root), _paper_state(sessions),
+                    broker_snapshotter=unittest.mock.Mock(),
+                    summarize_fn=unittest.mock.Mock(),
+                    settlement_refresh_fn=recover,
+                )
+            recover.assert_not_called()
 
     def test_k2_analysis_only_state_never_touches_broker_refresh(self):
         import scripts.run_analysis_ab_campaign as cam
@@ -1089,3 +1253,123 @@ class SettlementRefreshTests(unittest.TestCase):
                 )
             refresh.assert_not_called()
             self.assertEqual(res["outcome"], "awaiting_final_settlement")
+
+
+class CampaignLifecycleGuardTests(unittest.TestCase):
+    def test_resume_checks_only_explicit_lifecycle_overrides_before_mutation(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        mismatch_cases = (
+            {"days": 2},
+            {"continuous": True},
+            {"execute_paper": True},
+            {"paper_notional_usd": 500.0},
+        )
+        for override in mismatch_cases:
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "campaign"
+                root.mkdir()
+                state = _valid_campaign_state()
+                state_path = cam._campaign_state_path(root)
+                cam._save_state(state_path, state)
+                before = state_path.read_bytes()
+                conditions = unittest.mock.Mock(
+                    return_value=(state["config_fingerprint"], state["resolved_llm_routes"])
+                )
+                pair_runner = unittest.mock.Mock()
+                snapshotter = unittest.mock.Mock()
+                with patch.object(cam, "_campaign_conditions", conditions):
+                    with self.assertRaises(RuntimeError):
+                        cam.run_campaign(
+                            resume=root,
+                            base_config=DEFAULT_CONFIG,
+                            now=datetime(2026, 6, 19, 15, tzinfo=timezone.utc),
+                            calendar_client=object(),
+                            pair_runner=pair_runner,
+                            broker_snapshotter=snapshotter,
+                            summarize_fn=unittest.mock.Mock(),
+                            **override,
+                        )
+                self.assertEqual(state_path.read_bytes(), before)
+                conditions.assert_not_called()
+                pair_runner.assert_not_called()
+                snapshotter.assert_not_called()
+                after = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(after["updated_at"], state["updated_at"])
+                self.assertEqual(after["completed_dates"], [])
+
+    def test_resume_accepts_same_explicit_values_and_implicit_defaults(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "campaign"
+            root.mkdir()
+            state = _valid_campaign_state()
+            state_path = cam._campaign_state_path(root)
+            cam._save_state(state_path, state)
+            conditions = unittest.mock.Mock(
+                return_value=(state["config_fingerprint"], state["resolved_llm_routes"])
+            )
+            with patch.object(cam, "_campaign_conditions", conditions):
+                result = cam.run_campaign(
+                    resume=root,
+                    base_config=DEFAULT_CONFIG,
+                    days=1,
+                    continuous=False,
+                    execute_paper=False,
+                    now=datetime(2026, 6, 19, 15, tzinfo=timezone.utc),
+                    calendar_client=object(),
+                    session_fetcher=lambda *_a, **_k: [],
+                )
+            self.assertEqual(result["outcome"], "not_due")
+            conditions.assert_called_once()
+
+    def test_continuous_flag_and_chunk_validation(self):
+        import scripts.run_analysis_ab_campaign as cam
+
+        valid = _valid_campaign_state()
+        for value in (True, False):
+            candidate = {**valid, "continuous": value, "window_chunk_days": 1}
+            cam._validate_state(candidate)
+        legacy_finite = dict(valid)
+        legacy_finite.pop("continuous")
+        legacy_finite.pop("window_chunk_days")
+        cam._validate_state(legacy_finite)
+
+        for value in ("false", 0, -1, True):
+            with self.subTest(window_chunk_days=value):
+                candidate = {**valid, "window_chunk_days": value}
+                with self.assertRaisesRegex(RuntimeError, "window_chunk_days"):
+                    cam._validate_state(candidate)
+        with self.assertRaisesRegex(RuntimeError, "continuous flag"):
+            cam._validate_state({**valid, "continuous": "false"})
+        with self.assertRaisesRegex(RuntimeError, "window_chunk_days"):
+            cam._validate_state({**valid, "continuous": True, "window_chunk_days": None})
+        cam._validate_state({**valid, "continuous": True, "window_chunk_days": 3})
+
+    def test_direct_campaign_cli_only_completed_exits_zero(self):
+        from contextlib import contextmanager
+        import scripts.run_analysis_ab_campaign as cam
+        import tradingagents.long_run as lr
+
+        @contextmanager
+        def lock():
+            yield
+
+        for outcome in (
+            "awaiting_final_settlement",
+            "recovery_not_clean",
+            "pair_unfinished",
+            "previous_session_unfinished",
+            "market_closed",
+            "session_completed",
+            "not_due",
+        ):
+            with self.subTest(outcome=outcome), patch.object(lr, "global_runner_lock", lock), patch.object(
+                cam, "run_campaign", return_value={"outcome": outcome}
+            ):
+                self.assertEqual(cam.main(["--resume", "/tmp/existing-campaign"]), 1)
+        with patch.object(lr, "global_runner_lock", lock), patch.object(
+            cam, "run_campaign", return_value={"outcome": "completed"}
+        ):
+            self.assertEqual(cam.main(["--resume", "/tmp/existing-campaign"]), 0)

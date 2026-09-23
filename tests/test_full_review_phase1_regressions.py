@@ -1650,6 +1650,8 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
             graph_factory=lambda config: graph,
             execution_service_factory=lambda: service,
             broker_client_factory=lambda: _state_broker(),
+            calendar_rows=[{"date": "2026-09-08", "open": "09:30", "close": "16:00"}],
+            now_fn=lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc),
         )
         out = lr.run_daily_round(
             run_id="run-stop", session_date="2026-09-08",
@@ -1684,7 +1686,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
         # after the analysis returns.
         base = datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         ends_at = datetime(2026, 9, 8, 16, 0, tzinfo=timezone.utc)
-        times = [base, base, base,
+        times = [base, base, base, base, base,
                  ends_at + timedelta(seconds=1)]
         calls = {"n": 0}
 
@@ -1699,6 +1701,7 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
             execution_service_factory=lambda: service,
             broker_client_factory=lambda: _state_broker(),
             now_fn=now_fn,
+            calendar_rows=[{"date": "2026-09-08", "open": "09:30", "close": "16:00"}],
         )
         out = lr.run_daily_round(
             run_id="run-window", session_date="2026-09-08",
@@ -1732,6 +1735,8 @@ class F10StopCheckpointTests(_GuardIsolated, unittest.TestCase):
             graph_factory=lambda config: NoAnalysisGraph(),
             execution_service_factory=lambda: service,
             broker_client_factory=lambda: _state_broker(),
+            calendar_rows=[{"date": "2026-09-08", "open": "09:30", "close": "16:00"}],
+            now_fn=lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc),
         )
         out = lr.run_daily_round(
             run_id="run-resume", session_date="2026-09-08",

@@ -63,6 +63,7 @@ class ClockBroker:
         self.orders = []
         self.submits = []
         self.cancels = []
+        self.client_lookups = []
         self.clock_calls = 0
         self.clock_delay = clock_delay  # timedelta advanced on each GET
         self.is_open = is_open
@@ -92,6 +93,7 @@ class ClockBroker:
         return next(o for o in self.orders if o.id == order_id)
 
     def get_order_by_client_id(self, client_id):
+        self.client_lookups.append(client_id)
         return next((o for o in self.orders if o.client_order_id == client_id), None)
 
     def submit_order(self, request):
@@ -460,6 +462,56 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
         self._recover(service, tmp, can_submit=lambda: False)
         self.assertNotIn("SUBMITTING", transitions,
                          "the refused resubmit never entered SUBMITTING")
+
+    def test_deadline_recovery_looks_up_unknown_order_without_duplicate_post(self):
+        """An expired entry window blocks resubmission, not existing-order
+        lookup/adoption by the original deterministic client order ID."""
+        import tempfile
+
+        from tradingagents.long_run_support.sessions import make_session_submit_guard
+
+        tmp = tempfile.mkdtemp(prefix="deadline-unknown-recovery-")
+        class LookupOnlyBroker(ClockBroker):
+            lookup_completed = False
+
+            def get_orders(self, request):
+                # Model an accepted order omitted from the first account
+                # snapshot but returned by deterministic client-ID lookup.
+                return list(self.orders) if self.lookup_completed else []
+
+            def get_order_by_client_id(self, client_id):
+                found = super().get_order_by_client_id(client_id)
+                self.lookup_completed = True
+                return found
+
+        broker = LookupOnlyBroker()
+        service, store = self._seeded_service(tmp, broker, status="UNKNOWN")
+        original = store.list_all_orders()[0]
+        broker.orders.append(NS(
+            id="broker-existing-order",
+            client_order_id=original["client_order_id"],
+            symbol="AAPL", side="buy", qty=10, filled_qty=0,
+            filled_avg_price=None, status="accepted", updated_at=now(),
+            legs=[], notional=1000.0,
+        ))
+        after_deadline = datetime(2026, 9, 8, 16, 0, tzinfo=timezone.utc)
+        can_submit = make_session_submit_guard(
+            session_date="2026-09-08", effective_target="11:00",
+            now_fn=lambda: after_deadline,
+        )
+        self.assertFalse(can_submit())
+
+        result = self._recover(service, tmp, can_submit=can_submit)
+
+        self.assertTrue(result["success"], result)
+        self.assertIn(original["client_order_id"], broker.client_lookups)
+        self.assertEqual(broker.submits, [])
+        self.assertEqual(len(broker.orders), 1)
+        self.assertEqual(len(store.list_all_orders()), 1)
+        self.assertEqual(store.get_intent_by_decision("r02-decision")["decision_id"],
+                         "r02-decision")
+        recovered = store.get_order_by_client(original["client_order_id"])
+        self.assertEqual(recovered["broker_order_id"], "broker-existing-order")
 
 
 # ---------------------------------------------------------------------------

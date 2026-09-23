@@ -278,6 +278,9 @@ DEFAULT_CONFIG = {
     # return; the as_of session comes from the shared trading calendar.
     "screening_min_price": 5.0,
     "screening_min_adv20_usd": 20_000_000.0,
+    # Micro-cap exclusion: at least $300M market cap. Universe metadata that
+    # is missing or invalid is ineligible until a reliable value is available.
+    "screening_min_market_cap_usd": 300_000_000.0,
     "screening_required_bars": 61,
     "screening_top_k": 40,
     "screening_select_n": 20,

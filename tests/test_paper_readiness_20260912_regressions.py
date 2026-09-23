@@ -864,7 +864,9 @@ def _round_env(e, monkeypatch, stamp, day):
     journal["screening"] = {"cached": True}
     lr.save_round_journal("observation", journal)
     deps = lr.LongRunDeps(execution_service_factory=lambda: e.service,
-                          broker_client_factory=lambda: e.broker, now_fn=lambda: stamp,
+                          broker_client_factory=lambda: e.broker,
+                          now_fn=lambda: datetime.fromisoformat(f"{day}T15:00:00+00:00"),
+                          calendar_rows=runtime["calendar_rows"],
                           screening_fn=Mock(side_effect=AssertionError("no new LLM work")))
     return runtime, deps
 

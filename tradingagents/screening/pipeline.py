@@ -169,8 +169,10 @@ def _default_screening_invoke(config: Dict[str, Any], resolved: Dict[str, Any]):
     return invoke
 
 
-def _stopped(reason: str, detail: str = "") -> RoundPlan:
-    return RoundPlan(status="stopped", reason=reason, detail=detail)
+def _stopped(
+    reason: str, detail: str = "", *, scan_stats: Optional[dict] = None
+) -> RoundPlan:
+    return RoundPlan(status="stopped", reason=reason, detail=detail, scan_stats=scan_stats)
 
 
 def _resolve_calendar(
@@ -242,11 +244,18 @@ def _run_scan(
         )
     except CalendarError as exc:
         return _stopped("CALENDAR_UNAVAILABLE", str(exc))
+    scan_stats = {
+        "universe_total": stats.universe_total,
+        "eligible": stats.eligible,
+        "excluded": dict(sorted(stats.excluded.items())),
+    }
     if len(scored) < select_n:
         return _stopped(
             "INSUFFICIENT_CANDIDATES",
             f"only {len(scored)} eligible candidates; {select_n} required "
-            "(unqualified symbols are never padded in)",
+            "(unqualified symbols are never padded in); "
+            f"exclusions={scan_stats['excluded']}",
+            scan_stats=scan_stats,
         )
     top40 = select_top_k(scored, top_k)
     sector_plan = build_sector_plan(top40, max_per_sector=max_per_sector, select_n=select_n)
@@ -255,6 +264,7 @@ def _run_scan(
             "INSUFFICIENT_SECTOR_CAPACITY",
             "candidate sectors cannot fill the selection under the "
             f"{max_per_sector}-per-sector cap",
+            scan_stats=scan_stats,
         )
 
     try:
@@ -296,11 +306,7 @@ def _run_scan(
             "max_per_sector": max_per_sector,
             "missing_sectors": list(sector_plan.get("missing_sectors", [])),
         },
-        "stats": {
-            "universe_total": stats.universe_total,
-            "eligible": stats.eligible,
-            "excluded": dict(sorted(stats.excluded.items())),
-        },
+        "stats": scan_stats,
         "top40": [entry.to_cache_dict() for entry in top40],
         "top20": [
             {
@@ -407,6 +413,7 @@ def prepare_screening_round(
                         plan.status = "stopped"
                         plan.reason = scan_plan.reason
                         plan.detail = scan_plan.detail
+                        plan.scan_stats = scan_plan.scan_stats
                         return plan
                     selection = scan_plan.selection
                     cached = False

@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone
 import hashlib
 import json
 import os
@@ -733,12 +733,18 @@ def _execute_paper_arm_inner(
     trade_date: str,
     pair_id: str,
     paper_notional_usd: float,
+    now_fn=None,
 ) -> dict[str, Any]:
     from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
     from tradingagents.dataflows.config import set_config
     from tradingagents.execution import ExecutionService
     from tradingagents.execution.auto_trade import execute_auto_trade
     from tradingagents.safety import reset_safety_guard
+    from tradingagents.long_run import effective_target_for_session
+    from tradingagents.long_run_support.sessions import (
+        AB_RUN_TIME_ET,
+        make_session_submit_guard,
+    )
 
     intent = result.get("trade_intent")
     if not isinstance(intent, Mapping):
@@ -757,7 +763,20 @@ def _execute_paper_arm_inner(
     service = ExecutionService(
         db_path=config["execution_db_path"], broker_factory=broker_factory
     )
-    recovery = service.startup_recover()
+    try:
+        schedule = effective_target_for_session(
+            date.fromisoformat(trade_date), AB_RUN_TIME_ET
+        )
+        can_submit = make_session_submit_guard(
+            session_date=trade_date,
+            effective_target=str(schedule["effective_target"]),
+            now_fn=now_fn or (lambda: datetime.now(timezone.utc)),
+        )
+    except Exception:
+        # Calendar authority failure forbids new exposure; recovery still
+        # runs so existing accepted/unknown orders can be reconciled.
+        can_submit = lambda: False
+    recovery = service.startup_recover(can_submit=can_submit)
     if not recovery.get("success"):
         return {
             "success": False,
@@ -776,7 +795,7 @@ def _execute_paper_arm_inner(
         execution_service=service,
         decision_id=f"ab-{pair_id}-{backend}-{trade_date}-{symbol}",
         run_id=f"ab-{pair_id}-{backend}",
-        can_submit=lambda: True,
+        can_submit=can_submit,
     )
     return {
         "success": bool(execution.get("success")),

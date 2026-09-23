@@ -152,7 +152,8 @@ def _healthy_bars(as_of=_AS_OF, n=61, start=100.0, step=1.0, volume=250_000.0):
 
 def _universe(symbols):
     return [
-        {"symbol": s, "name": f"Company {s}", "exchange": "NASDAQ"} for s in symbols
+        {"symbol": s, "name": f"Company {s}", "exchange": "NASDAQ",
+         "market_cap": 1_000_000_000.0} for s in symbols
     ]
 
 
@@ -668,6 +669,36 @@ class RankingFormulaTests(unittest.TestCase):
         )
         self.assertEqual(len(scored), 1)
         self.assertAlmostEqual(scored[0].score, 50.0)
+
+    def test_market_cap_gate_is_deterministic_and_fails_closed(self):
+        import math
+
+        market_caps = {
+            "BELOW": 299_999_999.99,
+            "EXACT": 300_000_000.0,
+            "ABOVE": 300_000_000.01,
+            "NONE": None,
+            "NAN": math.nan,
+            "INFINITE": math.inf,
+            "NEGATIVE": -1.0,
+        }
+        universe = [
+            {"symbol": symbol, "market_cap": cap}
+            for symbol, cap in market_caps.items()
+        ]
+        bars = {symbol: _healthy_bars() for symbol in market_caps}
+        scored, stats = scan_universe(
+            universe,
+            bars,
+            as_of=_AS_OF,
+            thresholds=EligibilityThresholds(),
+            quarantine_checker=lambda _symbol: None,
+            calendar_rows=_std_rows(),
+        )
+
+        self.assertEqual({row.symbol for row in scored}, {"EXACT", "ABOVE"})
+        self.assertEqual(stats.excluded["below_min_market_cap"], 1)
+        self.assertEqual(stats.excluded["missing_market_cap"], 4)
 
     def test_top_k_selection(self):
         features = _candidates(45)

@@ -152,8 +152,10 @@ def test_R01_run_daily_round_passes_can_submit_to_deadline_recovery(isolated, mo
 
     e.service.enforce_exit_deadlines = spying_deadlines
     deps = lr.LongRunDeps(execution_service_factory=lambda: e.service,
-                          broker_client_factory=lambda: e.broker, now_fn=lambda: stamp,
-                          screening_fn=Mock(side_effect=AssertionError("no new LLM work")))
+                          broker_client_factory=lambda: e.broker,
+                          screening_fn=Mock(side_effect=AssertionError("no new LLM work")),
+                          calendar_rows=runtime["calendar_rows"],
+                          now_fn=lambda: datetime.fromisoformat(f"{day}T15:00:00+00:00"))
     lr.run_daily_round(run_id="observation", session_date=day,
                        long_cfg={"base_trade_notional_usd": 1000, "duration_calendar_days": 30},
                        runtime=runtime, deps=deps, ends_at=stamp + timedelta(days=1))

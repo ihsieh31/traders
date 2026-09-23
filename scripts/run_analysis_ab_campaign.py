@@ -108,6 +108,16 @@ def _validate_state(state: Mapping[str, Any]) -> None:
         raise RuntimeError("campaign state has no campaign_id")
     if state.get("status") not in CAMPAIGN_STATUSES:
         raise RuntimeError("campaign state has an invalid status")
+    continuous = state.get("continuous", False)
+    if not isinstance(continuous, bool):
+        raise RuntimeError("campaign state has an invalid continuous flag")
+    chunk_days = state.get("window_chunk_days")
+    if chunk_days is not None and (
+        isinstance(chunk_days, bool) or not isinstance(chunk_days, int) or chunk_days <= 0
+    ):
+        raise RuntimeError("campaign state has an invalid window_chunk_days")
+    if continuous and chunk_days is None:
+        raise RuntimeError("continuous campaign state has no window_chunk_days")
     if not isinstance(state.get("symbol"), str) or not state["symbol"]:
         raise RuntimeError("campaign state has no symbol")
     try:
@@ -638,7 +648,12 @@ def _unsettled_primary_orders(
     return found
 
 
-def _refresh_broker_settlement(root: Path, state: Mapping[str, Any]) -> dict[str, Any]:
+def _refresh_broker_settlement(
+    root: Path,
+    state: Mapping[str, Any],
+    *,
+    now_fn: Callable[[], datetime] | None = None,
+) -> dict[str, Any]:
     """Refresh durable order state from the broker before the settlement check.
 
     Recovery/lookup/adopt only: it reuses the existing
@@ -654,6 +669,11 @@ def _refresh_broker_settlement(root: Path, state: Mapping[str, Any]) -> dict[str
 
     from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
     from tradingagents.execution.service import ExecutionService
+    from tradingagents.long_run import effective_target_for_session
+    from tradingagents.long_run_support.sessions import (
+        AB_RUN_TIME_ET,
+        make_session_submit_guard,
+    )
 
     _validate_equity_snapshot(state.get("starting_equity"), label="starting")
     expected_account_refs = {
@@ -665,6 +685,21 @@ def _refresh_broker_settlement(root: Path, state: Mapping[str, Any]) -> dict[str
     _unsettled_primary_orders(
         root, str(state["symbol"]), expected_account_refs=expected_account_refs
     )
+    # Finalization recovery must retain read/lookup/adopt authority while
+    # honoring the same session cutoff as A/B execution if recovery considers
+    # replaying a durable PENDING/UNKNOWN opening order.
+    try:
+        session_date = str(state["sessions"][-1])
+        schedule = effective_target_for_session(
+            date.fromisoformat(session_date), AB_RUN_TIME_ET
+        )
+        can_submit = make_session_submit_guard(
+            session_date=session_date,
+            effective_target=str(schedule["effective_target"]),
+            now_fn=now_fn or (lambda: datetime.now(timezone.utc)),
+        )
+    except Exception:
+        can_submit = lambda: False
     results: dict[str, Any] = {}
     for backend in BACKEND_ORDER:
         db_path = root / "_profiles" / backend / "execution.sqlite3"
@@ -676,7 +711,7 @@ def _refresh_broker_settlement(root: Path, state: Mapping[str, Any]) -> dict[str
                 )
             ),
         )
-        results[backend] = service.startup_recover()
+        results[backend] = service.startup_recover(can_submit=can_submit)
     return results
 
 
@@ -782,58 +817,55 @@ def _complete_campaign(
     """Durably pin ending equity before rendering derived report files."""
 
     expected_account_refs = None
-    paper_unsettled: list[dict[str, Any]] | None = None
+    was_completed = state.get("status") == "COMPLETED"
     if state.get("execute_paper"):
         _validate_equity_snapshot(state.get("starting_equity"), label="starting")
         expected_account_refs = {
             backend: str(state["starting_equity"][backend]["account_ref"])
             for backend in BACKEND_ORDER
         }
-        # Validate ledger presence and account ownership on every finalization
-        # path, including resume of a state already marked COMPLETED.  Older
-        # versions could pin equity while silently skipping a missing DB.
-        try:
-            paper_unsettled = _unsettled_primary_orders(
-                root, str(state["symbol"]), expected_account_refs=expected_account_refs
-            )
-        except Exception:
-            if state.get("status") == "COMPLETED":
-                state["status"] = "RUNNING"
-                state["current_date"] = None
-                _save_state(state_path, state)
-            raise
-        if state.get("status") == "COMPLETED" and paper_unsettled:
-            state["status"] = "RUNNING"
-            state["current_date"] = None
-            _save_state(state_path, state)
-            raise RuntimeError(
-                "completed Paper campaign has unsettled primary orders; "
-                "refusing to regenerate its final report"
-            )
-    if state.get("status") != "COMPLETED":
-        if state.get("execute_paper"):
-            # The local DB may lag the broker (e.g. local ACCEPTED while the
-            # broker already FILLED).  Run the existing recovery/reconciliation
-            # for both arms first so the settlement check below reads fresh
-            # durable state; only a still-unsettled check blocks completion.
-            # _refresh_broker_settlement is the production default, so a plain
-            # --resume (CLI or auto launcher) really refreshes; tests inject a
-            # stub.  It only runs when something looks unsettled.
-            refresh = settlement_refresh_fn or _refresh_broker_settlement
-            if paper_unsettled:
-                refresh(root, state)
-        unsettled = _unsettled_primary_orders(
+        # Validate both durable ledgers and their frozen account ownership
+        # before any recovery call. This also makes missing DBs fail closed.
+        _unsettled_primary_orders(
             root, str(state["symbol"]), expected_account_refs=expected_account_refs
         )
-        if unsettled:
+
+        # Every Paper finalization, including a resume of COMPLETED state,
+        # must prove both existing ExecutionService accounts are CLEAN first.
+        refresh = settlement_refresh_fn or _refresh_broker_settlement
+        try:
+            recovery = refresh(root, state)
+        except Exception as exc:
+            recovery = {"error": f"{type(exc).__name__}: {exc}"}
+        clean = isinstance(recovery, Mapping) and all(
+            isinstance(recovery.get(backend), Mapping)
+            and recovery[backend].get("success") is True
+            for backend in BACKEND_ORDER
+        )
+        if not clean:
             state["status"] = "RUNNING"
             state["current_date"] = None
+            state["ending_equity"] = None
             _save_state(state_path, state)
             return {
-                "outcome": "awaiting_final_settlement",
+                "outcome": "recovery_not_clean" if was_completed else "awaiting_final_settlement",
                 "state": state,
-                "unsettled_orders": unsettled,
+                "recovery_results": recovery,
             }
+
+    unsettled = _unsettled_primary_orders(
+        root, str(state["symbol"]), expected_account_refs=expected_account_refs
+    )
+    if unsettled:
+        state["status"] = "RUNNING"
+        state["current_date"] = None
+        state["ending_equity"] = None
+        _save_state(state_path, state)
+        return {
+            "outcome": "awaiting_final_settlement",
+            "state": state,
+            "unsettled_orders": unsettled,
+        }
     if state.get("execute_paper"):
         if state.get("ending_equity") is None:
             ending = broker_snapshotter()
@@ -919,7 +951,7 @@ def _run_campaign_locked(
     *,
     symbol: str | None = None,
     start_date: str | None = None,
-    days: int = 30,
+    days: int | None = None,
     results_root: str | Path | None = None,
     resume: str | Path | None = None,
     base_config: Mapping[str, Any] | None = None,
@@ -933,7 +965,7 @@ def _run_campaign_locked(
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
     settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
-    continuous: bool = False,
+    continuous: bool | None = None,
 ) -> dict[str, Any]:
     """Create/resume a campaign and run at most its earliest due pair."""
 
@@ -963,7 +995,8 @@ def _run_campaign_locked(
             requested_start = date.fromisoformat(start_date)
         except ValueError as exc:
             raise ValueError("start_date must be ISO YYYY-MM-DD") from exc
-        if isinstance(days, bool) or not isinstance(days, int) or days <= 0:
+        target_days = 30 if days is None else days
+        if isinstance(target_days, bool) or not isinstance(target_days, int) or target_days <= 0:
             raise ValueError("days must be a positive integer")
         symbol = symbol.strip().upper()
         if not symbol:
@@ -980,7 +1013,7 @@ def _run_campaign_locked(
             raise ValueError("paper_notional_usd requires execute_paper=True")
         client = _calendar_client(execute_paper=create_execute_paper, supplied=calendar_client)
         sessions = _freeze_sessions(
-            requested_start, days, calendar_client=client, session_fetcher=session_fetcher
+            requested_start, target_days, calendar_client=client, session_fetcher=session_fetcher
         )
         fingerprint, routes = _campaign_conditions(
             base_config=config,
@@ -993,19 +1026,31 @@ def _run_campaign_locked(
         state = _new_state(
             symbol=symbol,
             start_date=requested_start,
-            target_days=days,
+            target_days=target_days,
             sessions=sessions,
             execute_paper=create_execute_paper,
             paper_notional_usd=paper_notional_usd,
             config_fingerprint=fingerprint,
             resolved_routes=routes,
             starting_equity=None,
-            continuous=continuous,
+            continuous=bool(continuous),
         )
         _save_state(state_path, state)
     else:
         # Resume is deliberately strict: external configuration and all
         # non-secret resolved routes must still match the first invocation.
+        if days is not None and (
+            isinstance(days, bool)
+            or not isinstance(days, int)
+            or days != state.get("window_chunk_days", state["target_days"])
+        ):
+            raise RuntimeError("campaign days changed; refusing to resize or resume")
+        if continuous is not None and continuous != state.get("continuous", False):
+            raise RuntimeError("campaign continuous lifecycle changed; refusing resume")
+        if execute_paper is not None and execute_paper != bool(state["execute_paper"]):
+            raise RuntimeError("campaign execute/analysis mode changed; refusing resume")
+        if paper_notional_usd is not None and paper_notional_usd != state.get("paper_notional_usd"):
+            raise RuntimeError("campaign paper_notional_usd changed; refusing resume")
         fingerprint, routes = _campaign_conditions(
             base_config=config,
             root=root,
@@ -1016,10 +1061,6 @@ def _run_campaign_locked(
         )
         if fingerprint != state["config_fingerprint"] or routes != state["resolved_llm_routes"]:
             raise RuntimeError("campaign configuration or resolved LLM route changed; refusing resume")
-        if execute_paper is not None and bool(execute_paper) != bool(state["execute_paper"]):
-            raise RuntimeError("campaign execute/analysis mode changed; refusing resume")
-        if paper_notional_usd is not None and paper_notional_usd != state.get("paper_notional_usd"):
-            raise RuntimeError("campaign paper_notional_usd changed; refusing resume")
 
     if len(state["completed_dates"]) == state["target_days"]:
         finished = _extend_or_complete(
@@ -1128,7 +1169,7 @@ def run_campaign(
     *,
     symbol: str | None = None,
     start_date: str | None = None,
-    days: int = 30,
+    days: int | None = None,
     results_root: str | Path | None = None,
     resume: str | Path | None = None,
     base_config: Mapping[str, Any] | None = None,
@@ -1142,7 +1183,7 @@ def run_campaign(
     broker_snapshotter: Callable[[], dict[str, dict[str, Any]]] = _broker_equity_snapshot,
     summarize_fn: Callable[[str | Path], dict[str, Any]] = summarize,
     settlement_refresh_fn: Callable[[Path, Mapping[str, Any]], Any] | None = None,
-    continuous: bool = False,
+    continuous: bool | None = None,
 ) -> dict[str, Any]:
     """Serialize the entire campaign lifecycle before touching its state."""
 
@@ -1177,7 +1218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol")
     parser.add_argument("--start-date")
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int)
     parser.add_argument("--results-root", default=str(default_results_dir() / "ab"))
     parser.add_argument("--resume", help="Campaign root containing campaign_state.json")
     parser.add_argument("--config-json", help="Optional JSON object merged over DEFAULT_CONFIG")
@@ -1189,6 +1230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--continuous",
         action="store_true",
+        default=None,
         help="Never finalize: extend the same campaign by frozen chunks of --days sessions",
     )
     args = parser.parse_args(argv)
@@ -1217,7 +1259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[AB campaign] ERROR: {exc}", file=sys.stderr)
         return 2
     print(f"[AB campaign] {result['outcome']}")
-    return 1 if result["outcome"] in {"pair_unfinished", "previous_session_unfinished"} else 0
+    return 0 if result.get("outcome") == "completed" else 1
 
 
 if __name__ == "__main__":

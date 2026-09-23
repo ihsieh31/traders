@@ -243,6 +243,7 @@ class R01RuntimeBeforeRecoveryTests(IsolatedLongRunTest):
             seen["screening_model"] = (cfgmod.get_config() or {}).get(
                 "screening_model"
             )
+            seen["can_submit"] = can_submit
             return {"success": True, "account_execution_state": "CLEAN",
                     "reconciliation_reasons": []}
 
@@ -254,9 +255,12 @@ class R01RuntimeBeforeRecoveryTests(IsolatedLongRunTest):
         cfgmod.set_config({**(self._saved_config or {}),
                            "auto_screening_enabled": False})
         runtime = lr.build_runtime_config(_valid_cfg())
+        guard = lambda: False
+        deps._startup_recovery_can_submit = guard
         out = lr.run_post_authorization_recovery(deps, runtime)
         self.assertTrue(out["recovery"]["success"])
         self.assertEqual(seen["screening_model"], "gpt-fake")
+        self.assertIs(seen["can_submit"], guard)
 
 
 # ---------------------------------------------------------------------------

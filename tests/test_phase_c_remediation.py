@@ -220,7 +220,8 @@ class R1EnumTests(unittest.TestCase):
 
         all_dates = sorted(_calendar_date_set(rows))
         # Use 25 symbols so Top20 leaves extras.
-        universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ"} for i in range(25)]
+        universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ",
+                     "market_cap": 1_000_000_000.0} for i in range(25)]
         bars_map = {}
         for i, u in enumerate(universe):
             b, _ = _healthy_bars(calendar_rows=rows)
@@ -264,7 +265,8 @@ class R1EnumTests(unittest.TestCase):
 
         config = _base_config()
         rows = config["calendar_rows"]
-        universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ"} for i in range(25)]
+        universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ",
+                     "market_cap": 1_000_000_000.0} for i in range(25)]
         bars_map = {}
         for i, u in enumerate(universe):
             b, _ = _healthy_bars(calendar_rows=rows)
@@ -468,7 +470,8 @@ class R4SipTests(unittest.TestCase):
         dates = sorted(_calendar_date_set(rows))
         as_of_idx = dates.index(_AS_OF)
         sessions = dates[as_of_idx - 60 : as_of_idx + 1]
-        universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ"} for i in range(n)]
+        universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ",
+                     "market_cap": 1_000_000_000.0} for i in range(n)]
         bars = {}
         for i, u in enumerate(universe):
             closes = [100.0 + i + j * 0.5 for j in range(61)]
@@ -713,7 +716,8 @@ def _build_selection_for_symbols(config, rows, symbols_top20, universe_extra=5):
 
     # Universe must contain Top20 plus extras for ranking.
     all_symbols = list(symbols_top20) + [f"X{i:02d}" for i in range(universe_extra)]
-    universe = [{"symbol": s, "name": s, "exchange": "NASDAQ"} for s in all_symbols]
+    universe = [{"symbol": s, "name": s, "exchange": "NASDAQ",
+                 "market_cap": 1_000_000_000.0} for s in all_symbols]
     dates = sorted([r.date for r in rows])
     as_of_idx = dates.index(_AS_OF)
     sessions = dates[as_of_idx - 60 : as_of_idx + 1]

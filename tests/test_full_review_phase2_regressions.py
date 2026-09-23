@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -634,6 +634,8 @@ class _BudgetRoundFixture(_Isolated):
             broker_client_factory=lambda: _FakeBrokerForBudget(),
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
+            calendar_rows=[{"date": "2026-09-08", "open": "09:30", "close": "16:00"}],
+            now_fn=lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc),
         )
 
 
@@ -841,6 +843,8 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
         )
+        deps.calendar_rows = [{"date": "2026-09-08", "open": "09:30", "close": "16:00"}]
+        deps.now_fn = lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         out = lr.run_daily_round(
             run_id="run-resume-a", session_date="2026-09-08",
             long_cfg=self._cfg(),
@@ -870,6 +874,8 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
         )
+        deps.calendar_rows = [{"date": "2026-09-08", "open": "09:30", "close": "16:00"}]
+        deps.now_fn = lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         out = lr.run_daily_round(
             run_id="run-resume-b", session_date="2026-09-08",
             long_cfg=self._cfg(),
@@ -896,6 +902,8 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
         )
+        deps.calendar_rows = [{"date": "2026-09-08", "open": "09:30", "close": "16:00"}]
+        deps.now_fn = lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         out = lr.run_daily_round(
             run_id="run-resume-c", session_date="2026-09-08",
             long_cfg=self._cfg(),
@@ -940,6 +948,8 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
         )
+        deps.calendar_rows = [{"date": "2026-09-08", "open": "09:30", "close": "16:00"}]
+        deps.now_fn = lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         with self.assertRaises(lr.LongRunStop) as ctx:
             lr.run_daily_round(
                 run_id="run-resume-d", session_date="2026-09-08",
@@ -975,6 +985,8 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
         )
+        deps.calendar_rows = [{"date": "2026-09-08", "open": "09:30", "close": "16:00"}]
+        deps.now_fn = lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         with self.assertRaises(lr.LongRunStop) as ctx:
             lr.run_daily_round(
                 run_id="run-resume-e", session_date="2026-09-08",
@@ -1005,6 +1017,8 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             alert_fn=lambda subject, body, runtime: {"sent": False},
             sleep_fn=lambda seconds: None,
         )
+        deps.calendar_rows = [{"date": "2026-09-08", "open": "09:30", "close": "16:00"}]
+        deps.now_fn = lambda: datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc)
         out = lr.run_daily_round(
             run_id="run-fresh-1", session_date="2026-09-08",
             long_cfg=self._cfg(),

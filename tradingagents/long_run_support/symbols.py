@@ -93,6 +93,7 @@ def run_symbol_work(
     ends_at,
     graph_factory,
     _recovery_can_submit,
+    _session_submit_allowed,
     trade_intent_action,
     ProviderFailure,
     LongRunStop,
@@ -251,6 +252,17 @@ def run_symbol_work(
 
         # Case A: analyze normally (PENDING, or ANALYZING without proof).
         if entry.get("status") != SYMBOL_PENDING:
+            continue
+        if not _session_submit_allowed():
+            # Do not start fresh model work after today's exposure window.
+            # Persist the skip so a later resume cannot replay this session.
+            entry["status"] = SYMBOL_DONE
+            entry["execution_result_summary"] = {
+                "no_trade": True,
+                "error": "SESSION_SUBMISSION_DEADLINE",
+            }
+            save_round_journal(run_id, journal)
+            log_event(run_id, "symbol_submission_window_ended", {"symbol": symbol})
             continue
         # F19 checkpoint: earlier symbols may have consumed the rest of the
         # day's budget, so every fresh analysis re-checks before new LLM work.

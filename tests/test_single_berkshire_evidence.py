@@ -320,6 +320,8 @@ class PerSymbolGraphTests(_TempLongRunStateTestCase):
             execution_service_factory=lambda: service,
             broker_client_factory=lambda: _FakeBroker(),
             sleep_fn=lambda seconds: None,
+            calendar_rows=[{"date": SESSION, "open": "09:30", "close": "16:00"}],
+            now_fn=lambda: datetime(2026, 6, 22, 15, 0, tzinfo=timezone.utc),
         )
         journal = lr.run_daily_round(
             run_id=f"run-{backend}", session_date=SESSION,

@@ -26,10 +26,16 @@ from scripts.run_analysis_ab_campaign import (
 from scripts.run_analysis_ab_campaign import _campaign_state_path, _read_state, run_campaign
 from tradingagents.app_identity import default_results_dir, validate_app_path
 from tradingagents.long_run import effective_target_for_session
+from tradingagents.long_run_support.sessions import (
+    AB_RUN_TIME_ET,
+    SESSION_SUBMISSION_GRACE_SECONDS,
+    session_submission_deadline,
+    session_submission_allowed,
+)
 
 
 ET = ZoneInfo("America/New_York")
-RUN_TIME_ET = "11:00"
+RUN_TIME_ET = AB_RUN_TIME_ET
 RETRY_DELAY_SECONDS = 15 * 60
 MAX_SAME_DAY_RETRIES = 3
 # Bounded cross-day polling: at most this many seconds per sleep while
@@ -38,7 +44,7 @@ POLL_INTERVAL_SECONDS = 300.0
 # market_closed is a schedule wait, not a transient failure.  After the
 # session's effective execution target passes, keep polling this long
 # before handing the session back to the operator.
-EXECUTION_WINDOW_GRACE_SECONDS = 30 * 60
+EXECUTION_WINDOW_GRACE_SECONDS = SESSION_SUBMISSION_GRACE_SECONDS
 
 
 def _now() -> datetime:
@@ -61,12 +67,11 @@ def _campaign_root(*, resume: str | Path | None, results_root: str | Path | None
 
 
 def _seconds_until_target(session: str, now: datetime, calendar_client: Any) -> float:
-    info = effective_target_for_session(
-        date.fromisoformat(session), RUN_TIME_ET, calendar_client=calendar_client
-    )
-    hour, minute = (int(part) for part in info["effective_target"].split(":"))
-    target = datetime.combine(date.fromisoformat(session), datetime.min.time(), ET)
-    return (target.replace(hour=hour, minute=minute) - now.astimezone(ET)).total_seconds()
+    target = _effective_target(session, calendar_client)
+    return (
+        session_submission_deadline(session, target, grace_seconds=0)
+        - now.astimezone(ET)
+    ).total_seconds()
 
 
 def _wait_for_session_target(
@@ -95,9 +100,13 @@ def _wait_for_execution_window(
         now = now_fn()
         if now.astimezone(ET).date().isoformat() != str(day):
             return False
-        remaining = _seconds_until_target(str(day), now, calendar_client)
-        if remaining <= -EXECUTION_WINDOW_GRACE_SECONDS:
+        effective_target = _effective_target(day, calendar_client)
+        if not session_submission_allowed(str(day), effective_target, now):
             return False
+        remaining = (
+            session_submission_deadline(str(day), effective_target, grace_seconds=0)
+            - now.astimezone(ET)
+        ).total_seconds()
         if remaining > 0:
             sleep_fn(max(1.0, min(POLL_INTERVAL_SECONDS, remaining)))
         else:
@@ -107,16 +116,23 @@ def _wait_for_execution_window(
             return True
 
 
+def _effective_target(session: str, calendar_client: Any) -> str:
+    info = effective_target_for_session(
+        date.fromisoformat(str(session)), RUN_TIME_ET, calendar_client=calendar_client
+    )
+    return str(info["effective_target"])
+
+
 def run_auto(
     *,
     symbol: str | None = None,
     start_date: str | None = None,
-    days: int = 30,
+    days: int | None = None,
     results_root: str | Path | None = None,
     resume: str | Path | None = None,
     execute_paper: bool | None = None,
     paper_notional_usd: float | None = None,
-    continuous: bool = False,
+    continuous: bool | None = None,
 
     base_config: dict[str, Any] | None = None,
     calendar_client: Any = None,
@@ -245,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol")
     parser.add_argument("--start-date")
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int)
     parser.add_argument("--results-root")
     parser.add_argument("--resume")
     parser.add_argument("--config-json")
@@ -254,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--continuous",
         action="store_true",
+        default=None,
         help="Never finalize: extend the same campaign by frozen chunks of --days sessions",
     )
     args = parser.parse_args(argv)

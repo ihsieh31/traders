@@ -35,6 +35,7 @@ from tradingagents.long_run_support import sessions as _sessions
 from tradingagents.long_run_support import preflight as _preflight
 from tradingagents.long_run_support import symbols as _symbols
 from tradingagents.long_run_support import round_support as _round_support
+from tradingagents.long_run_support.sessions import make_session_submit_guard
 
 LONG_RUN_SCHEMA_VERSION = 1
 DEFAULT_DURATION_CALENDAR_DAYS = 30
@@ -618,9 +619,11 @@ def run_post_authorization_recovery(
     as the round itself. Callers without a runtime keep the legacy behavior
     of recovering under whatever global config is already installed.
     """
+    deps = deps or LongRunDeps()
     return _preflight.run_post_authorization_recovery(
         deps,
         runtime,
+        can_submit=getattr(deps, "_startup_recovery_can_submit", None),
         LongRunDeps=LongRunDeps,
         LongRunStop=LongRunStop,
         _apply_runtime_config=_apply_runtime_config,
@@ -827,11 +830,45 @@ def run_daily_round(
     service = service_factory()
 
     # Step 1 — recover first; unsafe state stops the whole observation.
-    # R02 Layer 2: the stop/window authority is re-checked inside recovery
-    # itself, immediately before any resubmit POST — the outer precheck
-    # above cannot see a stop that arrives while recovery's GET lookups run.
+    # The scheduled target plus its fixed grace fences opening POSTs at the
+    # broker boundary. Existing reconciliation remains available after it.
+    effective_target = (schedule_info or {}).get("effective_target")
+    if not effective_target and (schedule_info or {}).get("effective_at"):
+        try:
+            effective_target = datetime.fromisoformat(
+                str(schedule_info["effective_at"])
+            ).strftime("%H:%M")
+        except (TypeError, ValueError):
+            effective_target = None
+    if schedule_info is None:
+        # Direct/internal round callers still need the same calendar authority
+        # as the scheduler. If it cannot prove the session target, fail closed.
+        try:
+            target_info = effective_target_for_session(
+                date.fromisoformat(session_date),
+                str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
+                calendar_client=deps.calendar_client or runtime.get("calendar_client"),
+                calendar_rows=deps.calendar_rows or runtime.get("calendar_rows"),
+            )
+            effective_target = str(target_info["effective_target"])
+        except Exception:
+            effective_target = None
+    if effective_target:
+        _session_submit_allowed = make_session_submit_guard(
+            session_date=session_date,
+            effective_target=str(effective_target),
+            now_fn=deps.now_fn,
+        )
+    else:
+        _session_submit_allowed = lambda: False
+
+    # R02 Layer 2: stop, observation window, and this session's exposure
+    # window are re-checked inside recovery after its broker GET lookups.
     def _recovery_can_submit() -> bool:
-        return _control_stop_reason(deps, ends_at) is None
+        return (
+            _control_stop_reason(deps, ends_at) is None
+            and _session_submit_allowed()
+        )
 
     # N15: a fresh round has no journal yet. Create and save the empty
     # PENDING journal BEFORE recovery, so recovery/deadline mutation
@@ -919,7 +956,7 @@ def run_daily_round(
         and not needs_new_llm_work
     )
 
-    if not resume_without_new_llm:
+    if not resume_without_new_llm and _session_submit_allowed():
         try:
             from tradingagents.safety import get_safety_guard
 
@@ -939,12 +976,23 @@ def run_daily_round(
             screening_fn, runtime, run_id, session_date
         )
         if getattr(plan, "stopped", False):
+            scan_stats = getattr(plan, "scan_stats", None)
+            if isinstance(scan_stats, dict):
+                screening_evidence = journal.setdefault("screening", {})
+                screening_evidence["scan_stats"] = scan_stats
+                screening_evidence["stop_reason"] = getattr(plan, "reason", None)
+                save_round_journal(run_id, journal)
             raise LongRunStop(
                 "SCREENING_STOPPED",
                 f"screening stopped the round: {plan.stop_reason_text()}",
             )
     else:
         plan = None
+        if not resume_without_new_llm:
+            journal.setdefault("screening", {})["skipped_reason"] = (
+                "SESSION_SUBMISSION_DEADLINE"
+            )
+            save_round_journal(run_id, journal)
 
     # N15: the round journal already exists (created before recovery for
     # fresh rounds, or loaded for a resume); its symbols are filled in from
@@ -997,6 +1045,7 @@ def run_daily_round(
         ends_at=ends_at,
         graph_factory=graph_factory,
         _recovery_can_submit=_recovery_can_submit,
+        _session_submit_allowed=_session_submit_allowed,
         trade_intent_action=trade_intent_action,
         ProviderFailure=ProviderFailure,
         LongRunStop=LongRunStop,
