@@ -758,6 +758,141 @@ def _build_graph_config(
     return _round_support._build_graph_config(runtime, long_cfg, run_id)
 
 
+@dataclass
+class _PreparedDailyRound:
+    """One arm's safety-checked daily context, ready for symbol work."""
+
+    run_id: str
+    session_date: str
+    long_cfg: Dict[str, Any]
+    runtime: Dict[str, Any]
+    schedule_info: Optional[Dict[str, Any]]
+    deps: LongRunDeps
+    ends_at: Optional[datetime]
+    journal: Dict[str, Any]
+    service: Any
+    graph_factory: Callable[..., Any]
+    broker_factory: Callable[..., Any]
+    recovery_can_submit: Callable[[], bool]
+    session_submit_allowed: Callable[[], bool]
+
+
+def _run_prepared_round_symbols(
+    prepared: _PreparedDailyRound,
+    *,
+    phase: str = "all",
+    symbols: Optional[List[str]] = None,
+    reapply_runtime: bool = False,
+) -> Optional[str]:
+    """Run existing per-symbol journal work for one arm or one symbol."""
+    from tradingagents.agents.schemas import trade_intent_action
+    from tradingagents.llm_clients.retry import ProviderFailure
+
+    if reapply_runtime:
+        # A/B interleaves account contexts in one process. Never rely on the
+        # config left installed by the previous arm operation.
+        _apply_runtime_config(prepared.runtime)
+        _validate_long_run_execution_config(prepared.runtime)
+    return _symbols.run_symbol_work(
+        journal=prepared.journal,
+        run_id=prepared.run_id,
+        session_date=prepared.session_date,
+        long_cfg=prepared.long_cfg,
+        runtime=prepared.runtime,
+        deps=prepared.deps,
+        service=prepared.service,
+        ends_at=prepared.ends_at,
+        graph_factory=prepared.graph_factory,
+        _recovery_can_submit=prepared.recovery_can_submit,
+        _session_submit_allowed=prepared.session_submit_allowed,
+        trade_intent_action=trade_intent_action,
+        ProviderFailure=ProviderFailure,
+        LongRunStop=LongRunStop,
+        _build_graph_config=_build_graph_config,
+        _control_stop_reason=_control_stop_reason,
+        STOP_REASON_WINDOW_ENDED=STOP_REASON_WINDOW_ENDED,
+        STOP_REASON_STOP_REQUESTED=STOP_REASON_STOP_REQUESTED,
+        SYMBOL_PENDING=SYMBOL_PENDING,
+        SYMBOL_ANALYZING=SYMBOL_ANALYZING,
+        SYMBOL_ANALYZED=SYMBOL_ANALYZED,
+        SYMBOL_EXECUTING=SYMBOL_EXECUTING,
+        SYMBOL_DONE=SYMBOL_DONE,
+        SYMBOL_FAILED=SYMBOL_FAILED,
+        save_round_journal=save_round_journal,
+        utc_now_iso=utc_now_iso,
+        _execute_intent=_execute_intent,
+        _record_execution=_record_execution,
+        _check_execution_hard_stop=_check_execution_hard_stop,
+        _recover_intent_from_run_log=_recover_intent_from_run_log,
+        log_event=log_event,
+        _normalize_intent=_normalize_intent,
+        phase=phase,
+        symbols=symbols,
+    )
+
+
+def _finish_prepared_daily_round(
+    prepared: _PreparedDailyRound,
+    stop_reason: Optional[str],
+    *,
+    reapply_runtime: bool = False,
+) -> Dict[str, Any]:
+    """Persist the ordinary post-round snapshot, report and terminal journal."""
+    journal = prepared.journal
+    run_id = prepared.run_id
+    session_date = prepared.session_date
+    if stop_reason == STOP_REASON_STOP_REQUESTED:
+        journal["status"] = "RUNNING"
+        save_round_journal(run_id, journal)
+        log_event(run_id, "round_interrupted", {
+            "session": session_date, "reason": "STOP_REQUESTED",
+        })
+        return journal
+    if stop_reason == STOP_REASON_WINDOW_ENDED:
+        journal["status"] = "RUNNING"
+        journal["stop_reason"] = journal.get("stop_reason") or "WINDOW_ENDED_DURING_ROUND"
+        save_round_journal(run_id, journal)
+        log_event(run_id, "round_window_ended", {"session": session_date})
+        return journal
+
+    if reapply_runtime:
+        _apply_runtime_config(prepared.runtime)
+        _validate_long_run_execution_config(prepared.runtime)
+    try:
+        post_snapshot = capture_account_snapshot(prepared.broker_factory())
+    except Exception as exc:
+        raise LongRunStop("SNAPSHOT_UNAVAILABLE", f"post-round snapshot failed: {exc}")
+    append_jsonl(
+        run_dir(run_id) / "account_snapshots.jsonl",
+        {"phase": "post_round", "session": session_date, **post_snapshot},
+    )
+
+    try:
+        from tradingagents.daily_report import write_daily_report
+
+        md_path, _html_path = write_daily_report(
+            day=session_date,
+            output_dir=str(run_dir(run_id) / "daily_reports"),
+            config=prepared.runtime,
+            extra_header=[
+                f"Phase-D round {session_date} "
+                f"(schedule_adjustment={journal.get('schedule_adjustment', 'NONE')}, "
+                f"screening={'cached' if journal['screening'].get('cached') else 'fresh'})",
+            ],
+        )
+        journal["daily_report"] = md_path
+    except LongRunStop:
+        raise
+    except Exception as exc:
+        journal["daily_report_error"] = f"{type(exc).__name__}: {exc}"[:200]
+
+    journal["status"] = "COMPLETED"
+    journal["finished_at"] = utc_now_iso()
+    save_round_journal(run_id, journal)
+    log_event(run_id, "round_completed", {"session": session_date})
+    return journal
+
+
 def run_daily_round(
     *,
     run_id: str,
@@ -784,6 +919,7 @@ def run_daily_round(
     long_cfg = dict(long_cfg)
     screening_plan = long_cfg.pop("_ab_screening_plan", None)
     ab_mode = bool(long_cfg.pop("_ab_mode", False))
+    ab_prepare_only = bool(long_cfg.pop("_ab_prepare_only", False))
     deps = deps or LongRunDeps()
     service_factory = deps.execution_service_factory or _default_execution_service
     screening_fn = deps.screening_fn or _default_screening
@@ -1064,95 +1200,27 @@ def run_daily_round(
                   {"session": session_date, "cached": journal["screening"]["cached"],
                    "universe": len(journal["screening"]["deep_analysis_set"])})
 
-    # Steps 5-6 — serial per-symbol analysis + shared auto-trade execution.
-    stop_reason = _symbols.run_symbol_work(
-        journal=journal,
+    prepared = _PreparedDailyRound(
         run_id=run_id,
         session_date=session_date,
         long_cfg=long_cfg,
         runtime=runtime,
+        schedule_info=schedule_info,
         deps=deps,
-        service=service,
         ends_at=ends_at,
+        journal=journal,
+        service=service,
         graph_factory=graph_factory,
-        _recovery_can_submit=_recovery_can_submit,
-        _session_submit_allowed=_session_submit_allowed,
-        trade_intent_action=trade_intent_action,
-        ProviderFailure=ProviderFailure,
-        LongRunStop=LongRunStop,
-        _build_graph_config=_build_graph_config,
-        _control_stop_reason=_control_stop_reason,
-        STOP_REASON_WINDOW_ENDED=STOP_REASON_WINDOW_ENDED,
-        STOP_REASON_STOP_REQUESTED=STOP_REASON_STOP_REQUESTED,
-        SYMBOL_PENDING=SYMBOL_PENDING,
-        SYMBOL_ANALYZING=SYMBOL_ANALYZING,
-        SYMBOL_ANALYZED=SYMBOL_ANALYZED,
-        SYMBOL_EXECUTING=SYMBOL_EXECUTING,
-        SYMBOL_DONE=SYMBOL_DONE,
-        SYMBOL_FAILED=SYMBOL_FAILED,
-        save_round_journal=save_round_journal,
-        utc_now_iso=utc_now_iso,
-        _execute_intent=_execute_intent,
-        _record_execution=_record_execution,
-        _check_execution_hard_stop=_check_execution_hard_stop,
-        _recover_intent_from_run_log=_recover_intent_from_run_log,
-        log_event=log_event,
-        _normalize_intent=_normalize_intent,
+        broker_factory=broker_factory,
+        recovery_can_submit=_recovery_can_submit,
+        session_submit_allowed=_session_submit_allowed,
     )
+    if ab_prepare_only:
+        return prepared
 
-    # F10: a stop observed at a checkpoint yields to the outer loop without
-    # finalizing this round. The journal keeps its partial evidence and the
-    # remaining symbols stay PENDING (never FAILED), so a later resume
-    # continues exactly where this process stopped. A window end is recorded
-    # on the journal for the final report; the outer loop may still finalize
-    # the observation COMPLETED because its window ended normally.
-    if stop_reason == STOP_REASON_STOP_REQUESTED:
-        journal["status"] = "RUNNING"
-        save_round_journal(run_id, journal)
-        log_event(run_id, "round_interrupted", {"session": session_date,
-                                                "reason": "STOP_REQUESTED"})
-        return journal
-    if stop_reason == STOP_REASON_WINDOW_ENDED:
-        journal["status"] = "RUNNING"
-        journal["stop_reason"] = journal.get("stop_reason") or "WINDOW_ENDED_DURING_ROUND"
-        save_round_journal(run_id, journal)
-        log_event(run_id, "round_window_ended", {"session": session_date})
-        return journal
-
-    # Step 8 — post-round account snapshot.
-    try:
-        post_snapshot = capture_account_snapshot(broker_factory())
-    except Exception as exc:
-        raise LongRunStop("SNAPSHOT_UNAVAILABLE", f"post-round snapshot failed: {exc}")
-    append_jsonl(run_dir(run_id) / "account_snapshots.jsonl",
-                 {"phase": "post_round", "session": session_date, **post_snapshot})
-
-    # Step 9 — daily operations report (existing renderer + round metadata).
-    try:
-        from tradingagents.daily_report import write_daily_report
-
-        md_path, _html_path = write_daily_report(
-            day=session_date,
-            output_dir=str(run_dir(run_id) / "daily_reports"),
-            config=runtime,
-            extra_header=[
-                f"Phase-D round {session_date} "
-                f"(schedule_adjustment={journal.get('schedule_adjustment', 'NONE')}, "
-                f"screening={'cached' if journal['screening'].get('cached') else 'fresh'})",
-            ],
-        )
-        journal["daily_report"] = md_path
-    except LongRunStop:
-        raise
-    except Exception as exc:
-        journal["daily_report_error"] = f"{type(exc).__name__}: {exc}"[:200]
-
-    # Step 10 — complete the session exactly once.
-    journal["status"] = "COMPLETED"
-    journal["finished_at"] = utc_now_iso()
-    save_round_journal(run_id, journal)
-    log_event(run_id, "round_completed", {"session": session_date})
-    return journal
+    # Single-backend mode preserves its existing analyze-and-execute loop.
+    stop_reason = _run_prepared_round_symbols(prepared)
+    return _finish_prepared_daily_round(prepared, stop_reason)
 
 
 AB_BACKENDS = ("traders", "berkshire")
@@ -1246,7 +1314,7 @@ def run_ab_daily_round(
     deps: Optional[LongRunDeps] = None,
     ends_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """One shared-screening A/B round, using the existing single-arm worker twice."""
+    """Run one shared-screening A/B round with deterministic symbol pairing."""
     deps = deps or LongRunDeps()
     from tradingagents.screening.pipeline import (
         RoundPlan,
@@ -1393,6 +1461,9 @@ def run_ab_daily_round(
     elif _ab_selection_hash(cached_selection) != selection_record["selection_hash"]:
         raise LongRunStop("STATE_CORRUPT", "shared screening cache differs from frozen A/B selection")
 
+    prepared_arms: Dict[str, _PreparedDailyRound] = {}
+    arm_plans: Dict[str, Any] = {}
+
     for backend in AB_BACKENDS:
         arm_id = _ab_arm_run_id(run_id, backend)
         prior = load_round_journal(arm_id, session_date)
@@ -1403,7 +1474,10 @@ def run_ab_daily_round(
         arm_entry["run_id"] = arm_id
         if prior is not None and prior.get("status") == "COMPLETED":
             arm_entry["status"] = "COMPLETED"
-            arm_entry["selection_hash"] = (prior.get("screening") or {}).get("selection_hash")
+            prior_hash = (prior.get("screening") or {}).get("selection_hash")
+            if prior_hash and prior_hash != selection_record["selection_hash"]:
+                raise LongRunStop("STATE_CORRUPT", f"{backend} completed arm selection hash changed")
+            arm_entry["selection_hash"] = prior_hash or selection_record["selection_hash"]
             save_round_journal(run_id, journal)
             continue
         if arm_entry.get("status") == "COMPLETED":
@@ -1453,12 +1527,13 @@ def run_ab_daily_round(
         arm_entry["selection_hash"] = selection_record["selection_hash"]
         arm_entry["status"] = "RUNNING"
         save_round_journal(run_id, journal)
-        arm_journal = run_daily_round(
+        prepared = run_daily_round(
             run_id=arm_id,
             session_date=session_date,
             long_cfg={
                 **long_cfg,
                 "_ab_mode": True,
+                "_ab_prepare_only": True,
                 "_ab_screening_plan": arm_plan,
             },
             runtime=arm_runtimes[backend],
@@ -1466,18 +1541,87 @@ def run_ab_daily_round(
             deps=deps,
             ends_at=ends_at,
         )
-        if arm_journal.get("status") == "COMPLETED":
+        if isinstance(prepared, _PreparedDailyRound):
+            prepared_arms[backend] = prepared
+            arm_plans[backend] = arm_plan
+        elif isinstance(prepared, dict) and prepared.get("status") == "COMPLETED":
             arm_entry["status"] = "COMPLETED"
+            arm_entry["selection_hash"] = selection_record["selection_hash"]
         else:
             arm_entry["status"] = "RUNNING"
-        arm_entry["selection_hash"] = (arm_journal.get("screening") or {}).get(
-            "selection_hash", selection_record["selection_hash"]
-        )
         save_round_journal(run_id, journal)
-        if arm_entry["status"] != "COMPLETED":
-            journal["status"] = "RUNNING"
-            save_round_journal(run_id, journal)
-            return journal
+
+    if any(
+        journal["arms"].get(backend, {}).get("status") != "COMPLETED"
+        and backend not in prepared_arms
+        for backend in AB_BACKENDS
+    ):
+        journal["status"] = "RUNNING"
+        save_round_journal(run_id, journal)
+        return journal
+
+    def _yield_ab_round() -> Dict[str, Any]:
+        journal["status"] = "RUNNING"
+        save_round_journal(run_id, journal)
+        return journal
+
+    top20_symbols = [str(row["symbol"]) for row in selection.get("top20", [])]
+    # Pair by symbol: both analysis intents are durable before either account
+    # executes. Every switch reapplies its arm config and safety guard.
+    for symbol in top20_symbols:
+        for backend in AB_BACKENDS:
+            prepared = prepared_arms.get(backend)
+            if prepared is None:
+                continue
+            stop_reason = _run_prepared_round_symbols(
+                prepared, phase="analysis", symbols=[symbol], reapply_runtime=True,
+            )
+            if stop_reason:
+                return _yield_ab_round()
+
+        for backend in AB_BACKENDS:
+            prepared = prepared_arms.get(backend)
+            if prepared is None:
+                continue
+            entry = prepared.journal["symbols"].get(symbol) or {}
+            if entry.get("status") not in (SYMBOL_ANALYZED, SYMBOL_EXECUTING):
+                continue
+            stop_reason = _run_prepared_round_symbols(
+                prepared, phase="execution", symbols=[symbol], reapply_runtime=True,
+            )
+            if stop_reason:
+                return _yield_ab_round()
+
+    # Positions outside the shared Top20 have no counterpart. Keep their
+    # existing-account management after the paired entry universe.
+    for backend in AB_BACKENDS:
+        prepared = prepared_arms.get(backend)
+        if prepared is None:
+            continue
+        for symbol in arm_plans[backend].extra_holdings:
+            stop_reason = _run_prepared_round_symbols(
+                prepared, phase="analysis", symbols=[symbol], reapply_runtime=True,
+            )
+            if stop_reason:
+                return _yield_ab_round()
+            entry = prepared.journal["symbols"].get(symbol) or {}
+            if entry.get("status") in (SYMBOL_ANALYZED, SYMBOL_EXECUTING):
+                stop_reason = _run_prepared_round_symbols(
+                    prepared, phase="execution", symbols=[symbol], reapply_runtime=True,
+                )
+                if stop_reason:
+                    return _yield_ab_round()
+
+    for backend, prepared in prepared_arms.items():
+        arm_journal = _finish_prepared_daily_round(
+            prepared, None, reapply_runtime=True,
+        )
+        arm_entry = journal["arms"][backend]
+        arm_entry["status"] = (
+            "COMPLETED" if arm_journal.get("status") == "COMPLETED" else "RUNNING"
+        )
+        arm_entry["selection_hash"] = selection_record["selection_hash"]
+        save_round_journal(run_id, journal)
 
     if any(journal["arms"].get(backend, {}).get("status") != "COMPLETED" for backend in AB_BACKENDS):
         journal["status"] = "RUNNING"
@@ -2096,6 +2240,53 @@ def aggregate_ab_final_report(
         if signals["traders"][(session, symbol)] != signals["berkshire"][(session, symbol)]
     ]
 
+    timing_gaps = []
+    for session, symbols in sorted(top20_by_day.items()):
+        arm_rounds = {
+            backend: load_round_journal(_ab_arm_run_id(state["run_id"], backend), session) or {}
+            for backend in AB_BACKENDS
+        }
+        for symbol in symbols:
+            starts = {
+                backend: ((arm_rounds[backend].get("symbols") or {}).get(symbol) or {}).get(
+                    "execution_started_at"
+                )
+                for backend in AB_BACKENDS
+            }
+            gap_seconds = None
+            if all(starts.values()):
+                try:
+                    parsed = {}
+                    for backend, value in starts.items():
+                        timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                        if timestamp.tzinfo is None:
+                            timestamp = timestamp.replace(tzinfo=timezone.utc)
+                        parsed[backend] = timestamp
+                    gap_seconds = round(abs((parsed["traders"] - parsed["berkshire"]).total_seconds()), 3)
+                except (TypeError, ValueError, OverflowError):
+                    gap_seconds = None
+            timing_gaps.append({
+                "session": session,
+                "symbol": symbol,
+                "traders_execution_started_at": starts["traders"],
+                "berkshire_execution_started_at": starts["berkshire"],
+                "execution_time_gap_seconds": gap_seconds,
+            })
+    available_gaps = [
+        row["execution_time_gap_seconds"]
+        for row in timing_gaps
+        if row["execution_time_gap_seconds"] is not None
+    ]
+    timing_fairness = {
+        "shared_top20_symbol_sessions": len(timing_gaps),
+        "paired_execution_count": len(available_gaps),
+        "mean_execution_time_gap_seconds": (
+            round(sum(available_gaps) / len(available_gaps), 3) if available_gaps else None
+        ),
+        "max_execution_time_gap_seconds": max(available_gaps) if available_gaps else None,
+        "by_symbol_session": timing_gaps,
+    }
+
     comparison: Dict[str, Any] = {}
     for backend, report in arm_reports.items():
         account = report.get("account") or {}
@@ -2163,6 +2354,7 @@ def aggregate_ab_final_report(
         "arms": arm_reports, "comparison": comparison,
         "signal_disagreement": {"shared_symbol_session_count": len(shared_signals),
                                  "disagreements": disagreements},
+        "timing_fairness": timing_fairness,
         "metrics_unavailable": {
             "realized_pl": "broker snapshots do not provide reliable realized P/L attribution",
             "trades": "no reliable round-trip trade attribution is available",
@@ -2194,6 +2386,8 @@ def write_ab_final_report(report: Dict[str, Any]) -> Tuple[str, str]:
                      f"{row['equity_return']} | {row['max_drawdown']} |")
     lines += ["", "## Signal disagreement", "",
               json.dumps(report.get("signal_disagreement"), ensure_ascii=False, sort_keys=True),
+              "", "## Timing fairness", "",
+              json.dumps(report.get("timing_fairness"), ensure_ascii=False, sort_keys=True),
               "", "## Metrics marked unavailable"]
     for key, reason in report.get("metrics_unavailable", {}).items():
         lines.append(f"- {key}: {reason}")

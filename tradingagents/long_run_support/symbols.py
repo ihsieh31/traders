@@ -125,11 +125,16 @@ def run_symbol_work(
     _recover_intent_from_run_log,
     log_event,
     _normalize_intent,
+    phase="all",
+    symbols=None,
 ) -> Optional[str]:
+    if phase not in {"all", "analysis", "execution"}:
+        raise ValueError(f"unknown symbol-work phase: {phase!r}")
     graph_config = _build_graph_config(runtime, long_cfg, run_id=run_id)
     notional = float(long_cfg.get("base_trade_notional_usd") or 0)
     graph = None
     stop_reason: Optional[str] = None
+    record_timing = bool(runtime.get("shared_evidence_dir"))
 
     def _execute_symbol(symbol: str, intent: Dict[str, Any], *, _reentry: bool = False) -> None:
         # F10 checkpoint 6: immediately before broker execution. A stop that
@@ -146,7 +151,10 @@ def run_symbol_work(
                 save_round_journal(run_id, journal)
             stop_reason = control
             return
-        journal["symbols"][symbol]["status"] = SYMBOL_EXECUTING
+        entry = journal["symbols"][symbol]
+        if record_timing:
+            entry.setdefault("execution_started_at", utc_now_iso())
+        entry["status"] = SYMBOL_EXECUTING
         save_round_journal(run_id, journal)
         try:
             result = _execute_intent(
@@ -156,20 +164,35 @@ def run_symbol_work(
                 can_submit=_recovery_can_submit,
             )
         except LongRunStop:
+            if record_timing:
+                entry["execution_finished_at"] = utc_now_iso()
+                save_round_journal(run_id, journal)
             raise
         except Exception as exc:
+            if record_timing:
+                entry["execution_finished_at"] = utc_now_iso()
+                save_round_journal(run_id, journal)
             raise LongRunStop("EXECUTION_AMBIGUOUS",
                               f"{symbol}: execution failed: {exc}")
+        if record_timing:
+            entry["execution_finished_at"] = utc_now_iso()
         _record_execution(journal, run_id, symbol, result)
         _check_execution_hard_stop(symbol, result)
 
-    for symbol in list(journal["symbols"]):
+    selected_symbols = list(symbols) if symbols is not None else list(journal["symbols"])
+    for symbol in selected_symbols:
+        if symbol not in journal["symbols"]:
+            raise LongRunStop("STATE_CORRUPT", f"symbol {symbol!r} is absent from the arm journal")
         entry = journal["symbols"][symbol]
         status = entry.get("status")
 
         if status == SYMBOL_DONE:
             continue  # Case E: never analyze or execute twice for one session.
         if status == SYMBOL_FAILED:
+            continue
+        if phase == "analysis" and status in (SYMBOL_ANALYZED, SYMBOL_EXECUTING):
+            continue
+        if phase == "execution" and status not in (SYMBOL_ANALYZED, SYMBOL_EXECUTING):
             continue
 
         # F10 checkpoint 2: before starting each symbol's work.
@@ -192,6 +215,8 @@ def run_symbol_work(
                 entry["execution_result_summary"] = {"error": "EXECUTING without intent"}
                 save_round_journal(run_id, journal)
                 continue
+            if record_timing:
+                entry.setdefault("execution_started_at", utc_now_iso())
             try:
                 recovery = service.startup_recover(can_submit=_recovery_can_submit)
                 if not recovery.get("success"):
@@ -204,10 +229,18 @@ def run_symbol_work(
                     can_submit=_recovery_can_submit,
                 )
             except LongRunStop:
+                if record_timing:
+                    entry["execution_finished_at"] = utc_now_iso()
+                    save_round_journal(run_id, journal)
                 raise
             except Exception as exc:
+                if record_timing:
+                    entry["execution_finished_at"] = utc_now_iso()
+                    save_round_journal(run_id, journal)
                 raise LongRunStop("EXECUTION_AMBIGUOUS",
                                   f"{symbol}: re-entry failed: {exc}")
+            if record_timing:
+                entry["execution_finished_at"] = utc_now_iso()
             _record_execution(journal, run_id, symbol, result)
             _check_execution_hard_stop(symbol, result)
             continue
@@ -253,10 +286,14 @@ def run_symbol_work(
                 entry["trade_intent"] = recovered
                 entry["signal"] = trade_intent_action(recovered)
                 entry["status"] = SYMBOL_ANALYZED
+                if record_timing:
+                    entry["analysis_finished_at"] = utc_now_iso()
+                    entry["analysis_timing_recovered"] = True
                 save_round_journal(run_id, journal)
                 log_event(run_id, "symbol_recovered",
                           {"symbol": symbol, "signal": entry["signal"]})
-                _execute_symbol(symbol, recovered)
+                if phase != "analysis":
+                    _execute_symbol(symbol, recovered)
                 continue
             entry["status"] = SYMBOL_PENDING
 
@@ -286,6 +323,9 @@ def run_symbol_work(
                     f"{symbol}: {'; '.join(verdict.reasons)}",
                 )
         except LongRunStop:
+            if record_timing:
+                entry["analysis_finished_at"] = utc_now_iso()
+                save_round_journal(run_id, journal)
             raise
         except Exception as exc:
             raise LongRunStop(
@@ -296,6 +336,8 @@ def run_symbol_work(
         # Persist the analysis-start marker BEFORE propagate so a crash leaves
         # an explicit start identity/time. It alone never claims completion.
         entry["analysis_run_ref"] = symbol_started
+        if record_timing:
+            entry["analysis_started_at"] = symbol_started
         save_round_journal(run_id, journal)
         try:
             backend = str(runtime.get("analysis_backend") or "traders").strip().lower()
@@ -323,6 +365,8 @@ def run_symbol_work(
             # persisting a tradeable intent or starting broker execution.
             control = _control_stop_reason(deps, ends_at)
             if control:
+                if record_timing:
+                    entry["analysis_finished_at"] = utc_now_iso()
                 if control == STOP_REASON_WINDOW_ENDED:
                     # Keep the analysis result for audit, but never trade it:
                     # the authorized window ended while this symbol ran.
@@ -344,6 +388,8 @@ def run_symbol_work(
                 stop_reason = STOP_REASON_STOP_REQUESTED
                 break
             intent = _normalize_intent((final_state or {}).get("final_trade_intent"))
+            if record_timing:
+                entry["analysis_finished_at"] = utc_now_iso()
             if not intent:
                 from tradingagents.execution.service import validate_trade_intent
 
@@ -365,12 +411,16 @@ def run_symbol_work(
                       {"symbol": symbol, "signal": entry["signal"]})
         except ProviderFailure as exc:
             entry["status"] = SYMBOL_FAILED
+            if record_timing:
+                entry["analysis_finished_at"] = utc_now_iso()
             save_round_journal(run_id, journal)
             raise LongRunStop("PROVIDER_FAILURE", f"{symbol}: {exc}")
         except LongRunStop:
             raise
         except Exception as exc:
             entry["status"] = SYMBOL_FAILED
+            if record_timing:
+                entry["analysis_finished_at"] = utc_now_iso()
             entry["execution_result_summary"] = {
                 "error": f"{type(exc).__name__}: {exc}"[:300]
             }
@@ -379,8 +429,11 @@ def run_symbol_work(
                       {"symbol": symbol, "error": str(exc)[:200]})
             continue
 
-        # Fresh ANALYZED → execute immediately (same pass, no re-loop needed).
-        _execute_symbol(symbol, entry["trade_intent"])
+        # Existing single-backend rounds still execute immediately. The A/B
+        # coordinator's analysis phase persists both arms before either arm
+        # enters its execution phase.
+        if phase != "analysis":
+            _execute_symbol(symbol, entry["trade_intent"])
         if stop_reason:
             break
 

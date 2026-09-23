@@ -1,7 +1,8 @@
 import copy
 import hashlib
 import json
-from datetime import date
+from contextlib import ExitStack
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -211,6 +212,172 @@ def _ab_round_setup(tmp_path):
     return root, config, selection, initial, deps
 
 
+def _run_interleaved_ab(
+    tmp_path,
+    *,
+    events=None,
+    clock=None,
+    deadline=None,
+    analysis_duration=timedelta(0),
+    execution_duration=timedelta(0),
+    extras=None,
+    preanalyzed_traders=(),
+    crash_at=None,
+):
+    """Exercise the real A/B coordinator and symbol state machine with fakes."""
+    root, config, selection, _initial, _deps = _ab_round_setup(tmp_path)
+    initial = _plan(selection, extras=(extras or {}).get("traders", ()), cached=False)
+    events = events if events is not None else []
+    clock = clock or [datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc)]
+    extras = extras or {"traders": [], "berkshire": []}
+    applied = {}
+    runtime_switches = []
+    crash_state = {"pending": crash_at is not None}
+
+    def apply_runtime(runtime):
+        applied.clear()
+        applied.update(runtime)
+        runtime_switches.append(runtime["analysis_backend"])
+
+    def prepare_arm(**kwargs):
+        backend = kwargs["runtime"]["analysis_backend"]
+        apply_runtime(kwargs["runtime"])
+        plan = kwargs["long_cfg"]["_ab_screening_plan"]
+        arm_id = kwargs["run_id"]
+        journal = lr.load_round_journal(arm_id, SESSION)
+        if journal is None:
+            journal = lr.new_round_journal(SESSION, list(plan.deep_analysis_set))
+            journal["screening"] = {
+                "selection_hash": plan.selection_hash,
+                "top20": [{"symbol": row["symbol"], "rank": row["rank"]}
+                          for row in plan.top20],
+                "deep_analysis_set": list(plan.deep_analysis_set),
+            }
+            for symbol in preanalyzed_traders:
+                if backend == "traders" and symbol in journal["symbols"]:
+                    journal["symbols"][symbol].update({
+                        "status": lr.SYMBOL_ANALYZED,
+                        "trade_intent": {"symbol": symbol, "action": "BUY",
+                                         "target_position": "LONG"},
+                        "signal": "BUY",
+                    })
+        journal["status"] = "RUNNING"
+        lr.save_round_journal(arm_id, journal)
+
+        class Service:
+            pass
+
+        service = Service()
+        service.backend = backend
+        service.execution_db_path = kwargs["runtime"]["execution_db_path"]
+
+        class Graph:
+            def propagate(self, symbol, _trade_date):
+                events.append(("analysis_started", backend, symbol, clock[0]))
+                clock[0] += analysis_duration
+                events.append(("analysis_finished", backend, symbol, clock[0]))
+                return ({"final_trade_intent": {
+                    "symbol": symbol, "action": "BUY", "target_position": "LONG",
+                }}, "BUY")
+
+        graph_factory = lambda _graph_config: Graph()
+        long_cfg = {key: value for key, value in kwargs["long_cfg"].items()
+                    if not key.startswith("_ab_")}
+        prepared = lr._PreparedDailyRound(
+            run_id=arm_id, session_date=SESSION, long_cfg=long_cfg,
+            runtime=kwargs["runtime"], schedule_info=kwargs.get("schedule_info"),
+            deps=kwargs["deps"], ends_at=kwargs.get("ends_at"), journal=journal,
+            service=service, graph_factory=graph_factory,
+            broker_factory=lambda: None,
+            recovery_can_submit=lambda: deadline is None or clock[0] < deadline,
+            session_submit_allowed=lambda: deadline is None or clock[0] < deadline,
+        )
+        return prepared
+
+    def make_plan(runtime, _selection, **_kwargs):
+        backend = runtime["analysis_backend"]
+        return _plan(selection, extras=extras.get(backend, ()), cached=True)
+
+    def execute(_deps, service, symbol, _intent, _notional, *, run_id, **kwargs):
+        backend = service.backend
+        expected_profile = "A" if backend == "traders" else "B"
+        assert applied.get("_alpaca_account_profile") == expected_profile
+        assert applied.get("execution_db_path") == service.execution_db_path
+        assert run_id.endswith(f"-{backend}")
+        allowed = kwargs["can_submit"]()
+        events.append(("execution", backend, symbol, clock[0], allowed,
+                       service.execution_db_path))
+        if not allowed:
+            return {"success": False, "entry_gate_blocked": True,
+                    "broker_attempted": False, "broker_calls": 0}
+        clock[0] += execution_duration
+        return {"success": True, "broker_attempted": True, "broker_calls": 1}
+
+    def finish(prepared, _stop_reason, *, reapply_runtime=False):
+        if reapply_runtime:
+            apply_runtime(prepared.runtime)
+        prepared.journal["status"] = "COMPLETED"
+        lr.save_round_journal(prepared.run_id, prepared.journal)
+        return prepared.journal
+
+    def maybe_crash(prepared, **kwargs):
+        if (
+            crash_state["pending"]
+            and prepared.run_id.endswith(f"-{crash_at[0]}")
+            and kwargs.get("phase") == crash_at[1]
+            and kwargs.get("symbols") == [crash_at[2]]
+        ):
+            crash_state["pending"] = False
+            raise RuntimeError("simulated coordinator crash")
+        return original_worker(prepared, **kwargs)
+
+    original_worker = lr._run_prepared_round_symbols
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(lr, "base_dir", return_value=tmp_path / "state"))
+        stack.enter_context(patch.object(lr, "_apply_runtime_config", side_effect=apply_runtime))
+        stack.enter_context(patch.object(lr, "_validate_long_run_execution_config"))
+        stack.enter_context(patch.object(lr, "_build_graph_config", side_effect=lambda runtime, cfg, run_id=None: dict(runtime)))
+        stack.enter_context(patch.object(lr, "_screening_with_audit_scope", return_value=initial))
+        stack.enter_context(patch(
+            "tradingagents.safety.get_safety_guard",
+            return_value=SimpleNamespace(
+                check_llm_budget=lambda: SimpleNamespace(allowed=True, reasons=[])
+            ),
+        ))
+        stack.enter_context(patch(
+            "tradingagents.screening.pipeline.prepare_screening_round_from_selection",
+            side_effect=make_plan,
+        ))
+        stack.enter_context(patch.object(lr, "run_daily_round", side_effect=prepare_arm))
+        stack.enter_context(patch.object(lr, "_finish_prepared_daily_round", side_effect=finish))
+        stack.enter_context(patch.object(lr, "_execute_intent", side_effect=execute))
+        stack.enter_context(patch.object(
+            lr, "utc_now_iso", side_effect=lambda: clock[0].isoformat()
+        ))
+        stack.enter_context(patch(
+            "tradingagents.long_run_support.symbols._prepare_symbol_graph_config",
+            side_effect=lambda graph_config, runtime, **_kwargs: (
+                dict(graph_config),
+                {"path": str(root / "shared" / "evidence" / SESSION / "T00" / "evidence_packet.json"),
+                 "sha256": "e" * 64},
+            ),
+        ))
+        if crash_at is not None:
+            stack.enter_context(patch.object(
+                lr, "_run_prepared_round_symbols", side_effect=maybe_crash
+            ))
+        result = lr.run_ab_daily_round(
+            run_id="lr-ab-fixture", session_date=SESSION,
+            long_cfg={"ab_results_root": str(root), "base_trade_notional_usd": 1000},
+            runtime=config,
+            deps=lr.LongRunDeps(now_fn=lambda: clock[0]),
+            schedule_info={"effective_at": f"{SESSION}T11:00:00-04:00",
+                           "effective_target": "11:00"},
+            ends_at=clock[0] + timedelta(days=1),
+        )
+    return result, events, runtime_switches
+
+
 def test_ab_round_screens_once_shares_hash_and_allows_different_signals(tmp_path):
     root, config, selection, initial, deps = _ab_round_setup(tmp_path)
     screen_calls = []
@@ -244,6 +411,116 @@ def test_ab_round_screens_once_shares_hash_and_allows_different_signals(tmp_path
     assert arm_plans["berkshire"].deep_analysis_set[-1] == "MSFT"
     assert lr.load_round_journal("lr-ab-fixture-traders", SESSION)["symbols"]["T00"]["signal"] == "BUY"
     assert lr.load_round_journal("lr-ab-fixture-berkshire", SESSION)["symbols"]["T00"]["signal"] == "HOLD"
+
+
+def test_ab_interleaves_each_symbol_and_reapplies_account_runtime(tmp_path):
+    result, events, runtime_switches = _run_interleaved_ab(tmp_path)
+
+    assert result["status"] == "COMPLETED"
+    assert [(event[0], event[1], event[2]) for event in events[:6]] == [
+        ("analysis_started", "traders", "T00"),
+        ("analysis_finished", "traders", "T00"),
+        ("analysis_started", "berkshire", "T00"),
+        ("analysis_finished", "berkshire", "T00"),
+        ("execution", "traders", "T00"),
+        ("execution", "berkshire", "T00"),
+    ]
+    # Preparation installs each arm; these later calls prove A→B→A→B
+    # switching before the first pair's analysis and execution phases.
+    assert runtime_switches[4:8] == [
+        "traders", "berkshire", "traders", "berkshire",
+    ]
+    assert events[4][5] != events[5][5]  # execution databases remain arm-local
+
+    traders = json.loads((tmp_path / "state" / "runs" / "lr-ab-fixture-traders"
+                          / "rounds" / f"{SESSION}.json").read_text())
+    berkshire = json.loads((tmp_path / "state" / "runs" / "lr-ab-fixture-berkshire"
+                            / "rounds" / f"{SESSION}.json").read_text())
+    for arm in (traders, berkshire):
+        entry = arm["symbols"]["T00"]
+        assert entry["analysis_started_at"]
+        assert entry["analysis_finished_at"]
+        assert entry["execution_started_at"]
+        assert entry["execution_finished_at"]
+        assert entry["evidence_packet_sha256"] == "e" * 64
+    assert traders["symbols"]["T00"]["evidence_packet_sha256"] == berkshire["symbols"]["T00"]["evidence_packet_sha256"]
+
+
+def test_ab_resume_after_traders_execution_only_executes_berkshire(tmp_path):
+    events = []
+    try:
+        _run_interleaved_ab(
+            tmp_path, events=events,
+            crash_at=("berkshire", "execution", "T00"),
+        )
+    except RuntimeError as exc:
+        assert "simulated coordinator crash" in str(exc)
+    else:
+        raise AssertionError("expected simulated crash after Traders execution")
+
+    before_resume = list(events)
+    result, _, _ = _run_interleaved_ab(tmp_path, events=events)
+    t00_after = [event for event in events[len(before_resume):] if event[2] == "T00"]
+    assert result["status"] == "COMPLETED"
+    assert not [event for event in t00_after if event[0].startswith("analysis_")]
+    assert not [event for event in t00_after if event[0] == "execution" and event[1] == "traders"]
+    assert len([event for event in t00_after if event[0] == "execution" and event[1] == "berkshire"]) == 1
+
+
+def test_ab_resume_mid_analysis_pair_reuses_traders_intent(tmp_path):
+    result, events, _ = _run_interleaved_ab(
+        tmp_path, preanalyzed_traders=("T00",),
+    )
+    t00 = [event for event in events if event[2] == "T00"]
+    assert result["status"] == "COMPLETED"
+    assert [(event[0], event[1]) for event in t00] == [
+        ("analysis_started", "berkshire"),
+        ("analysis_finished", "berkshire"),
+        ("execution", "traders"),
+        ("execution", "berkshire"),
+    ]
+
+
+def test_ab_held_symbols_run_after_shared_pairs_in_their_own_arm(tmp_path):
+    result, events, _ = _run_interleaved_ab(
+        tmp_path, extras={"traders": ["AAPL"], "berkshire": ["NVDA"]},
+    )
+    top20_events = [event for event in events if event[2].startswith("T")]
+    held_events = [event for event in events if event[2] in {"AAPL", "NVDA"}]
+    assert result["status"] == "COMPLETED"
+    assert held_events
+    assert min(events.index(event) for event in held_events) > max(
+        events.index(event) for event in top20_events
+    )
+    assert {(event[1], event[2]) for event in held_events} == {
+        ("traders", "AAPL"), ("berkshire", "NVDA"),
+    }
+
+
+def test_ab_fake_clock_keeps_both_arms_inside_submission_window(tmp_path):
+    clock = [datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc)]
+    deadline = clock[0] + timedelta(minutes=10)
+    result, events, _ = _run_interleaved_ab(
+        tmp_path,
+        clock=clock,
+        deadline=deadline,
+        analysis_duration=timedelta(minutes=2),
+        execution_duration=timedelta(seconds=15),
+    )
+
+    berkshire_posts = [
+        event for event in events
+        if event[0] == "execution" and event[1] == "berkshire" and event[4]
+    ]
+    assert result["status"] == "COMPLETED"
+    assert len(berkshire_posts) == 2
+    assert all(event[3] < deadline for event in berkshire_posts)
+    # Berkshire starts each paired analysis before Traders has worked through
+    # the portfolio, and its first execution lands inside the 30-minute gate.
+    first_berkshire_analysis = next(
+        event for event in events if event[0] == "analysis_started" and event[1] == "berkshire"
+    )
+    assert first_berkshire_analysis[3] < deadline
 
 
 def test_resume_after_shared_screening_does_not_rescreen(tmp_path):
@@ -333,9 +610,13 @@ def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tm
     lr.save_round_journal(state["run_id"], root_round)
     for backend, signal in (("traders", "BUY"), ("berkshire", "HOLD")):
         arm_id = lr._ab_arm_run_id(state["run_id"], backend)
-        arm_round = lr.new_round_journal(SESSION, ["AAPL"])
+        arm_round = lr.new_round_journal(SESSION, ["AAPL", "MSFT"])
         arm_round["status"] = "COMPLETED"
         arm_round["symbols"]["AAPL"].update({"status": "DONE", "signal": signal})
+        arm_round["symbols"]["AAPL"]["execution_started_at"] = (
+            "2026-09-23T15:00:00+00:00" if backend == "traders"
+            else "2026-09-23T15:00:02+00:00"
+        )
         lr.save_round_journal(arm_id, arm_round)
 
     def fake_report(arm_state, _long_cfg, _runtime):
@@ -366,4 +647,11 @@ def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tm
     assert report["signal_disagreement"]["disagreements"] == [
         {"session": SESSION, "symbol": "AAPL", "traders": "BUY", "berkshire": "HOLD"}
     ]
+    assert report["timing_fairness"]["paired_execution_count"] == 1
+    assert report["timing_fairness"]["mean_execution_time_gap_seconds"] == 2
+    assert report["timing_fairness"]["max_execution_time_gap_seconds"] == 2
+    assert next(
+        row for row in report["timing_fairness"]["by_symbol_session"]
+        if row["symbol"] == "AAPL"
+    )["execution_time_gap_seconds"] == 2
     assert report["metrics_unavailable"]["realized_pl"]
