@@ -484,6 +484,12 @@ class ExecutionService:
                                    and broker_status_to_local(o.status) not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}]
                     if any(o.broker_order_id not in owned_children or o.side != closing_side for o in conflicting):
                         raise BrokerAuthorityError("Deadline exit conflicts with an order not proven to be its protection")
+                    if conflicting:
+                        market_closed = self._market_clock_closed(broker)
+                        if market_closed is not None:
+                            raise BrokerAuthorityError(
+                                f"Deadline protection cancellation blocked: {market_closed}"
+                            )
                     # F04 sequencing: durably commit the deadline close BEFORE
                     # canceling any protection, so a crash after cancellation
                     # leaves a recorded intent to complete the exit.
@@ -504,13 +510,36 @@ class ExecutionService:
                     # close flow — a sibling canceled by broker cascade must
                     # never abort the deadline close and leave a bare position.
                     canceled_here = 0
-                    for order in conflicting:
-                        snapshot, calls = self._cancel_protection_with_race_check(
-                            broker, snapshot, order,
-                            account_id=identity.account_id,
-                        )
-                        canceled_here += calls
+                    try:
+                        for order in conflicting:
+                            snapshot, calls = self._cancel_protection_with_race_check(
+                                broker, snapshot, order,
+                                account_id=identity.account_id,
+                            )
+                            canceled_here += calls
+                    except Exception:
+                        cancellation_calls += canceled_here
+                        if canceled_here:
+                            gap = self._evaluate_protection_gap(
+                                broker, snapshot, symbol,
+                                canceled_protections=canceled_here,
+                            )
+                            if gap is not None:
+                                raise _DeadlineGapOutcome(gap)
+                        raise
                     cancellation_calls += canceled_here
+                    if canceled_here:
+                        market_closed = self._market_clock_closed(broker)
+                        if market_closed is not None:
+                            gap = self._evaluate_protection_gap(
+                                broker, snapshot, symbol,
+                                canceled_protections=canceled_here,
+                            )
+                            if gap is not None:
+                                raise _DeadlineGapOutcome(gap)
+                            raise BrokerAuthorityError(
+                                f"Deadline close blocked after broker DELETE: {market_closed}"
+                            )
                     current = snapshot.position(symbol)
                     # A protective child may fill during cancellation. Recompute lots.
                     self._reconcile_snapshot(broker, snapshot)
@@ -916,12 +945,14 @@ class ExecutionService:
         except BrokerAuthorityError as exc:
             return {
                 "success": False, "paused": True, "fail_closed": True,
-                "broker_attempted": False, "broker_calls": 0, "error": str(exc),
+                "broker_attempted": bool(getattr(exc, "broker_calls", 0)),
+                "broker_calls": getattr(exc, "broker_calls", 0), "error": str(exc),
             }
         except Exception as exc:
             return {
                 "success": False, "paused": True, "fail_closed": True,
-                "broker_attempted": False, "broker_calls": 0,
+                "broker_attempted": bool(getattr(exc, "broker_calls", 0)),
+                "broker_calls": getattr(exc, "broker_calls", 0),
                 "error": f"broker authority unavailable: {exc}",
             }
 
@@ -1431,7 +1462,8 @@ class ExecutionService:
         except Exception as exc:
             return {
                 "success": False, "paused": True, "fail_closed": True,
-                "broker_attempted": False, "broker_calls": 0,
+                "broker_attempted": bool(getattr(exc, "broker_calls", 0)),
+                "broker_calls": getattr(exc, "broker_calls", 0),
                 "error": f"broker authority unavailable: {exc}",
             }
 

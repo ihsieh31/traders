@@ -68,7 +68,7 @@ class NasdaqMarketCapTests(unittest.TestCase):
             self.assertEqual(tomorrow["AAA"], 400_000_000.0)
             self.assertEqual(download.call_count, 2)
 
-    def test_failed_download_is_not_retried_and_returns_no_caps(self):
+    def test_failed_download_returns_no_caps_and_allows_later_retry(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(
                 universe_module,
@@ -79,8 +79,19 @@ class NasdaqMarketCapTests(unittest.TestCase):
                 second = fetch_nasdaq_market_caps(cache_dir=Path(tmp), today=_TODAY)
             self.assertEqual(first, {})
             self.assertEqual(second, {})
-            download.assert_called_once_with()
-            self.assertTrue((Path(tmp) / f"nasdaq_{_TODAY.isoformat()}.attempted").is_file())
+            self.assertEqual(download.call_count, 2)
+            self.assertFalse((Path(tmp) / f"nasdaq_{_TODAY.isoformat()}.json").exists())
+
+    def test_transient_download_failure_recovers_within_same_scan(self):
+        rows = [{"symbol": "AAA", "marketCap": "300000000"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(
+                universe_module, "_download_nasdaq_stock_data",
+                side_effect=[ConnectionError("connection reset"), _nasdaq_payload(rows)],
+            ) as download, patch("time.sleep"):
+                caps = fetch_nasdaq_market_caps(cache_dir=Path(tmp), today=_TODAY)
+            self.assertEqual(caps, {"AAA": 300_000_000.0})
+            self.assertEqual(download.call_count, 2)
 
     def test_payload_rejects_incomplete_rows_and_invalid_caps(self):
         caps, count = universe_module._market_caps_from_nasdaq_payload(

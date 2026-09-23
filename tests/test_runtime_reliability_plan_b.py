@@ -84,7 +84,7 @@ class FakeBroker:
         self._positions = list(positions)
 
     def get_clock(self):
-        return SimpleNamespace(is_open=True)
+        return SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
 
     def get_account(self):
         return self._account
@@ -431,7 +431,7 @@ class R02ExecutionBoundaryTests(unittest.TestCase):
                 self.orders = []
 
             def get_clock(self):
-                return SimpleNamespace(is_open=True)
+                return SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
 
             def get_account(self):
                 return SimpleNamespace(
@@ -959,6 +959,23 @@ class R13OpeningMarketGateTests(unittest.TestCase):
                 str(r.get("error") or "") for r in result.get("results", [])
             )
             self.assertIn("clock unavailable", errors)
+
+    def test_r13_stale_clock_blocks_opening_post(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service, broker = self._service(
+                tmp, SimpleNamespace(is_open=True, timestamp=datetime(2020, 1, 1, tzinfo=timezone.utc)))
+            result = self._execute(service, tmp)
+            self.assertFalse(result["success"])
+            self.assertEqual(len(broker.submits), 0)
+            self.assertIn("stale", str(result).lower())
+
+    def test_r13_missing_clock_timestamp_blocks_opening_post(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service, broker = self._service(tmp, SimpleNamespace(is_open=True))
+            result = self._execute(service, tmp)
+            self.assertFalse(result["success"])
+            self.assertEqual(len(broker.submits), 0)
+            self.assertIn("missing broker clock timestamp", str(result).lower())
 
     def test_r13_verified_close_not_blocked_by_open_market_gate(self):
         """Risk-reducing closes never consult the opening market gate."""

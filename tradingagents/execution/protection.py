@@ -22,6 +22,12 @@ class StaleRecoveryPositionError(BrokerAuthorityError):
     stale_position_transition = True
 
 
+class ProtectionCancellationInterrupted(BrokerAuthorityError):
+    def __init__(self, message: str, broker_calls: int):
+        super().__init__(message)
+        self.broker_calls = broker_calls
+
+
 def _verify_owned_close_protections(
     self,
     broker,
@@ -49,6 +55,11 @@ def _verify_owned_close_protections(
         if (not local or local.get("broker_order_id") != order.broker_order_id
                 or not self._store.protective_parent(local["order_id"]) or order.side != side):
             raise BrokerAuthorityError("Exit conflicts with an order not proven to be its protection")
+    market_closed = self._market_clock_closed(broker)
+    if market_closed is not None:
+        raise BrokerAuthorityError(
+            f"Protection cancellation blocked: {market_closed}"
+        )
 
 
 def _broker_order_live(
@@ -115,6 +126,14 @@ def _cancel_protection_with_race_check(
         and _guard.kill_switch_active() is True
     ):
         return fresh, 0
+    # An equity DAY market close submitted after hours queues for the next
+    # session. Keep the existing stop live unless the broker proves this
+    # session is open immediately before the protection DELETE.
+    market_closed = self._market_clock_closed(broker)
+    if market_closed is not None:
+        raise BrokerAuthorityError(
+            f"Protection cancellation blocked: {market_closed}"
+        )
     try:
         broker.cancel_order_by_id(order.broker_order_id)
     except Exception:
@@ -177,11 +196,29 @@ def _cancel_owned_close_protections(
     if verdict is not None and not verdict.allowed:
         raise BrokerAuthorityError("Protection cancellation blocked by safety policy")
     canceled_calls = 0
-    for order in orders:
-        snapshot, calls = self._cancel_protection_with_race_check(
-            broker, snapshot, order, account_id=snapshot.account_id,
-        )
-        canceled_calls += calls
+    try:
+        for order in orders:
+            snapshot, calls = self._cancel_protection_with_race_check(
+                broker, snapshot, order, account_id=snapshot.account_id,
+            )
+            canceled_calls += calls
+    except Exception as exc:
+        if canceled_calls:
+            self._evaluate_protection_gap(
+                broker, snapshot, symbol, canceled_protections=canceled_calls,
+            )
+            raise ProtectionCancellationInterrupted(str(exc), canceled_calls) from exc
+        raise
+    if canceled_calls:
+        market_closed = self._market_clock_closed(broker)
+        if market_closed is not None:
+            self._evaluate_protection_gap(
+                broker, snapshot, symbol, canceled_protections=canceled_calls,
+            )
+            raise ProtectionCancellationInterrupted(
+                f"Protection cancellation blocked after broker DELETE: {market_closed}",
+                canceled_calls,
+            )
     return snapshot, canceled_calls
 
 

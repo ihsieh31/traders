@@ -213,7 +213,7 @@ class AccountRiskSnapshotTests(unittest.TestCase):
 
         class FakeClient:
             def get_clock(self):
-                return SimpleNamespace(is_open=True)
+                return SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
 
             def get_account(self):
                 return FakeAccount()
@@ -233,7 +233,7 @@ class AccountRiskSnapshotTests(unittest.TestCase):
     def test_snapshot_failure_raises(self):
         class BrokenClient:
             def get_clock(self):
-                return SimpleNamespace(is_open=True)
+                return SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
 
             def get_account(self):
                 raise RuntimeError("alpaca down")
@@ -304,7 +304,7 @@ class ExecuteTradeIntentRiskSizingTests(unittest.TestCase):
         close_order.qty = 5
         close_order.status = "accepted"
         broker.close_position.return_value = close_order
-        broker.get_clock.return_value = SimpleNamespace(is_open=True)
+        broker.get_clock.return_value = SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
         broker.get_account.return_value = SimpleNamespace(
             id="paper-risk", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )
@@ -564,7 +564,7 @@ class CalcQtyPriceFailureTests(unittest.TestCase):
         order.notional = None
         order.status = "accepted"
         broker.submit_order.return_value = order
-        broker.get_clock.return_value = SimpleNamespace(is_open=True)
+        broker.get_clock.return_value = SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
         broker.get_account.return_value = SimpleNamespace(
             id="paper-price", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )

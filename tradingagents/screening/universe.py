@@ -216,17 +216,13 @@ def _write_market_cap_cache(path: Path, payload: dict) -> None:
 def fetch_nasdaq_market_caps(
     *, cache_dir: Optional[Path] = None, today: Optional[date] = None
 ) -> dict[str, float]:
-    """Return Nasdaq market caps, downloading at most once per local day.
+    """Return daily-cached Nasdaq market caps with bounded transient retries.
 
-    Successful responses are atomically cached by date. An attempt marker is
-    written before network access, so a failed request is not retried that day.
-    Missing data returns an empty mapping and is handled by the existing
-    fail-closed market-cap gate.
+    Missing data returns an empty mapping for the fail-closed market-cap gate.
     """
     today = today or date.today()
     cache_dir = Path(cache_dir) if cache_dir is not None else _market_cap_cache_dir()
     cache_path = cache_dir / f"nasdaq_{today.isoformat()}.json"
-    attempt_path = cache_dir / f"nasdaq_{today.isoformat()}.attempted"
     lock_path = cache_dir / ".nasdaq_market_cap.lock"
 
     try:
@@ -236,14 +232,8 @@ def fetch_nasdaq_market_caps(
             cached = _read_market_cap_cache(cache_path, today=today)
             if cached is not None:
                 return cached
-            if attempt_path.exists():
-                return {}
-            # Persist before network access: even a failed request counts as
-            # today's single download attempt.
-            with attempt_path.open("x", encoding="utf-8") as marker:
-                marker.write(today.isoformat())
             try:
-                payload = _download_nasdaq_stock_data()
+                payload = fetch_with_bounded_retry(_download_nasdaq_stock_data)
                 market_caps, total_records = _market_caps_from_nasdaq_payload(payload)
             except Exception as exc:
                 _LOG.warning("Nasdaq market-cap download unavailable: %s", exc)

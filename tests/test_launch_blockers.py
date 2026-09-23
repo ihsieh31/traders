@@ -79,7 +79,7 @@ def _mock_broker(status="accepted"):
         return order
 
     broker.submit_order.side_effect = submit
-    broker.get_clock.return_value = SimpleNamespace(is_open=True)
+    broker.get_clock.return_value = SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
     close_order = MagicMock()
     close_order.id = "close-1"
     close_order.symbol = "AAPL"

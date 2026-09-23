@@ -158,7 +158,7 @@ def _state_broker(*, positions=None, orders=None, equity=100000.0,
             cash=str(cash), buying_power=str(equity * 2),
         ),
         # R13: the opening gate proves the session from the broker clock.
-        get_clock=lambda: SimpleNamespace(is_open=True),
+        get_clock=lambda: SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc)),
         get_all_positions=lambda: list(state["positions"]),
         get_orders=get_orders,
         get_order_by_client_order_id=get_order_by_client_order_id,
@@ -913,6 +913,9 @@ class F04ProtectionGapTests(_GuardIsolated, unittest.TestCase):
                 id="paper-1", equity="100000", last_equity="100000",
                 cash="80000", buying_power="160000",
             ),
+            get_clock=lambda: SimpleNamespace(
+                is_open=True, timestamp=datetime.now(timezone.utc)
+            ),
             get_all_positions=lambda: list(state["positions"]),
             get_orders=lambda request=None: list(state["orders"]),
             get_order_by_client_order_id=lambda cid: next(
@@ -1135,6 +1138,9 @@ class F04ShortCloseRegressionTests(_GuardIsolated, unittest.TestCase):
             get_account=lambda: SimpleNamespace(
                 id="paper-1", equity="100000", last_equity="100000",
                 cash="80000", buying_power="160000",
+            ),
+            get_clock=lambda: SimpleNamespace(
+                is_open=True, timestamp=datetime.now(timezone.utc)
             ),
             get_all_positions=lambda: list(state["positions"]),
             get_orders=lambda request=None: list(state["orders"]),

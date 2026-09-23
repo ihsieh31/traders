@@ -643,7 +643,7 @@ class _FakeBrokerForBudget:
     def get_clock(self):
         # R13: the opening gate proves the regular session from the broker's
         # own clock before any exposure-adding POST; the fixture keeps it open.
-        return SimpleNamespace(is_open=True)
+        return SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
 
     def get_account(self):
         return SimpleNamespace(

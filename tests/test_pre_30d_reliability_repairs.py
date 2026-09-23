@@ -79,7 +79,7 @@ class FakeBroker:
         self._positions = list(positions)
 
     def get_clock(self):
-        return SimpleNamespace(is_open=True)
+        return SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
 
     def get_account(self):
         return self._account

@@ -189,7 +189,7 @@ def test_N03_stop_or_window_during_final_get_blocks_the_post(isolated, monkeypat
             clock_time[0] = stamp + timedelta(minutes=2)
         else:
             lr._stop_requested = True
-        return NS(is_open=True)
+        return NS(is_open=True, timestamp=datetime.now(timezone.utc))
 
     e.broker.get_clock = final_clock
     ends_at = stamp + timedelta(minutes=1)
@@ -243,7 +243,7 @@ def test_N04_kill_switch_during_final_clock_get_blocks_the_post(isolated):
 
     def clock_then_halt():
         e.guard.kill_switch_path.write_text("halt while final GET is running")
-        return NS(is_open=True)
+        return NS(is_open=True, timestamp=datetime.now(timezone.utc))
 
     e.broker.get_clock = clock_then_halt
     result = e.service.execute(trade_intent=opening(), dollar_amount=1000)

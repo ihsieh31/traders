@@ -536,14 +536,10 @@ def _signal_text(signal: Any) -> str:
 
 
 def _jsonable_intent(value: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    dump = getattr(value, "model_dump", None)
-    if callable(dump):
-        value = dump(mode="json")
-    if not isinstance(value, Mapping):
-        return None
-    return json.loads(json.dumps(dict(value), default=str))
+    from tradingagents.execution.order_planning import validate_trade_intent
+
+    validated, _ = validate_trade_intent(value)
+    return validated
 
 
 def _run_one(
@@ -616,17 +612,20 @@ def _run_one(
                 "error_type": "InvalidRiskDecision",
                 "error": f"invalid risk decision: {reason}",
             }
+        intent = _jsonable_intent(
+            state.get("final_trade_intent") if isinstance(state, Mapping) else None
+        )
         return {
-            "status": "completed",
+            "status": "completed" if intent is not None else "failed_terminal",
             "analysis_backend": backend,
             "signal": _signal_text(signal),
             "elapsed_seconds": round(time.monotonic() - started, 4),
             "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
             "final_state_keys": sorted(state) if isinstance(state, Mapping) else [],
-            "trade_intent": _jsonable_intent(
-                state.get("final_trade_intent") if isinstance(state, Mapping) else None
-            ),
-            "decision_valid": True,
+            "trade_intent": intent,
+            "decision_valid": intent is not None,
+            **({"error_type": "InvalidTradeIntent", "error": "missing or invalid final_trade_intent"}
+               if intent is None else {}),
         }
     except Exception as exc:  # Pair state preserves partial evidence.
         retryable = bool(getattr(exc, "retryable", False)) or type(exc).__name__ in {
@@ -976,7 +975,8 @@ def _recover_completed_analysis(
         if not isinstance(final_state, Mapping):
             continue
         risk_invalid_reason = final_state.get("risk_invalid_reason")
-        invalid = bool(risk_invalid_reason)
+        intent = _jsonable_intent(final_state.get("final_trade_intent"))
+        invalid = bool(risk_invalid_reason) or intent is None
         result = {
             "status": "failed_terminal" if invalid else "completed",
             "analysis_backend": backend,
@@ -984,17 +984,20 @@ def _recover_completed_analysis(
             "elapsed_seconds": 0.0,
             "run_log": str(path),
             "final_state_keys": sorted(final_state),
-            "trade_intent": (
-                None if invalid else _jsonable_intent(final_state.get("final_trade_intent"))
-            ),
+            "trade_intent": None if invalid else intent,
             "recovered_from_completed_run_log": True,
             "decision_valid": not invalid,
         }
-        if invalid:
+        if risk_invalid_reason:
             result.update({
                 "risk_invalid_reason": str(risk_invalid_reason),
                 "error_type": "InvalidRiskDecision",
                 "error": f"invalid risk decision: {risk_invalid_reason}",
+            })
+        elif invalid:
+            result.update({
+                "error_type": "InvalidTradeIntent",
+                "error": "missing or invalid final_trade_intent",
             })
         return result
     return None

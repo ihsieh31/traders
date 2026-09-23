@@ -8,9 +8,11 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.agents.schemas import RiskDecision, build_trade_intent_from_risk_decision
 from scripts.run_analysis_ab import (
     FORMAL_ANALYSTS,
     _paper_account_preflight,
+    _recover_completed_analysis,
     _ensure_campaign_manifest,
     assert_ab_invariants,
     build_ab_configs,
@@ -32,9 +34,18 @@ class FakeGraph:
 
     def propagate(self, symbol, trade_date):
         backend = self.config["analysis_backend"]
+        signal = "BUY" if backend == "traders" else "HOLD"
+        intent = build_trade_intent_from_risk_decision(
+            symbol=symbol, trading_mode="investment", current_position="NEUTRAL",
+            decision=RiskDecision(
+                action=signal, confidence="high", risk_rationale="fixture",
+                required_controls="fixture",
+            ), trade_date=trade_date,
+        ).model_dump(mode="json")
         return (
-            {"company_of_interest": symbol, "trade_date": trade_date, "report_context": {}},
-            "BUY" if backend == "traders" else "HOLD",
+            {"company_of_interest": symbol, "trade_date": trade_date,
+             "report_context": {}, "final_trade_intent": intent},
+            signal,
         )
 
 
@@ -59,6 +70,42 @@ def fake_evidence(path, *, symbol, trade_date, **_kwargs):
 class AnalysisABRunnerTests(unittest.TestCase):
     def setUp(self):
         FakeGraph.configs.clear()
+
+    def test_missing_trade_intent_fails_arm(self):
+        class MissingIntentGraph(FakeGraph):
+            def propagate(self, symbol, trade_date):
+                return {"company_of_interest": symbol}, "HOLD"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("scripts.run_analysis_ab.build_or_load_evidence_packet", side_effect=fake_evidence):
+                summary = run_analysis_ab(
+                    symbol="AAPL", trade_date="2026-09-21", base_config=DEFAULT_CONFIG,
+                    results_root=Path(tmp) / "ab", selected_analysts=FORMAL_ANALYSTS,
+                    graph_cls=MissingIntentGraph,
+                )
+        self.assertEqual(summary["status"], "FAILED_TERMINAL")
+        failed = next(arm for arm in summary["arms"].values() if arm["status"] == "failed_terminal")
+        self.assertFalse(failed["result"]["decision_valid"])
+        self.assertEqual(failed["result"]["error_type"], "InvalidTradeIntent")
+
+    def test_recovered_log_without_trade_intent_is_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {"results_dir": tmp}
+            runs = Path(tmp) / "AAPL" / "TradingAgentsStrategy_logs" / "runs"
+            runs.mkdir(parents=True)
+            (runs / "one.json").write_text(json.dumps({
+                "status": "completed", "trade_date": "2026-09-21",
+                "metadata": {"analysis_backend": "traders", "analysis_source": "ab_traders",
+                             "evidence_packet_sha256": "a" * 64},
+                "summary": {"final_signal": "HOLD"},
+                "snapshots": {"final_state": {"final_trade_intent": None}},
+            }), encoding="utf-8")
+            result = _recover_completed_analysis(
+                config, backend="traders", symbol="AAPL", trade_date="2026-09-21",
+                evidence_sha256="a" * 64,
+            )
+        self.assertEqual(result["status"], "failed_terminal")
+        self.assertFalse(result["decision_valid"])
 
     def test_configs_share_experiment_inputs_and_isolate_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -318,13 +365,7 @@ class AnalysisABRunnerTests(unittest.TestCase):
     def test_paper_mode_routes_both_arms_through_isolated_accounts(self):
         class PaperGraph(FakeGraph):
             def propagate(self, symbol, trade_date):
-                state, signal = super().propagate(symbol, trade_date)
-                state["final_trade_intent"] = {
-                    "symbol": symbol,
-                    "action": signal,
-                    "target_position": "LONG" if signal == "BUY" else "FLAT",
-                }
-                return state, signal
+                return super().propagate(symbol, trade_date)
 
         executed = []
 

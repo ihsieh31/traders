@@ -352,7 +352,7 @@ class BrokerLastEquityTests(unittest.TestCase):
                 cash="50000", buying_power="200000",
             ),
             # R13: the opening gate proves the session from the broker clock.
-            get_clock=lambda: SimpleNamespace(is_open=True),
+            get_clock=lambda: SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc)),
             get_all_positions=lambda: list(positions),
             get_orders=lambda request=None: list(orders),
         )
@@ -420,7 +420,7 @@ class BrokerLastEquityTests(unittest.TestCase):
                 cash="50000", buying_power="200000",
             ),
             # R13: the opening gate proves the session from the broker clock.
-            get_clock=lambda: SimpleNamespace(is_open=True),
+            get_clock=lambda: SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc)),
             get_all_positions=lambda: [],
             get_orders=lambda request=None: [],
             submit_order=lambda request: SimpleNamespace(

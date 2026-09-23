@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 from pathlib import Path
-from tradingagents.execution.authority import BrokerSnapshot
+from tradingagents.execution.authority import (
+    BrokerAuthorityError, BrokerSnapshot, SNAPSHOT_TTL_SECONDS, validate_freshness,
+)
 from tradingagents.app_identity import get_env
 
 
@@ -35,6 +37,17 @@ def _market_clock_closed(self, broker: Any) -> Optional[str]:
         is_open = clock.get("is_open")
     if is_open is not True:
         return "market/session is closed per the broker clock; no new entry may be posted"
+    stamp = getattr(clock, "timestamp", None)
+    if stamp is None and isinstance(clock, dict):
+        stamp = clock.get("timestamp")
+    try:
+        validate_freshness(
+            stamp,
+            ttl_seconds=float(get_env("SNAPSHOT_TTL_SECONDS", SNAPSHOT_TTL_SECONDS)),
+            label="broker clock",
+        )
+    except (BrokerAuthorityError, TypeError, ValueError) as exc:
+        return f"broker market clock unavailable ({exc}); refusing to open exposure"
     return None
 
 

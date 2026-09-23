@@ -70,7 +70,7 @@ def _mock_broker(order_id="broker-1", status="accepted"):
     broker.submit_order.side_effect = submit
     # R13: opening orders must prove the session open from the broker clock
     # before any exposure-adding POST; the fixture keeps it open.
-    broker.get_clock.return_value = SimpleNamespace(is_open=True)
+    broker.get_clock.return_value = SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
     close_order = MagicMock()
     close_order.id = "close-1"
     close_order.symbol = "AAPL"

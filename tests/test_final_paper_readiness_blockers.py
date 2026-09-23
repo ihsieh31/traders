@@ -74,11 +74,10 @@ class ClockBroker:
 
     def get_clock(self):
         self.clock_calls += 1
+        import tradingagents.execution.authority as authority
         if self.clock_delay is not None:
-            import tradingagents.execution.authority as authority
-
             authority.utc_now = lambda: now() + self.clock_delay
-        return NS(is_open=self.is_open)
+        return NS(is_open=self.is_open, timestamp=authority.utc_now())
 
     def get_all_positions(self):
         return [NS(symbol="AAPL", qty=self.qty, market_value=self.qty * 100)] if self.qty else []
@@ -307,7 +306,7 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
                 self.orders = []
 
             def get_clock(self):
-                return NS(is_open=True)
+                return NS(is_open=True, timestamp=datetime.now(timezone.utc))
 
             def get_account(self):
                 return NS(id="paper-r02", equity="100000", last_equity="100000",
@@ -397,7 +396,7 @@ class R02NoPostStateSemanticsTests(unittest.TestCase):
                 self.qty = 0
 
             def get_clock(self):
-                return NS(is_open=True)
+                return NS(is_open=True, timestamp=datetime.now(timezone.utc))
 
             def get_account(self):
                 return NS(id="paper-r02", equity=100000, last_equity=100000,

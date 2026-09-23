@@ -354,7 +354,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 cash=str(cash), buying_power=str(equity * 2)
             ),
             # R13: the opening gate proves the session from the broker clock.
-            get_clock=lambda: SimpleNamespace(is_open=True),
+            get_clock=lambda: SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc)),
             get_all_positions=get_all_positions,
             get_orders=get_orders,
             get_order_by_client_order_id=get_order_by_client_order_id,

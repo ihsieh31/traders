@@ -67,7 +67,7 @@ class Broker:
     def get_clock(self):
         # R13: the opening gate proves the regular session from the broker's
         # own clock before any exposure-adding POST; the fixture keeps it open.
-        return NS(is_open=True)
+        return NS(is_open=True, timestamp=now())
 
     def get_all_positions(self):
         return [NS(symbol="AAPL", qty=self.qty, market_value=self.qty * 100)] if self.qty else []
@@ -506,7 +506,9 @@ def test_r05_stale_snapshot_at_dispatch_zero_broker_posts(env, monkeypatch):
     data = opening(stamp=stamp)
     # Snapshot TTL stays 30s while the quote tolerates an hour: +40s
     # isolates the snapshot staleness.
-    _freeze_time_after_commit(monkeypatch, service, stamp + timedelta(seconds=40))
+    future = stamp + timedelta(seconds=40)
+    _freeze_time_after_commit(monkeypatch, service, future)
+    broker.get_clock = lambda: NS(is_open=True, timestamp=future)
     result = service.execute(trade_intent=data, dollar_amount=1000)
     assert len(broker.submits) == 0
     first = result["results"][0]
