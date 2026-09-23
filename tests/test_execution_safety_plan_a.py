@@ -128,6 +128,13 @@ class Broker:
             leg.status = "canceled"
 
 
+def enable_broker_shorting_for_test(broker):
+    """Make an intended-short fake account explicitly expose the Alpaca flag."""
+    account = broker.get_account()
+    account.shorting_enabled = True
+    broker.get_account = lambda: account
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     from tradingagents.dataflows import config as cfg
@@ -448,6 +455,7 @@ def test_r04_protected_long_reversal_submits_close_only(env):
 
 def test_r04_protected_short_reversal_submits_close_only(env):
     service, broker = env
+    enable_broker_shorting_for_test(broker)
     assert service.execute(
         trade_intent=opening("SHORT", "NEUTRAL"), dollar_amount=1000, allow_shorts=True
     )["success"]

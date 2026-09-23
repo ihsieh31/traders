@@ -166,6 +166,9 @@ class BrokerSnapshot:
     orders: tuple[BrokerOrder, ...]
     fills: tuple[BrokerFill, ...]
     gross_exposure: float
+    # Raw Alpaca account permission for opening short exposure. Missing or
+    # malformed broker values remain None so the final short gate fails closed.
+    shorting_enabled: Optional[bool] = None
 
     def position(self, symbol: str) -> Optional[BrokerPosition]:
         key = _symbol(symbol)
@@ -327,6 +330,10 @@ def capture_broker_snapshot(
     buying_power = _number(
         _value(account, "buying_power"), field="account buying power", minimum=0
     )
+    raw_shorting_enabled = _value(account, "shorting_enabled")
+    shorting_enabled = (
+        raw_shorting_enabled if isinstance(raw_shorting_enabled, bool) else None
+    )
 
     raw_positions = get_with_retry(broker.get_all_positions, sleep=sleep)
     if raw_positions is None:
@@ -436,6 +443,11 @@ def capture_broker_snapshot(
             "last_equity": last_equity,
             "cash": cash,
             "buying_power": buying_power,
+            **(
+                {"shorting_enabled": shorting_enabled}
+                if shorting_enabled is not None
+                else {}
+            ),
             "positions": [(p.symbol, p.qty, p.market_value) for p in positions],
             "orders": [
                 (o.broker_order_id, o.client_order_id, o.status, o.filled_qty, o.order_type)
@@ -458,6 +470,7 @@ def capture_broker_snapshot(
         orders=tuple(orders),
         fills=tuple(fills),
         gross_exposure=sum(abs(p.market_value) for p in positions),
+        shorting_enabled=shorting_enabled,
     )
     validate_freshness(
         snapshot.observed_at,

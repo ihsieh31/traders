@@ -100,7 +100,8 @@ class BracketExecutionTests(unittest.TestCase):
             tradable=True, shortable=True, borrow_status="easy_to_borrow",
         )
         self.client.get_account.return_value = SimpleNamespace(
-            id="paper-bracket", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
+            id="paper-bracket", equity="100000", last_equity="100000", cash="100000",
+            buying_power="200000", shorting_enabled=True,
         )
         self.client.get_all_positions.return_value = []
         self.client.get_orders.return_value = []

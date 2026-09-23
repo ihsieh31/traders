@@ -55,7 +55,12 @@ def _market_clock_closed(self, broker: Any) -> Optional[str]:
 def _short_opening_rejection(
     broker: Any, symbol: str, snapshot: BrokerSnapshot
 ) -> Optional[str]:
-    """Fail closed unless the current Alpaca asset snapshot proves ETB."""
+    """Fail closed unless account and Alpaca asset facts authorize a short."""
+    if snapshot.shorting_enabled is not True:
+        return (
+            "short opening rejected: broker account shorting_enabled is false "
+            "or unavailable"
+        )
     get_asset = getattr(broker, "get_asset", None)
     if not callable(get_asset):
         return "short opening rejected: broker asset lookup is unavailable"

@@ -5,7 +5,9 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from test_execution_safety_plan_a import env, opening, now
+from test_execution_safety_plan_a import (
+    enable_broker_shorting_for_test, env, opening, now,
+)
 from test_full_review_phase1_regressions import _buy_intent
 from tradingagents.execution.authority import capture_broker_snapshot
 from tradingagents.execution.store import canonical_decision_id, client_order_id_for
@@ -29,6 +31,8 @@ def protected(env):
 
 def enter(protected, short=False):
     service, broker = protected
+    if short:
+        enable_broker_shorting_for_test(broker)
     result = service.execute(trade_intent=opening("SHORT" if short else "BUY"),
                              dollar_amount=1000, allow_shorts=short)
     assert result["success"], result

@@ -31,7 +31,7 @@ import pandas as pd
 from tradingagents.dataflows.market_calendar import session_dates_ending_at_auth
 from tradingagents.screening.sessions import most_recent_completed_session_production
 
-FORMULA_VERSION = "phase-c-top40-2"
+FORMULA_VERSION = "phase-c-top40-3"
 # Authoritative consolidated feed for Phase C US-equity screening liquidity.
 # Hardcoded SIP: the $20M ADV20 threshold is defined on consolidated volume.
 SCREENING_DATA_FEED = "sip"
@@ -450,7 +450,13 @@ def select_research_candidates(
             selected.extend(negative_lane[negative_target:])
         elif len(negative) < negative_target:
             selected.extend(positive_lane[positive_target:])
-    return selected[:top_k]
+    # Keep the lane quotas and shortage fill above, then remove the lane
+    # grouping order before candidates reach Screening. ``score`` is already
+    # the directional research score for each selected candidate.
+    return sorted(
+        selected[:top_k],
+        key=lambda f: (-float(f.score or 0.0), f.symbol),
+    )
 
 
 def scan_universe(

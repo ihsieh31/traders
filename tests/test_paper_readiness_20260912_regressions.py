@@ -79,6 +79,12 @@ def seed_pending(env, payload, *, quantity=10, decision_id="pending", side=None,
     return rows[0]
 
 
+def set_account_shorting_enabled(env, value):
+    account = env.broker.get_account()
+    account.shorting_enabled = value
+    env.broker.get_account = lambda: account
+
+
 def close_intent(*, current="LONG"):
     return build_trade_intent_from_risk_decision(
         symbol="AAPL", trading_mode="investment", current_position=current, allow_shorts=False,
@@ -107,6 +113,7 @@ def test_N01_recovery_blocks_short_opening_under_current_opt_out(isolated):
 def test_N01_recovery_submits_short_opening_under_current_opt_in(isolated):
     e = isolated
     e.config["allow_shorts"] = True  # the CURRENT policy, read live by recovery
+    set_account_shorting_enabled(e, True)
     seed_pending(e, opening("SHORT"))
     result = e.service.startup_recover()
     assert len(e.broker.submits) == 1, result
@@ -119,6 +126,7 @@ def test_N01_recovery_submits_short_opening_under_current_opt_in(isolated):
 def test_N01_recovery_blocks_pending_short_without_etb(isolated, borrow_status):
     e = isolated
     e.config["allow_shorts"] = True
+    set_account_shorting_enabled(e, True)
     e.broker.asset.borrow_status = borrow_status
     row = seed_pending(e, opening("SHORT"))
 
@@ -172,6 +180,7 @@ def test_N02_same_direction_buy_onto_fresh_long_is_not_blocked_by_crossing(isola
 def test_N02_same_direction_sell_onto_fresh_short_is_not_blocked_by_crossing(isolated):
     e = isolated
     e.config["allow_shorts"] = True  # current policy permits the increase
+    set_account_shorting_enabled(e, True)
     seed_pending(e, opening("SHORT"))
     e.broker.qty = -2
     result = e.service.startup_recover()
@@ -958,6 +967,7 @@ def test_N15_adoption_only_recovery_counts_zero_mutations(isolated):
 def test_pending_short_with_existing_broker_order_is_adopted_without_borrow_gate(isolated):
     e = isolated
     e.config["allow_shorts"] = True
+    set_account_shorting_enabled(e, False)
     row = seed_pending(e, opening("SHORT"))
     e.broker.qty = -10
     children = [

@@ -5,13 +5,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.test_execution_safety_plan_a import env, opening
+from tests.test_execution_safety_plan_a import (
+    enable_broker_shorting_for_test, env, opening,
+)
 
 
 @pytest.mark.parametrize("action", ["BUY", "SHORT"])
 @pytest.mark.parametrize("stop_status", ["canceled", "rejected", "expired"])
 def test_take_profit_alone_does_not_cover_position(env, action, stop_status):
     service, broker = env
+    if action == "SHORT":
+        enable_broker_shorting_for_test(broker)
     assert service.execute(
         trade_intent=opening(action), dollar_amount=1000, allow_shorts=True
     )["success"]

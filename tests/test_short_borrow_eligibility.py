@@ -10,8 +10,51 @@ from test_execution_safety_plan_a import env, opening
 from tradingagents.dataflows.alpaca_utils import ExecutionTradingClient
 
 
+_MISSING = object()
+
+
+def _account_shorting_enabled(broker, value=_MISSING):
+    account = broker.get_account()
+    if value is _MISSING:
+        if hasattr(account, "shorting_enabled"):
+            del account.shorting_enabled
+    else:
+        account.shorting_enabled = value
+    broker.get_account = lambda: account
+    broker._shorting_enabled_overridden_for_test = True
+
+
+def _seed_pending_short(service):
+    import json
+    from tradingagents.execution.store import client_order_id_for
+
+    payload = opening("SHORT")
+    decision_id = "shorting-enabled-recovery"
+    service.store.ensure_account_binding("audit-fixture")
+    _, rows, _ = service.store.create_outbox(
+        decision_id=decision_id,
+        run_id=None,
+        symbol="AAPL",
+        action=payload["action"],
+        target_position=payload["target_position"],
+        payload_json=json.dumps(payload),
+        orders=[{
+            "client_order_id": client_order_id_for(
+                decision_id, "AAPL", "sell", role="open", seq=0
+            ),
+            "symbol": "AAPL",
+            "side": "sell",
+            "quantity": 10,
+            "notional": None,
+        }],
+    )
+    return rows[0]
+
+
 def _short_result(env, *, equity=100000, notional=1000, allow_shorts=True):
     env[1].account_equity = equity
+    if not getattr(env[1], "_shorting_enabled_overridden_for_test", False):
+        _account_shorting_enabled(env[1], True)
     return env[0].execute(
         trade_intent=opening("SHORT"), dollar_amount=notional,
         allow_shorts=allow_shorts,
@@ -28,6 +71,36 @@ def test_etb_shortable_us_equity_reaches_the_opening_post(env):
     assert result["success"], result
     assert len(env[1].submits) == 1
     assert env[1].asset_calls == ["AAPL"]
+
+
+def test_account_shorting_enabled_true_is_captured_and_allows_etb_short(env):
+    from tradingagents.execution.authority import capture_broker_snapshot
+
+    _account_shorting_enabled(env[1], True)
+    snapshot = capture_broker_snapshot(env[1])
+    assert snapshot.shorting_enabled is True
+    result = _short_result(env)
+    assert result["success"], result
+    assert len(env[1].submits) == 1
+
+
+def test_account_shorting_enabled_false_blocks_short_before_post(env):
+    _account_shorting_enabled(env[1], False)
+
+    result = _short_result(env)
+
+    assert len(env[1].submits) == 0
+    assert "shorting_enabled" in _rejection_text(result)
+
+
+@pytest.mark.parametrize("value", [_MISSING, None, "true"])
+def test_missing_none_or_unparseable_account_shorting_flag_blocks(env, value):
+    _account_shorting_enabled(env[1], value)
+
+    result = _short_result(env)
+
+    assert len(env[1].submits) == 0
+    assert "shorting_enabled" in _rejection_text(result)
 
 
 def test_asset_lookup_precedes_the_final_freshness_proof(env, monkeypatch):
@@ -217,6 +290,7 @@ def test_execution_client_factory_preserves_account_and_read_only_settings(monke
 
 
 def test_long_open_does_not_request_borrow_status(env):
+    _account_shorting_enabled(env[1], False)
     result = env[0].execute(trade_intent=opening("BUY"), dollar_amount=1000)
 
     assert result["success"], result
@@ -225,6 +299,7 @@ def test_long_open_does_not_request_borrow_status(env):
 
 
 def test_buy_cover_for_existing_short_does_not_request_borrow_status(env):
+    _account_shorting_enabled(env[1], False)
     env[1].qty = -5
 
     result = env[0].execute(
@@ -238,6 +313,7 @@ def test_buy_cover_for_existing_short_does_not_request_borrow_status(env):
 
 
 def test_reducing_sell_does_not_request_borrow_status(env):
+    _account_shorting_enabled(env[1], False)
     from tradingagents.agents.schemas import RiskDecision, build_trade_intent_from_risk_decision
 
     env[1].qty = 5
@@ -258,6 +334,58 @@ def test_reducing_sell_does_not_request_borrow_status(env):
     assert result["success"], result
     assert env[1].submits
     assert env[1].asset_calls == []
+
+
+def test_recovery_short_resubmit_uses_account_shorting_gate(env):
+    from tradingagents.dataflows import config as cfg
+
+    cfg._config["allow_shorts"] = True
+    _account_shorting_enabled(env[1], False)
+    row = _seed_pending_short(env[0])
+
+    result = env[0].startup_recover()
+
+    assert len(env[1].submits) == 0, result
+    assert "shorting_enabled" in str(result)
+    assert env[0].store.get_order(row["order_id"])["status"] == "CANCELED"
+
+
+def test_existing_recovery_short_order_is_adopted_without_gate_or_post(env):
+    from tradingagents.dataflows import config as cfg
+
+    cfg._config["allow_shorts"] = True
+    _account_shorting_enabled(env[1], False)
+    row = _seed_pending_short(env[0])
+    env[1].qty = -10
+    children = [
+        NS(id="short-child-stop", client_order_id="broker-short-stop", symbol="AAPL",
+           side="buy", type="stop", qty=10, filled_qty=0, filled_avg_price=None,
+           status="new", updated_at=env[1].get_clock().timestamp, legs=[], notional=None),
+        NS(id="short-child-target", client_order_id="broker-short-target", symbol="AAPL",
+           side="buy", type="limit", qty=10, filled_qty=0, filled_avg_price=None,
+           status="new", updated_at=env[1].get_clock().timestamp, legs=[], notional=None),
+    ]
+    parent = NS(id="broker-short-1", client_order_id=row["client_order_id"],
+                symbol="AAPL", side="sell", qty=10, filled_qty=10,
+                filled_avg_price=100, status="filled",
+                updated_at=env[1].get_clock().timestamp, legs=list(children), notional=None)
+    env[1].orders.extend([parent, *children])
+    original_get_orders = env[1].get_orders
+    calls = {"n": 0}
+
+    def hide_parent_once(request):
+        calls["n"] += 1
+        orders = original_get_orders(request)
+        return [] if calls["n"] == 4 else orders
+
+    env[1].get_orders = hide_parent_once
+
+    result = env[0].startup_recover()
+
+    assert result["success"] is True, result
+    assert len(env[1].submits) == 0
+    assert env[1].asset_calls == []
+    assert env[0].store.get_order(row["order_id"])["status"] == "FILLED"
 
 
 def test_allow_shorts_false_blocks_before_asset_lookup(env):

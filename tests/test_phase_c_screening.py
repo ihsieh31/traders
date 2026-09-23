@@ -804,6 +804,12 @@ class TwoSidedResearchCandidateTests(unittest.TestCase):
         self.assertEqual(sum(f.candidate_lane == "negative_trend" for f in selected), 20)
         self.assertNotIn("BLOCK_POS", {f.symbol for f in selected})
         self.assertNotIn("BLOCK_NEG", {f.symbol for f in selected})
+        self.assertEqual(
+            [(f.score, f.symbol) for f in selected],
+            sorted(((f.score, f.symbol) for f in selected), key=lambda row: (-row[0], row[1])),
+        )
+        lanes = [f.candidate_lane for f in selected]
+        self.assertGreater(sum(a != b for a, b in zip(lanes, lanes[1:])), 1)
 
     def test_negative_candidate_outside_legacy_top40_enters_two_sided_pool(self):
         scored = score_features(_research_features())
@@ -815,7 +821,14 @@ class TwoSidedResearchCandidateTests(unittest.TestCase):
             {f.symbol for f in two_sided if f.candidate_lane == "negative_trend"},
             {f"N{i:02d}" for i in range(20)},
         )
-        self.assertTrue(all(f.score == f.negative_score for f in two_sided[20:]))
+        self.assertTrue(all(
+            f.score == (f.positive_score if f.candidate_lane == "positive_trend" else f.negative_score)
+            for f in two_sided
+        ))
+        self.assertEqual(
+            [(f.score, f.symbol) for f in two_sided],
+            sorted(((f.score, f.symbol) for f in two_sided), key=lambda row: (-row[0], row[1])),
+        )
 
     def test_lane_shortages_fill_from_other_lane_in_score_order(self):
         negative_short = select_research_candidates(
@@ -823,9 +836,11 @@ class TwoSidedResearchCandidateTests(unittest.TestCase):
             top_k=40, allow_shorts=True,
         )
         self.assertEqual(len(negative_short), 40)
+        self.assertEqual(sum(f.candidate_lane == "positive_trend" for f in negative_short), 30)
+        self.assertEqual(sum(f.candidate_lane == "negative_trend" for f in negative_short), 10)
         self.assertEqual(
-            [f.candidate_lane for f in negative_short],
-            ["positive_trend"] * 20 + ["negative_trend"] * 10 + ["positive_trend"] * 10,
+            [(f.score, f.symbol) for f in negative_short],
+            sorted(((f.score, f.symbol) for f in negative_short), key=lambda row: (-row[0], row[1])),
         )
 
         positive_short = select_research_candidates(
@@ -833,9 +848,11 @@ class TwoSidedResearchCandidateTests(unittest.TestCase):
             top_k=40, allow_shorts=True,
         )
         self.assertEqual(len(positive_short), 40)
+        self.assertEqual(sum(f.candidate_lane == "positive_trend" for f in positive_short), 10)
+        self.assertEqual(sum(f.candidate_lane == "negative_trend" for f in positive_short), 30)
         self.assertEqual(
-            [f.candidate_lane for f in positive_short],
-            ["positive_trend"] * 10 + ["negative_trend"] * 30,
+            [(f.score, f.symbol) for f in positive_short],
+            sorted(((f.score, f.symbol) for f in positive_short), key=lambda row: (-row[0], row[1])),
         )
 
     def test_output_symbols_are_unique_and_shuffle_deterministic(self):
@@ -1326,6 +1343,18 @@ class SelectionCacheTests(unittest.TestCase):
             store.config_fingerprint(two_sided, None),
         )
 
+    def test_previous_ranking_formula_cache_is_invalid(self):
+        config = _base_config(allow_shorts=True)
+        self._payload(config)
+        store = SelectionStore(config["screening_selection_cache_path"])
+        old_payload = store.load_raw()
+        self.assertIsNotNone(old_payload)
+        # Re-seal a valid cache with the former ranking semantics' fingerprint.
+        with patch("tradingagents.screening.selection_store.FORMULA_VERSION", "phase-c-top40-2"):
+            old_payload["config_fingerprint"] = store.config_fingerprint(config, None)
+        store.save(old_payload)
+        self.assertIsNone(store.load_valid(config, now=_NOW))
+
     def test_schema3_selection_is_invalid_under_schema4(self):
         config = _base_config()
         self._payload(config)
@@ -1372,6 +1401,11 @@ class SelectionCacheTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["candidate_lane"] == "negative_trend" for row in top40), 20
+        )
+        self.assertEqual(
+            [(row["score"], row["symbol"]) for row in top40],
+            sorted(((row["score"], row["symbol"]) for row in top40),
+                   key=lambda row: (-row[0], row[1])),
         )
         self.assertTrue(all("positive_score" in row and "negative_score" in row for row in top40))
         loaded = SelectionStore(config["screening_selection_cache_path"]).load_valid(

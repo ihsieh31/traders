@@ -1022,7 +1022,7 @@ class _PositionedBroker:
     def get_account(self):
         return SimpleNamespace(
             id=PAPER, equity="100000", last_equity="100000",
-            cash="90000", buying_power="160000",
+            cash="90000", buying_power="160000", shorting_enabled=True,
         )
 
     def get_all_positions(self):
