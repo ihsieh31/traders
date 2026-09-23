@@ -95,6 +95,10 @@ class BracketExecutionTests(unittest.TestCase):
         self.client.submit_order.return_value = order
         # R13: the opening gate proves the session from the broker clock.
         self.client.get_clock.return_value = SimpleNamespace(is_open=True, timestamp=datetime.now(timezone.utc))
+        self.client.get_asset.return_value = SimpleNamespace(
+            symbol="AAPL", asset_class="us_equity", status="active",
+            tradable=True, shortable=True, borrow_status="easy_to_borrow",
+        )
         self.client.get_account.return_value = SimpleNamespace(
             id="paper-bracket", equity="100000", last_equity="100000", cash="100000", buying_power="200000"
         )

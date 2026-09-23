@@ -6,6 +6,7 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import (
@@ -48,6 +49,64 @@ def _market_clock_closed(self, broker: Any) -> Optional[str]:
         )
     except (BrokerAuthorityError, TypeError, ValueError) as exc:
         return f"broker market clock unavailable ({exc}); refusing to open exposure"
+    return None
+
+
+def _short_opening_rejection(
+    broker: Any, symbol: str, snapshot: BrokerSnapshot
+) -> Optional[str]:
+    """Fail closed unless the current Alpaca asset snapshot proves ETB."""
+    get_asset = getattr(broker, "get_asset", None)
+    if not callable(get_asset):
+        return "short opening rejected: broker asset lookup is unavailable"
+    try:
+        asset = get_asset(symbol)
+    except Exception:
+        return "short opening rejected: broker asset lookup failed"
+    if asset is None:
+        return "short opening rejected: broker asset lookup returned no asset"
+
+    def field(name: str, alias: Optional[str] = None) -> Any:
+        try:
+            if isinstance(asset, dict):
+                value = asset.get(name)
+                return asset.get(alias) if value is None and alias else value
+            value = getattr(asset, name, None)
+            return getattr(asset, alias, None) if value is None and alias else value
+        except Exception:
+            return None
+
+    def normalized(value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            return str(getattr(value, "value", value)).strip().lower()
+        except Exception:
+            return ""
+
+    if normalized(field("symbol")) != str(symbol).strip().lower():
+        return "short opening rejected: broker asset symbol does not match the order"
+    if normalized(field("asset_class", "class")) != "us_equity":
+        return "short opening rejected: asset is not a US equity"
+    if normalized(field("status")) != "active":
+        return "short opening rejected: asset is not active"
+    if field("tradable") is not True:
+        return "short opening rejected: asset is not tradable"
+    if field("shortable") is not True:
+        return "short opening rejected: asset is not marked shortable"
+
+    borrow_status = normalized(field("borrow_status"))
+    if borrow_status == "hard_to_borrow":
+        return "short opening rejected: asset is hard_to_borrow"
+    if borrow_status != "easy_to_borrow":
+        return "short opening rejected: asset borrow_status is unavailable or unsupported"
+
+    try:
+        equity = float(snapshot.equity)
+    except (TypeError, ValueError, OverflowError):
+        return "short opening rejected: authoritative account equity is unavailable"
+    if not math.isfinite(equity) or equity < 2000.0:
+        return "short opening rejected: authoritative account equity is below $2,000"
     return None
 
 
@@ -102,6 +161,10 @@ def _validate_opening_dispatch(
     market_closed = self._market_clock_closed(broker)
     if market_closed is not None:
         return f"dispatch revalidation failed: {market_closed}"
+    if spec.get("role") == "open" and spec.get("side") == "sell":
+        short_rejection = _short_opening_rejection(broker, symbol, snapshot)
+        if short_rejection is not None:
+            return f"dispatch revalidation failed: {short_rejection}"
     # Final time-sensitive proof, after every blocking GET above.
     try:
         validate_freshness(

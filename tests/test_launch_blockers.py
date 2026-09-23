@@ -1045,7 +1045,7 @@ class SettlementRefreshTests(unittest.TestCase):
             with patch(
                 "tradingagents.execution.service.ExecutionService"
             ) as service_cls, patch(
-                "tradingagents.dataflows.alpaca_utils.get_alpaca_trading_client"
+                "tradingagents.dataflows.alpaca_utils.get_alpaca_execution_client"
             ) as client_factory, patch(
                 "tradingagents.long_run.effective_target_for_session",
                 return_value={"effective_target": "11:00"},

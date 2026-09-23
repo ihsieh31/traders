@@ -326,7 +326,12 @@ def _resubmit_recovered(
         blocked = self._validate_opening_dispatch(
             intent_dict=payload,
             symbol=local["symbol"],
-            spec={"notional": effective_notional, "quantity": effective_quantity},
+            spec={
+                "role": "open",
+                "side": side,
+                "notional": effective_notional,
+                "quantity": effective_quantity,
+            },
             quote=quote,
             snapshot=snapshot,
             broker=broker,

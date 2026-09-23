@@ -667,7 +667,7 @@ def _refresh_broker_settlement(
     the next resume; lookup/adopt cannot duplicate POSTs.
     """
 
-    from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+    from tradingagents.dataflows.alpaca_utils import get_alpaca_execution_client
     from tradingagents.execution.service import ExecutionService
     from tradingagents.long_run import effective_target_for_session
     from tradingagents.long_run_support.sessions import (
@@ -706,7 +706,7 @@ def _refresh_broker_settlement(
         service = ExecutionService(
             db_path=db_path,
             broker_factory=(
-                lambda account=BACKEND_ACCOUNT[backend]: get_alpaca_trading_client(
+                lambda account=BACKEND_ACCOUNT[backend]: get_alpaca_execution_client(
                     account=account, read_only=False
                 )
             ),

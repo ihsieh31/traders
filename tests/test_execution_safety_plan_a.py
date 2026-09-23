@@ -59,15 +59,29 @@ class Broker:
         self.orders = []
         self.submits = []
         self.cancels = []
+        self.asset_calls = []
+        self.asset_error = None
+        self.account_equity = 100000
+        self.asset = NS(
+            symbol="AAPL", asset_class="us_equity", status="active",
+            tradable=True, shortable=True, borrow_status="easy_to_borrow",
+        )
 
     def get_account(self):
-        return NS(id="audit-fixture", equity=100000, last_equity=100000,
-                  cash=100000, buying_power=100000)
+        return NS(id="audit-fixture", equity=self.account_equity,
+                  last_equity=self.account_equity, cash=self.account_equity,
+                  buying_power=self.account_equity)
 
     def get_clock(self):
         # R13: the opening gate proves the regular session from the broker's
         # own clock before any exposure-adding POST; the fixture keeps it open.
         return NS(is_open=True, timestamp=now())
+
+    def get_asset(self, symbol):
+        self.asset_calls.append(symbol)
+        if self.asset_error is not None:
+            raise self.asset_error
+        return self.asset
 
     def get_all_positions(self):
         return [NS(symbol="AAPL", qty=self.qty, market_value=self.qty * 100)] if self.qty else []

@@ -45,7 +45,7 @@ from tradingagents.screening.metrics import (
     fetch_daily_bars_batch,
     resolve_as_of,
     scan_universe,
-    select_top_k,
+    select_research_candidates,
 )
 from tradingagents.screening.prompt import build_sector_plan, run_screening_invocation
 from tradingagents.screening.selection_store import (
@@ -249,7 +249,8 @@ def _run_scan(
         "eligible": stats.eligible,
         "excluded": dict(sorted(stats.excluded.items())),
     }
-    if len(scored) < select_n:
+    allow_shorts = bool(config.get("allow_shorts", False))
+    if not allow_shorts and len(scored) < select_n:
         return _stopped(
             "INSUFFICIENT_CANDIDATES",
             f"only {len(scored)} eligible candidates; {select_n} required "
@@ -257,7 +258,17 @@ def _run_scan(
             f"exclusions={scan_stats['excluded']}",
             scan_stats=scan_stats,
         )
-    top40 = select_top_k(scored, top_k)
+    top40 = select_research_candidates(
+        scored, top_k=top_k, allow_shorts=allow_shorts
+    )
+    if allow_shorts and len(top40) < select_n:
+        return _stopped(
+            "INSUFFICIENT_CANDIDATES",
+            f"only {len(top40)} candidates meet the directional research lanes; "
+            f"{select_n} required (eligible={len(scored)}); "
+            f"exclusions={scan_stats['excluded']}",
+            scan_stats=scan_stats,
+        )
     sector_plan = build_sector_plan(top40, max_per_sector=max_per_sector, select_n=select_n)
     if sector_plan.get("insufficient_capacity"):
         return _stopped(

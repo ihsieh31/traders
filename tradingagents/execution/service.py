@@ -272,9 +272,9 @@ class ExecutionService:
 
     @staticmethod
     def _default_broker_factory():
-        from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+        from tradingagents.dataflows.alpaca_utils import get_alpaca_execution_client
 
-        return get_alpaca_trading_client()
+        return get_alpaca_execution_client()
 
     def _verify_owned_close_protections(self, broker, snapshot, symbol):
         """Delegate to protection; preserve the original method seam."""

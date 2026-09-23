@@ -101,6 +101,7 @@ def test_N01_recovery_blocks_short_opening_under_current_opt_out(isolated):
     assert result["success"] is False and result["account_execution_state"] == "PAUSED"
     assert e.service.store.get_order(row["order_id"])["status"] == "CANCELED"
     assert "short-exposure" in result["error"]
+    assert e.broker.asset_calls == []
 
 
 def test_N01_recovery_submits_short_opening_under_current_opt_in(isolated):
@@ -111,6 +112,21 @@ def test_N01_recovery_submits_short_opening_under_current_opt_in(isolated):
     assert len(e.broker.submits) == 1, result
     assert e.broker.qty == -9  # protective resubmit sizes 9 shares from the quote
     assert result["success"] is True, result
+    assert e.broker.asset_calls == ["AAPL"]
+
+
+@pytest.mark.parametrize("borrow_status", ["hard_to_borrow", None, "unknown"])
+def test_N01_recovery_blocks_pending_short_without_etb(isolated, borrow_status):
+    e = isolated
+    e.config["allow_shorts"] = True
+    e.broker.asset.borrow_status = borrow_status
+    row = seed_pending(e, opening("SHORT"))
+
+    result = e.service.startup_recover()
+
+    assert len(e.broker.submits) == 0, result
+    assert e.broker.asset_calls == ["AAPL"]
+    assert e.service.store.get_order(row["order_id"])["status"] == "CANCELED"
 
 
 def test_N01_recovery_allows_close_buy_for_existing_short(isolated):
@@ -936,6 +952,41 @@ def test_N15_adoption_only_recovery_counts_zero_mutations(isolated):
     assert maintenance["broker_calls"] == 0
     assert maintenance["submit_calls"] == 0
     assert maintenance["submitted_symbols"] == []
+    assert e.service.store.get_order(row["order_id"])["status"] == "FILLED"
+
+
+def test_pending_short_with_existing_broker_order_is_adopted_without_borrow_gate(isolated):
+    e = isolated
+    e.config["allow_shorts"] = True
+    row = seed_pending(e, opening("SHORT"))
+    e.broker.qty = -10
+    children = [
+        NS(id="short-child-stop", client_order_id="broker-short-stop", symbol="AAPL",
+           side="buy", type="stop", qty=10, filled_qty=0, filled_avg_price=None,
+           status="new", updated_at=now(), legs=[], notional=None),
+        NS(id="short-child-target", client_order_id="broker-short-target", symbol="AAPL",
+           side="buy", type="limit", qty=10, filled_qty=0, filled_avg_price=None,
+           status="new", updated_at=now(), legs=[], notional=None),
+    ]
+    parent = NS(id="broker-short-1", client_order_id=row["client_order_id"], symbol="AAPL",
+                side="sell", qty=10, filled_qty=10, filled_avg_price=100,
+                status="filled", updated_at=now(), legs=list(children), notional=None)
+    e.broker.orders.extend([parent, *children])
+    original_get_orders = e.broker.get_orders
+    calls = {"n": 0}
+
+    def hide_parent_once(request):
+        calls["n"] += 1
+        orders = original_get_orders(request)
+        return [] if calls["n"] == 4 else orders
+
+    e.broker.get_orders = hide_parent_once
+
+    result = e.service.startup_recover()
+
+    assert result["success"] is True, result
+    assert len(e.broker.submits) == 0
+    assert e.broker.asset_calls == []
     assert e.service.store.get_order(row["order_id"])["status"] == "FILLED"
 
 

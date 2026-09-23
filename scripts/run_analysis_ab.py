@@ -734,7 +734,7 @@ def _execute_paper_arm_inner(
     paper_notional_usd: float,
     now_fn=None,
 ) -> dict[str, Any]:
-    from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
+    from tradingagents.dataflows.alpaca_utils import get_alpaca_execution_client
     from tradingagents.dataflows.config import set_config
     from tradingagents.execution import ExecutionService
     from tradingagents.execution.auto_trade import execute_auto_trade
@@ -756,7 +756,7 @@ def _execute_paper_arm_inner(
     account = BACKEND_ACCOUNT[backend]
     set_config(dict(config))
     reset_safety_guard()
-    broker_factory = lambda: get_alpaca_trading_client(
+    broker_factory = lambda: get_alpaca_execution_client(
         account=account, read_only=False
     )
     service = ExecutionService(

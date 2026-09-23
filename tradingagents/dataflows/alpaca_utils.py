@@ -320,6 +320,27 @@ class ReadOnlyTradingClient:
         return getattr(self._client, name)
 
 
+class ExecutionTradingClient:
+    """Preserve raw Alpaca asset fields needed by the final short gate.
+
+    alpaca-py 0.44.0's Asset model does not include borrow_status and drops
+    unknown fields. Execution therefore uses the same authenticated SDK GET
+    transport while returning the asset response before that model is applied.
+    """
+
+    def __init__(self, client: Any):
+        self._client = client
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+    def get_asset(self, symbol: str):
+        from alpaca.common.utils import validate_symbol_or_asset_id
+
+        symbol = validate_symbol_or_asset_id(symbol)
+        return self._client.get(f"/assets/{symbol}")
+
+
 def alpaca_read_only_enabled() -> bool:
     """Return the explicit process-level broker mutation gate.
 
@@ -461,6 +482,20 @@ def get_alpaca_trading_client(
     if effective_read_only:
         return ReadOnlyTradingClient(client)
     return client
+
+
+def get_alpaca_execution_client(
+    base_url: Optional[str] = None,
+    *,
+    account: Optional[str] = None,
+    read_only: Optional[bool] = None,
+) -> ExecutionTradingClient:
+    """Build an account-bound paper execution client with raw asset responses."""
+    return ExecutionTradingClient(
+        get_alpaca_trading_client(
+            base_url, account=account, read_only=read_only
+        )
+    )
 
 
 def _parse_timeframe(tf: Union[str, TimeFrame]) -> TimeFrame:

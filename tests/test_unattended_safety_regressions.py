@@ -1008,6 +1008,12 @@ class _PositionedBroker:
         self.cancels = []
         self._fail = False
 
+    def get_asset(self, symbol):
+        return SimpleNamespace(
+            symbol=symbol, asset_class="us_equity", status="active",
+            tradable=True, shortable=True, borrow_status="easy_to_borrow",
+        )
+
     def get_clock(self):
         # R13: the opening gate proves the regular session from the broker's
         # own clock before any exposure-adding POST; the fixture keeps it open.

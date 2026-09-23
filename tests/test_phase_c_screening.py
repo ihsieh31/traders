@@ -38,9 +38,12 @@ from tradingagents.screening.llm import (
 )
 from tradingagents.screening.metrics import (
     EligibilityThresholds,
+    SymbolFeatures,
     ascending_percentiles,
     compute_features,
     scan_universe,
+    score_features,
+    select_research_candidates,
     select_top_k,
     validate_and_clean_bars,
 )
@@ -179,6 +182,56 @@ def _candidates(n, *, prefix="T", base=100.0):
         assert ferr is None, ferr
         features.append(feature)
     return features
+
+
+def _research_features(*, positive=20, negative=20, mixed=20):
+    """Deterministic positive, negative and mixed-sign research fixture."""
+    features = []
+    for i in range(positive):
+        features.append(SymbolFeatures(
+            symbol=f"P{i:02d}", price=50.0 + i, adv20=40_000_000.0 + i * 100_000,
+            r5=0.02 + i * 0.001, r20=0.10 + i * 0.002,
+            r60=0.30 + i * 0.005, vol20=0.20,
+            volume_ratio=1.0 + i * 0.01, trend=0.05 + i * 0.001,
+        ))
+    for i in range(negative):
+        features.append(SymbolFeatures(
+            symbol=f"N{i:02d}", price=80.0 + i, adv20=40_000_000.0 + i * 100_000,
+            r5=-0.02 - i * 0.001, r20=-0.10 - i * 0.002,
+            r60=-0.30 - i * 0.005, vol20=0.20,
+            volume_ratio=1.0 + i * 0.01, trend=-0.05 - i * 0.001,
+        ))
+    for i in range(mixed):
+        features.append(SymbolFeatures(
+            symbol=f"M{i:02d}", price=100.0 + i, adv20=40_000_000.0 + i * 100_000,
+            r5=0.02 if i % 2 else -0.02, r20=-0.02 + i * 0.0004,
+            r60=0.02 + i * 0.001, vol20=0.20,
+            volume_ratio=1.0 + i * 0.01, trend=0.0,
+        ))
+    return features
+
+
+def _two_sided_screening_world():
+    """60 eligible bars fixtures: 20 up, 20 down and 20 mixed-sign/no-trend."""
+    sessions = session_dates_ending_at(_AS_OF, 61)
+    universe, bars = [], {}
+    mixed_tail = [150.0 + d for pair in range(1, 10) for d in (pair, -pair)] + [150.0, 150.0]
+    for kind, count in (("P", 20), ("N", 20), ("M", 20)):
+        for i in range(count):
+            symbol = f"{kind}{i:02d}"
+            if kind == "P":
+                closes = [20.0 * (1.008 ** j) for j in range(61)]
+                volume = 1_000_000.0
+            elif kind == "N":
+                closes = [4_000.0 * (0.99 ** j) for j in range(61)]
+                volume = 10_000.0
+            else:
+                closes = [100.0 + 2.5 * j for j in range(41)] + mixed_tail
+                volume = 250_000.0
+            universe.append({"symbol": symbol, "name": symbol, "exchange": "NASDAQ",
+                             "market_cap": 1_000_000_000.0})
+            bars[symbol] = _bars_df(sessions, closes, volume)
+    return universe, bars
 
 
 def _fake_llm_invoke(candidates_out, *, counter=None, select_n=20):
@@ -706,6 +759,132 @@ class RankingFormulaTests(unittest.TestCase):
         self.assertEqual(len(scored), 40)
 
 
+class TwoSidedResearchCandidateTests(unittest.TestCase):
+    def test_long_only_matches_legacy_formula_and_top40_order(self):
+        features = _research_features()
+        percentiles = {
+            key: ascending_percentiles([getattr(f, key) for f in features])
+            for key in ("adv20", "r20", "r60", "vol20", "volume_ratio")
+        }
+        expected_scores = [
+            100.0 * (
+                0.20 * percentiles["adv20"][i]
+                + 0.25 * percentiles["r20"][i]
+                + 0.25 * percentiles["r60"][i]
+                + 0.15 * (1.0 - percentiles["vol20"][i])
+                + 0.15 * percentiles["volume_ratio"][i]
+            )
+            for i in range(len(features))
+        ]
+        expected = sorted(
+            zip(features, expected_scores), key=lambda pair: (-pair[1], pair[0].symbol)
+        )[:40]
+        actual = select_research_candidates(
+            score_features(features), top_k=40, allow_shorts=False
+        )
+        self.assertEqual([f.symbol for f in actual], [f.symbol for f, _ in expected])
+        for candidate, (_, score) in zip(actual, expected):
+            self.assertAlmostEqual(candidate.score, score)
+        self.assertEqual({f.candidate_lane for f in actual}, {None})
+        self.assertTrue(all(f.negative_score is None for f in actual))
+
+    def test_two_sided_lanes_enforce_directional_gates(self):
+        features = _research_features()
+        features.extend([
+            SymbolFeatures("BLOCK_POS", 30, 30_000_000, 0.01, -0.10, -0.20,
+                           0.2, 1.0, 0.03),
+            SymbolFeatures("BLOCK_NEG", 30, 30_000_000, -0.01, 0.10, 0.20,
+                           0.2, 1.0, -0.03),
+        ])
+        selected = select_research_candidates(
+            score_features(features), top_k=40, allow_shorts=True
+        )
+        self.assertEqual(len(selected), 40)
+        self.assertEqual(sum(f.candidate_lane == "positive_trend" for f in selected), 20)
+        self.assertEqual(sum(f.candidate_lane == "negative_trend" for f in selected), 20)
+        self.assertNotIn("BLOCK_POS", {f.symbol for f in selected})
+        self.assertNotIn("BLOCK_NEG", {f.symbol for f in selected})
+
+    def test_negative_candidate_outside_legacy_top40_enters_two_sided_pool(self):
+        scored = score_features(_research_features())
+        legacy = select_research_candidates(scored, top_k=40, allow_shorts=False)
+        two_sided = select_research_candidates(scored, top_k=40, allow_shorts=True)
+        self.assertNotIn("N00", {f.symbol for f in legacy})
+        self.assertIn("N00", {f.symbol for f in two_sided})
+        self.assertEqual(
+            {f.symbol for f in two_sided if f.candidate_lane == "negative_trend"},
+            {f"N{i:02d}" for i in range(20)},
+        )
+        self.assertTrue(all(f.score == f.negative_score for f in two_sided[20:]))
+
+    def test_lane_shortages_fill_from_other_lane_in_score_order(self):
+        negative_short = select_research_candidates(
+            score_features(_research_features(positive=30, negative=10, mixed=0)),
+            top_k=40, allow_shorts=True,
+        )
+        self.assertEqual(len(negative_short), 40)
+        self.assertEqual(
+            [f.candidate_lane for f in negative_short],
+            ["positive_trend"] * 20 + ["negative_trend"] * 10 + ["positive_trend"] * 10,
+        )
+
+        positive_short = select_research_candidates(
+            score_features(_research_features(positive=10, negative=30, mixed=0)),
+            top_k=40, allow_shorts=True,
+        )
+        self.assertEqual(len(positive_short), 40)
+        self.assertEqual(
+            [f.candidate_lane for f in positive_short],
+            ["positive_trend"] * 10 + ["negative_trend"] * 30,
+        )
+
+    def test_output_symbols_are_unique_and_shuffle_deterministic(self):
+        features = _research_features() + [_research_features()[0]]
+        expected = select_research_candidates(
+            score_features(features), top_k=40, allow_shorts=True
+        )
+        shuffled = list(reversed(features))
+        actual = select_research_candidates(
+            score_features(shuffled), top_k=40, allow_shorts=True
+        )
+        self.assertEqual(len({f.symbol for f in expected}), len(expected))
+        self.assertEqual(
+            [(f.symbol, f.score, f.candidate_lane) for f in actual],
+            [(f.symbol, f.score, f.candidate_lane) for f in expected],
+        )
+
+    def test_non_40_top_k_uses_ceil_positive_and_floor_negative(self):
+        selected = select_research_candidates(
+            score_features(_research_features()), top_k=7, allow_shorts=True
+        )
+        self.assertEqual(len(selected), 7)
+        self.assertEqual(sum(f.candidate_lane == "positive_trend" for f in selected), 4)
+        self.assertEqual(sum(f.candidate_lane == "negative_trend" for f in selected), 3)
+
+    def test_negative_score_formula_rewards_lower_volatility(self):
+        features = [
+            SymbolFeatures("LOWVOL", 50, 40_000_000, -0.02, -0.10, -0.30,
+                           0.10, 1.0, -0.05),
+            SymbolFeatures("HIGHVOL", 50, 40_000_000, -0.02, -0.10, -0.30,
+                           0.80, 1.0, -0.05),
+        ]
+        selected = select_research_candidates(
+            score_features(features), top_k=2, allow_shorts=True
+        )
+        by_symbol = {f.symbol: f for f in selected}
+        self.assertAlmostEqual(by_symbol["LOWVOL"].negative_score, 57.5)
+        self.assertAlmostEqual(by_symbol["HIGHVOL"].negative_score, 42.5)
+
+    def test_long_only_has_no_short_lane_audit_side_effect(self):
+        selected = select_research_candidates(
+            score_features(_research_features()), top_k=40, allow_shorts=False
+        )
+        self.assertTrue(all(f.candidate_lane is None for f in selected))
+        self.assertTrue(all(f.positive_score is None for f in selected))
+        self.assertTrue(all(f.negative_score is None for f in selected))
+        self.assertTrue(all("candidate_lane" not in f.to_cache_dict() for f in selected))
+
+
 # ---------------------------------------------------------------------------
 # C08/C09/C11: screening invocation contract
 # ---------------------------------------------------------------------------
@@ -881,14 +1060,39 @@ class PromptAndSectorTests(unittest.TestCase):
             candidates, {"applied": True, "max_per_sector": 5}, select_n=20
         )
         system = messages[0]["content"]
+        system_flat = " ".join(system.split())
         user = messages[1]["content"]
         for token in ("adv20", "vol20", "volume_ratio", "sqrt(252)", "USD", "0..100"):
             self.assertIn(token, system)
         self.assertIn("at most 5", system)
         self.assertIn("Do NOT output BUY/SELL", system)
+        self.assertIn("persistent positive trends", system_flat)
+        self.assertIn("persistent negative trends", system_flat)
+        self.assertIn("Do not automatically lower a candidate's priority", system_flat)
+        self.assertIn("High volatility is a risk", system_flat)
+        self.assertIn("no required number from either trend direction", system_flat)
         self.assertIn("never see holdings, cash", system)
         self.assertIn("T00", user)
         self.assertNotIn("position", user.lower())
+
+    def test_candidate_lane_stays_out_of_llm_table_and_output_schema(self):
+        from tradingagents.screening.prompt import build_screening_messages
+
+        candidates = select_research_candidates(
+            score_features(_research_features()), top_k=40, allow_shorts=True
+        )
+        messages = build_screening_messages(
+            candidates, {"applied": False}, select_n=20
+        )
+        rendered = "\n".join(message["content"] for message in messages)
+        self.assertNotIn("candidate_lane", rendered)
+        self.assertNotIn("positive_score", rendered)
+        self.assertNotIn("negative_score", rendered)
+        self.assertEqual(
+            set(ScreenedCandidate.model_fields),
+            {"rank", "symbol", "screening_score", "short_reason"},
+        )
+        self.assertEqual(set(ScreeningOutput.model_fields), {"candidates"})
 
     def test_sector_plan_and_capacity(self):
         from tradingagents.screening.prompt import build_sector_plan
@@ -987,6 +1191,24 @@ class UnionAndHoldingsTests(unittest.TestCase):
         self.assertEqual(
             plan.other_asset_holdings, [{"symbol": "BTC/USD", "qty": 0.5}]
         )
+
+    def test_two_sided_selection_keeps_top20_holdings_union_contract(self):
+        universe, bars = _two_sided_screening_world()
+        config = self._config(allow_shorts=True)
+        deps = _deps(
+            universe, bars,
+            positions=[
+                {"symbol": "P00", "qty": 2, "asset_class": "us_equity"},
+                {"symbol": "HLD", "qty": 1, "asset_class": "us_equity"},
+            ],
+        )
+        plan = prepare_screening_round(config, deps=deps, now=_NOW)
+        self.assertEqual(plan.status, "ok", plan.detail)
+        top20_symbols = [entry["symbol"] for entry in plan.top20]
+        self.assertEqual(plan.deep_analysis_set[:20], top20_symbols)
+        self.assertEqual(plan.deep_analysis_set[20:], ["HLD"])
+        self.assertEqual(plan.overlap_holdings, ["P00"])
+        self.assertEqual(len(plan.deep_analysis_set), len(set(plan.deep_analysis_set)))
 
     def test_holdings_failure_stops_round_without_analysis(self):
         universe, bars = self._scan_world()
@@ -1094,6 +1316,92 @@ class SelectionCacheTests(unittest.TestCase):
         self.assertIsNone(store.load_valid(changed, now=_NOW))
         changed = _base_config(sector_mapping={"T00": "Tech"})
         self.assertIsNone(store.load_valid(changed, now=_NOW))
+
+    def test_allow_shorts_toggle_changes_cache_fingerprint(self):
+        long_only = _base_config(allow_shorts=False)
+        two_sided = _base_config(allow_shorts=True)
+        store = SelectionStore(long_only["screening_selection_cache_path"])
+        self.assertNotEqual(
+            store.config_fingerprint(long_only, None),
+            store.config_fingerprint(two_sided, None),
+        )
+
+    def test_schema3_selection_is_invalid_under_schema4(self):
+        config = _base_config()
+        self._payload(config)
+        path = Path(config["screening_selection_cache_path"])
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["schema_version"] = 3
+        import hashlib
+
+        material = {k: v for k, v in data.items() if k != "integrity"}
+        data["integrity"] = hashlib.sha256(
+            json.dumps(material, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.assertIsNone(SelectionStore(path).load_valid(config, now=_NOW))
+        universe, bars = self._payload_universe_bars()
+        counter = {"screening": 0}
+        plan = prepare_screening_round(
+            config,
+            deps=_deps(
+                universe, bars, positions=[],
+                invoke=_fake_llm_invoke(None, counter=counter),
+            ),
+            now=_NOW,
+        )
+        self.assertEqual(plan.status, "ok", plan.detail)
+        self.assertFalse(plan.cached)
+        self.assertEqual(counter["screening"], 1)
+
+    def test_two_sided_top40_cache_save_load_roundtrip(self):
+        config = _base_config(allow_shorts=True)
+        universe, bars = _two_sided_screening_world()
+        asset_calls = []
+        deps = _deps(universe, bars, positions=[])
+        deps.asset_fn = lambda symbol: asset_calls.append(symbol)
+        plan = prepare_screening_round(
+            config, deps=deps, now=_NOW
+        )
+        self.assertEqual(plan.status, "ok", plan.detail)
+        self.assertEqual(asset_calls, [])
+        top40 = plan.selection["top40"]
+        self.assertEqual(len(top40), 40)
+        self.assertEqual(
+            sum(row["candidate_lane"] == "positive_trend" for row in top40), 20
+        )
+        self.assertEqual(
+            sum(row["candidate_lane"] == "negative_trend" for row in top40), 20
+        )
+        self.assertTrue(all("positive_score" in row and "negative_score" in row for row in top40))
+        loaded = SelectionStore(config["screening_selection_cache_path"]).load_valid(
+            config, now=_NOW
+        )
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["top40"], top40)
+        self.assertEqual(loaded["top20"], plan.selection["top20"])
+
+    def test_short_directional_pool_fails_closed_before_screening(self):
+        from tradingagents.screening.metrics import ScanStats
+
+        config = _base_config(allow_shorts=True)
+        scored = score_features(
+            _research_features(positive=10, negative=9, mixed=1)
+        )
+        invoke_calls = []
+        universe = _universe([f"S{i:02d}" for i in range(20)])
+        deps = _deps(universe, {}, positions=[])
+        deps.bars_fn = lambda symbols, **kw: {}
+        deps.screening_invoke_fn = lambda *args, **kw: invoke_calls.append(1)
+        with patch(
+            "tradingagents.screening.pipeline.scan_universe",
+            return_value=(scored, ScanStats(universe_total=20, eligible=20)),
+        ):
+            plan = prepare_screening_round(config, deps=deps, now=_NOW)
+        self.assertTrue(plan.stopped)
+        self.assertEqual(plan.reason, "INSUFFICIENT_CANDIDATES")
+        self.assertEqual(plan.scan_stats["eligible"], 20)
+        self.assertEqual(invoke_calls, [])
 
     def test_corrupted_and_future_dated_cache_invalid(self):
         config = _base_config()

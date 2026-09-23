@@ -31,7 +31,7 @@ import pandas as pd
 from tradingagents.dataflows.market_calendar import session_dates_ending_at_auth
 from tradingagents.screening.sessions import most_recent_completed_session_production
 
-FORMULA_VERSION = "phase-c-top40-1"
+FORMULA_VERSION = "phase-c-top40-2"
 # Authoritative consolidated feed for Phase C US-equity screening liquidity.
 # Hardcoded SIP: the $20M ADV20 threshold is defined on consolidated volume.
 SCREENING_DATA_FEED = "sip"
@@ -101,6 +101,9 @@ class SymbolFeatures:
     trend: float          # close/mean(close,last20) - 1 (fraction)
     score: Optional[float] = None
     sector: Optional[str] = None
+    positive_score: Optional[float] = None
+    negative_score: Optional[float] = None
+    candidate_lane: Optional[str] = None
 
     def factor_row(self) -> Dict[str, float]:
         return {
@@ -120,6 +123,12 @@ class SymbolFeatures:
             payload["score"] = self.score
         if self.sector is not None:
             payload["sector"] = self.sector
+        if self.positive_score is not None:
+            payload["positive_score"] = self.positive_score
+        if self.negative_score is not None:
+            payload["negative_score"] = self.negative_score
+        if self.candidate_lane is not None:
+            payload["candidate_lane"] = self.candidate_lane
         return payload
 
 
@@ -362,6 +371,86 @@ def score_features(features: List[SymbolFeatures]) -> List[SymbolFeatures]:
 
 def select_top_k(scored: List[SymbolFeatures], top_k: int) -> List[SymbolFeatures]:
     return scored[:top_k]
+
+
+def select_research_candidates(
+    features: List[SymbolFeatures], *, top_k: int, allow_shorts: bool
+) -> List[SymbolFeatures]:
+    """Select the Top-K research pool, optionally balancing trend directions.
+
+    ``features`` must contain the full eligible universe with the existing
+    positive ``score`` assigned by :func:`score_features`. Lane labels are
+    candidate-generation audit metadata only; they do not imply a trade side.
+    """
+    if not allow_shorts:
+        return select_top_k(features, top_k)
+    if top_k <= 0 or not features:
+        return []
+
+    # Duplicate symbols should not consume multiple Top-K slots. Resolve any
+    # malformed duplicate deterministically before assigning lane membership.
+    ordered = sorted(
+        features,
+        key=lambda f: (
+            f.symbol, f.price, f.adv20, f.r5, f.r20, f.r60,
+            f.vol20, f.volume_ratio, f.trend, f.score or 0.0,
+        ),
+    )
+    unique = {}
+    for feature in ordered:
+        unique.setdefault(feature.symbol, feature)
+    features = list(unique.values())
+
+    percentiles = {
+        key: ascending_percentiles([getattr(f, key) for f in features])
+        for key in ("adv20", "r20", "r60", "vol20", "volume_ratio")
+    }
+    positive_lane: List[SymbolFeatures] = []
+    negative_lane: List[SymbolFeatures] = []
+    for i, feature in enumerate(features):
+        negative_score = 100.0 * (
+            0.20 * percentiles["adv20"][i]
+            + 0.25 * (1.0 - percentiles["r20"][i])
+            + 0.25 * (1.0 - percentiles["r60"][i])
+            + 0.15 * (1.0 - percentiles["vol20"][i])
+            + 0.15 * percentiles["volume_ratio"][i]
+        )
+        lane = None
+        research_score = feature.score
+        if feature.trend > 0 and (feature.r20 > 0 or feature.r60 > 0):
+            lane = "positive_trend"
+        elif feature.trend < 0 and (feature.r20 < 0 or feature.r60 < 0):
+            lane = "negative_trend"
+            research_score = negative_score
+        if lane is None:
+            continue
+
+        candidate = SymbolFeatures(
+            symbol=feature.symbol,
+            **feature.factor_row(),
+            score=research_score,
+            sector=feature.sector,
+            positive_score=feature.score,
+            negative_score=negative_score,
+            candidate_lane=lane,
+        )
+        lane_rows = positive_lane if lane == "positive_trend" else negative_lane
+        lane_rows.append(candidate)
+
+    positive_lane.sort(key=lambda f: (-float(f.score or 0.0), f.symbol))
+    negative_lane.sort(key=lambda f: (-float(f.score or 0.0), f.symbol))
+    positive_target = (top_k + 1) // 2
+    negative_target = top_k // 2
+    positive = positive_lane[:positive_target]
+    negative = negative_lane[:negative_target]
+    selected = [*positive, *negative]
+
+    if len(selected) < top_k:
+        if len(positive) < positive_target:
+            selected.extend(negative_lane[negative_target:])
+        elif len(negative) < negative_target:
+            selected.extend(positive_lane[positive_target:])
+    return selected[:top_k]
 
 
 def scan_universe(

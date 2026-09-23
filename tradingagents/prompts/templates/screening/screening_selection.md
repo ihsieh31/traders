@@ -15,15 +15,23 @@ passed deterministic liquidity/price eligibility. Each row carries:
 - volume_ratio: mean volume over the last 5 sessions divided by mean volume
   over the last 20 sessions (ratio; above 1 means volume is picking up).
 - trend: last close divided by the 20-session mean close, minus 1 (fraction).
-- score: the deterministic baseline score (0..100) from cross-sectional
-  percentiles of adv20, r20, r60, inverse vol20, and volume_ratio. It is a
-  fixed research baseline — you may disagree with it, but you must ground
-  your reasoning in the table factors.
+- score: a deterministic baseline research score (0..100) using liquidity,
+  medium-term returns, inverse volatility, and volume participation. In a
+  two-sided candidate pool, the baseline is direction-aware; it is still only
+  a research-priority reference, never a trade direction.
 {sector_rules}
-Compare the candidates on: trend persistence (the 20- and 60-session
-returns), recent volume behavior (volume_ratio, 5-day change), liquidity
-(adv20), and volatility risk (vol20). Select the {select_n} candidates
-that are MOST worth a full multi-agent research pass.
+The candidate pool may contain persistent positive trends and persistent
+negative trends. Both are valid research opportunities and should be assessed
+fairly. Do not automatically lower a candidate's priority just because r20,
+r60, or trend is negative. Prefer consistency across time scales. Use r5 to
+spot recent acceleration or reversal, and volume_ratio to judge whether
+participation is increasing. Mixed-sign momentum may lower priority, but it
+is not disqualifying. High volatility is a risk; do not reward a stock simply
+because it has fallen sharply.
+
+Select the {select_n} candidates that are MOST worth a full multi-agent
+research pass. Choose the best research opportunities overall; there is no
+required number from either trend direction.
 
 Hard rules:
 1. Return exactly {select_n} candidates, ranked 1 (highest priority)

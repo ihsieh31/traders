@@ -48,10 +48,9 @@ from tradingagents.screening.sessions import (
 )
 from tradingagents.app_identity import validate_app_path
 
-# Bumped to invalidate pre-remediation IEX-feed selections: R4 binds the
-# consolidated feed ("sip") into the fingerprint and payload, and old
-# schema-2 files (without data_feed) are never valid.
-SCHEMA_VERSION = 3
+# Formula and candidate-pool semantics changed for two-sided research lanes;
+# schema-3 selections must be rescanned.
+SCHEMA_VERSION = 4
 SCREENING_DATA_FEED = "sip"
 
 # The integrity seal field name stamped by ``save`` and verified by
@@ -156,6 +155,7 @@ class SelectionStore:
             "screening_as_of_override": config.get("screening_as_of_override"),
             "formula_version": FORMULA_VERSION,
             "schema_version": SCHEMA_VERSION,
+            "allow_shorts": bool(config.get("allow_shorts", False)),
             "provider": provider,
             "model": model,
             "backend_url": backend,
@@ -271,6 +271,19 @@ class SelectionStore:
                         return None
                 score = row.get("score")
                 if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+                    return None
+                for key in ("positive_score", "negative_score"):
+                    value = row.get(key)
+                    if value is not None and (
+                        not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        or not 0.0 <= float(value) <= 100.0
+                    ):
+                        return None
+                lane = row.get("candidate_lane")
+                if lane is not None and lane not in (
+                    "positive_trend", "negative_trend"
+                ):
                     return None
                 top40_symbols.add(str(row["symbol"]))
 
