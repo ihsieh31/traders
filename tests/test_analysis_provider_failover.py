@@ -323,21 +323,20 @@ class SharedBudgetFailoverTests(unittest.TestCase):
         self.assertEqual(primary.calls, 1)
         self.assertEqual(fallback.calls, 1)
 
-    def test_remaining_attempts_stay_on_fallback(self):
+    def test_transient_failures_alternate_primary_and_fallback(self):
         llm, primary, fallback = _failover(
-            [TimeoutError("timed out")],
-            [ConnectionError("connection reset"), TimeoutError("timed out"), "ok"],
+            [TimeoutError("timed out"), ConnectionError("connection reset")],
+            [ConnectionError("connection reset"), "ok"],
         )
         self.assertEqual(llm.invoke("hello").content, "ok")
-        # Primary → Fallback → Fallback → Fallback; never back to Primary.
-        self.assertEqual(primary.calls, 1)
-        self.assertEqual(fallback.calls, 3)
+        # Primary → Fallback → Primary → Fallback.
+        self.assertEqual(primary.calls, 2)
+        self.assertEqual(fallback.calls, 2)
 
     def test_shared_budget_exhaustion_raises_provider_failure(self):
         llm, primary, fallback = _failover(
-            [TimeoutError("timed out")],
+            [TimeoutError("timed out"), RuntimeError("503 service unavailable")],
             [
-                RuntimeError("503 service unavailable"),
                 RuntimeError("429 too many requests"),
                 TimeoutError("timed out"),
             ],
@@ -349,8 +348,8 @@ class SharedBudgetFailoverTests(unittest.TestCase):
         # The failure is reported against the route that failed last.
         self.assertEqual(ctx.exception.provider, "openrouter")
         self.assertEqual(ctx.exception.model, "muse-spark-1.3")
-        self.assertEqual(primary.calls, 1)
-        self.assertEqual(fallback.calls, 3)
+        self.assertEqual(primary.calls, 2)
+        self.assertEqual(fallback.calls, 2)
 
     def test_permanent_primary_failure_never_fails_over(self):
         llm, primary, fallback = _failover(
@@ -465,15 +464,15 @@ class StructuredAndToolParityTests(unittest.TestCase):
 
     def test_structured_output_exhaustion_raises_with_shared_cap(self):
         llm, primary, fallback = _failover(
-            [TimeoutError("timed out")],
-            [TimeoutError("timed out")] * 3,
+            [TimeoutError("timed out"), TimeoutError("timed out")],
+            [TimeoutError("timed out"), TimeoutError("timed out")],
         )
         structured = llm.with_structured_output(dict)
         with self.assertRaises(ProviderFailure) as ctx:
             structured.invoke("prompt")
         self.assertEqual(ctx.exception.attempts, 4)
-        self.assertEqual(primary.calls, 1)
-        self.assertEqual(fallback.calls, 3)
+        self.assertEqual(primary.calls, 2)
+        self.assertEqual(fallback.calls, 2)
 
     def test_tool_bound_paths_share_one_budget_and_tools(self):
         tools = ["tool-a"]
@@ -489,37 +488,49 @@ class StructuredAndToolParityTests(unittest.TestCase):
 
     def test_tool_bound_exhaustion_raises_with_shared_cap(self):
         llm, primary, fallback = _failover(
-            [TimeoutError("timed out")], [TimeoutError("timed out")] * 3
+            [TimeoutError("timed out"), TimeoutError("timed out")],
+            [TimeoutError("timed out"), TimeoutError("timed out")],
         )
         bound = llm.bind_tools([])
         with self.assertRaises(ProviderFailure) as ctx:
             bound.invoke("prompt")
-        # Shared cap through LCEL: 1 Primary + 3 Fallback = 4 total.
+        # Shared cap through LCEL: 2 Primary + 2 Fallback = 4 total.
         self.assertEqual(ctx.exception.attempts, 4)
-        self.assertEqual(primary.calls, 1)
-        self.assertEqual(fallback.calls, 3)
+        self.assertEqual(primary.calls, 2)
+        self.assertEqual(fallback.calls, 2)
 
 
 class FailoverAuditEventTests(unittest.TestCase):
-    def test_switch_event_emitted_once_per_invocation_with_sanitized_payload(self):
+    def test_switch_events_record_each_alternating_route_change(self):
         events = []
         llm, primary, fallback = _failover(
-            [TimeoutError("timed out")],
-            [TimeoutError("timed out"), TimeoutError("timed out"), "ok"],
+            [TimeoutError("timed out"), TimeoutError("timed out"), TimeoutError("timed out")],
+            [TimeoutError("timed out"), "ok"],
             on_switch=events.append,
         )
         self.assertEqual(llm.invoke("hello").content, "ok")
-        # Exactly one event for the single switch, not one per fallback try.
-        self.assertEqual(len(events), 1)
-        payload = events[0]
-        self.assertEqual(payload["role"], "analysis")
-        self.assertEqual(payload["from_provider"], "openai")
-        self.assertEqual(payload["from_model"], "muse-spark-1.3")
-        self.assertEqual(payload["to_provider"], "openrouter")
-        self.assertEqual(payload["to_model"], "muse-spark-1.3")
-        self.assertEqual(payload["trigger_category"], "transient")
-        self.assertEqual(payload["attempt"], 2)
-        self.assertEqual(payload["max_requests_per_invocation"], 4)
+        self.assertEqual(len(events), 3)
+        self.assertEqual(
+            [
+                (
+                    event["from_provider"],
+                    event["to_provider"],
+                    event["attempt"],
+                )
+                for event in events
+            ],
+            [
+                ("openai", "openrouter", 2),
+                ("openrouter", "openai", 3),
+                ("openai", "openrouter", 4),
+            ],
+        )
+        for event in events:
+            self.assertEqual(event["role"], "analysis")
+            self.assertEqual(event["from_model"], "muse-spark-1.3")
+            self.assertEqual(event["to_model"], "muse-spark-1.3")
+            self.assertEqual(event["trigger_category"], "transient")
+            self.assertEqual(event["max_requests_per_invocation"], 4)
 
     def test_no_event_when_primary_succeeds(self):
         events = []
@@ -625,8 +636,8 @@ class LcelCompositionTests(unittest.TestCase):
         from langchain_core.prompts import ChatPromptTemplate
 
         llm, primary, fallback = _failover(
+            [TimeoutError("timed out"), TimeoutError("timed out")],
             [TimeoutError("timed out")],
-            [TimeoutError("timed out")] * 2,
             max_retries=2,
         )
         chain = ChatPromptTemplate.from_messages([("human", "{q}")]) | llm.bind_tools(
@@ -634,10 +645,10 @@ class LcelCompositionTests(unittest.TestCase):
         )
         with self.assertRaises(ProviderFailure) as ctx:
             chain.invoke({"q": "hello"})
-        # Shared cap through LCEL: 1 Primary + 2 Fallback = 3 total.
+        # Shared cap through LCEL: 2 Primary + 1 Fallback = 3 total.
         self.assertEqual(ctx.exception.attempts, 3)
-        self.assertEqual(primary.calls, 1)
-        self.assertEqual(fallback.calls, 2)
+        self.assertEqual(primary.calls, 2)
+        self.assertEqual(fallback.calls, 1)
 
 
 class GraphWiringTests(unittest.TestCase):

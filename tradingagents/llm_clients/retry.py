@@ -24,8 +24,10 @@ Policy (implementation contract):
 The Analysis-only failover siblings at the bottom of this module
 (:class:`FailoverRetryingLLM` and friends) reuse the exact same policy over
 one Primary/Fallback route pair that shares a single request budget. They
-are additive: :class:`RetryingLLM` stays the retry owner for every
-non-failover path.
+alternate routes on transient failures (Primary, Fallback, Primary,
+Fallback, ...) so a provider can recover during one invocation without
+changing the bounded total request count. They are additive:
+:class:`RetryingLLM` stays the retry owner for every non-failover path.
 """
 
 from __future__ import annotations
@@ -331,14 +333,12 @@ class RetryingLLM(Runnable):
 
 
 class _FailoverRetryController:
-    """Shared-budget Primary→Fallback owner for the Analysis role.
+    """Shared-budget Primary/Fallback owner for failover roles.
 
     One logical invocation gets exactly ``1 + max_retries`` provider
-    requests, shared between Primary and Fallback — they do NOT each
-    receive the budget. Attempt 1 is always Primary. A transient Primary
-    failure switches every remaining attempt to Fallback (no Primary retry
-    before failover, and no bouncing back: once switched, the invocation
-    stays on Fallback). Permanent failures stop immediately — failover
+    requests, shared between Primary and Fallback. Attempt 1 is always
+    Primary; transient failures alternate the remaining requests between
+    Fallback and Primary. Permanent failures stop immediately — failover
     must never hide a misconfiguration or an incompatible request.
     Selection state is per ``run`` call (per logical invocation), never
     global, so concurrent invocations cannot affect each other.
@@ -371,17 +371,26 @@ class _FailoverRetryController:
     def max_requests_per_invocation(self) -> int:
         return 1 + self.max_retries
 
-    def _emit_switch(self, trigger_category: str, next_attempt: int) -> None:
+    def _emit_switch(
+        self,
+        trigger_category: str,
+        next_attempt: int,
+        *,
+        from_provider: str,
+        from_model: str,
+        to_provider: str,
+        to_model: str,
+    ) -> None:
         if self.on_switch is None:
             return
         try:
             self.on_switch(
                 {
                     "role": self.role,
-                    "from_provider": self.primary_provider,
-                    "from_model": self.primary_model,
-                    "to_provider": self.fallback_provider,
-                    "to_model": self.fallback_model,
+                    "from_provider": from_provider,
+                    "from_model": from_model,
+                    "to_provider": to_provider,
+                    "to_model": to_model,
                     "trigger_category": trigger_category,
                     "attempt": next_attempt,
                     "max_requests_per_invocation": self.max_requests_per_invocation,
@@ -392,13 +401,12 @@ class _FailoverRetryController:
 
     def run(self, primary_call, fallback_call) -> Any:
         total = self.max_requests_per_invocation
-        attempt = 0
-        on_fallback = False
-        while attempt < total:
-            attempt += 1
-            provider = self.fallback_provider if on_fallback else self.primary_provider
-            model = self.fallback_model if on_fallback else self.primary_model
-            call = fallback_call if on_fallback else primary_call
+        last_exc: Optional[BaseException] = None
+        for attempt in range(1, total + 1):
+            use_fallback = attempt % 2 == 0
+            provider = self.fallback_provider if use_fallback else self.primary_provider
+            model = self.fallback_model if use_fallback else self.primary_model
+            call = fallback_call if use_fallback else primary_call
             try:
                 return call()
             except ProviderFailure:
@@ -409,6 +417,7 @@ class _FailoverRetryController:
                 # node boundary must see the raw validation error.
                 raise
             except Exception as exc:
+                last_exc = exc
                 category = classify_provider_error(exc)
                 if category == "permanent" or attempt >= total:
                     raise ProviderFailure(
@@ -419,9 +428,19 @@ class _FailoverRetryController:
                         category=category,
                         detail=f"{type(exc).__name__}: {exc}",
                     ) from exc
-                if not on_fallback:
-                    on_fallback = True
-                    self._emit_switch(category, attempt + 1)
+                next_use_fallback = not use_fallback
+                self._emit_switch(
+                    category,
+                    attempt + 1,
+                    from_provider=provider,
+                    from_model=model,
+                    to_provider=(
+                        self.fallback_provider if next_use_fallback else self.primary_provider
+                    ),
+                    to_model=(
+                        self.fallback_model if next_use_fallback else self.primary_model
+                    ),
+                )
                 backoff = min(self.backoff_cap, 0.5 * (2 ** (attempt - 1)))
                 if not math.isnan(backoff) and backoff > 0:
                     self.sleep(backoff)
@@ -431,7 +450,7 @@ class _FailoverRetryController:
             model=self.fallback_model,
             attempts=total,
             category="transient",
-            detail="retry budget exhausted",
+            detail=f"{type(last_exc).__name__}: {last_exc}",
         )
 
 
@@ -478,11 +497,11 @@ class FailoverRetryingRunnable(Runnable):
 
 
 class FailoverRetryingLLM(Runnable):
-    """Analysis-only Primary→Fallback wrapper with one shared retry budget.
+    """Analysis-only Primary/Fallback wrapper with one shared retry budget.
 
     Sibling of :class:`RetryingLLM`, which stays unchanged for every
-    non-failover path. Attempt 1 always goes to Primary; after a transient
-    Primary failure the remaining budget stays on Fallback; permanent
+    non-failover path. Attempt 1 always goes to Primary; transient failures
+    alternate the remaining budget between Fallback and Primary; permanent
     failures stop immediately; exhaustion raises :class:`ProviderFailure`.
     ``with_structured_output`` and ``bind_tools`` build both route runnables
     with the same schema/tools and share the controller, so every Analysis
