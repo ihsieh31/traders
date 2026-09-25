@@ -1,9 +1,8 @@
 """Plan-A execution-safety regressions (R03/R04/R05/R06/R07/R09/R14).
 
-Formal corrected-behavior tests derived from
-``docs/paper_readiness_20260911_repros.py`` (whose assertions demonstrate
-the DEFECTS). Every transport is faked in-process: no real Alpaca mutation,
-no paid LLM call, no network.
+Formal corrected-behavior tests derived from the historical paper-readiness
+reproduction evidence summarized in `docs/DOCUMENTATION.md`. Every transport
+is faked in-process: no real Alpaca mutation, no paid LLM call, no network.
 """
 
 import json

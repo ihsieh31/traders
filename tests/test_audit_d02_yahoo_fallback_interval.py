@@ -1,6 +1,6 @@
 """D02 regression: the Yahoo fallback must not silently downsample 4h bars.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D02: _yfinance_fallback_
+Audit docs/DOCUMENTATION.md §3.3 D02: _yfinance_fallback_
 data maps any "hour" timeframe to Yahoo's 1h interval, so a 4Hour Alpaca
 request would be answered with 1h bars — different bars under the caller's
 expected granularity. Unsupported intervals must return no data (fail

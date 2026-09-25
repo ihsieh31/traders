@@ -1,6 +1,6 @@
 """D04 regression: regular-session bars must come from the session.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D04: the completion
+Audit docs/DOCUMENTATION.md §3.3 D04: the completion
 clip to the reference session's close lets a bar that STARTS after that
 close (e.g. a 16:30 extended-hours bar at a 17:00 reference) be accepted
 as if it were the regular 16:00-close bar. Regular-session data must

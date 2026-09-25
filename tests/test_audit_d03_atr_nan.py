@@ -1,6 +1,6 @@
 """D03 regression: compute_atr must reject NaN high/low/close inputs.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D03: pandas
+Audit docs/DOCUMENTATION.md §3.3 D03: pandas
 .concat(...).max(axis=1) skips NaN, so a frame whose high column is all
 NaN yields a bogus ATR computed from low/prev_close only (audit repro:
 ATR=1 vs the correct 2.0 reference; HEAD reproduces 0.9). Any non-finite

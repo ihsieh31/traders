@@ -1,6 +1,6 @@
 """D14 regression: YoY must compare the same calendar month last year.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D14: valid_obs[11] is
+Audit docs/DOCUMENTATION.md §3.3 D14: valid_obs[11] is
 merely the 11th previous *observation* — with any missing month it is not
 the year-ago value. The comparison must match last year's calendar month
 of the latest observation's date, and return no YoY line when that month

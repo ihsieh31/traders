@@ -175,7 +175,7 @@ python scripts/run_analysis_ab.py \
   --paper-notional-usd 500
 ```
 
-**請先閱讀下方「目前進度與限制」。** [2026-09-23 修復驗收](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md) 記錄 C01–C04 的離線驗收。本次啟動前修復後完整 suite 為 `1632 passed, 334 subtests passed`。正式 30 日雙帳戶實驗仍須在交易時段完成真實 Paper recovery gate；目前應限於 shadow 或受控驗收方式。
+**請先閱讀下方「目前進度與限制」。** [文件總覽](docs/DOCUMENTATION.md) 記錄 C01–C04 的離線驗收。本次啟動前修復後完整 suite 為 `1632 passed, 334 subtests passed`。正式 30 日雙帳戶實驗仍須在交易時段完成真實 Paper recovery gate；目前應限於 shadow 或受控驗收方式。
 
 #### 正式 30-Day A/B campaign
 
@@ -221,9 +221,9 @@ campaign 會以 Alpaca calendar 固定 30 個 NYSE sessions，未完成前一日
 - **一鍵 auto launcher（unattended 30 sessions）**：`scripts/run_analysis_ab_campaign_auto.py` 逐日 resume 同一 campaign root：`session_completed` 後等待下一個 frozen session 的 effective target 再繼續（沿用 `state["sessions"]`，不自算交易日）；`not_due` 以 ≤300 秒 bounded polling 跨日等待；`market_closed` 是 schedule wait（直接等到當日 effective target，早開盤前啟動不會耗用 retry 預算，early close 由 calendar authority 自動調整）；calendar 讀取使用 campaign Account A read-only credentials；`pair_unfinished` 才使用 `MAX_SAME_DAY_RETRIES` 次有界同日重試；`awaiting_final_settlement` 走有界 settlement 重試，超過預算後交還人工；未指定 `--results-root` 時，create 與後續 resume 都與 coordinator 一致使用 `~/.tradingbuffett/results/ab`（不會落到 CWD），CLI 要求 create 必須同時提供 `--symbol` 與 `--start-date`，且 `--resume` 不得與兩者混用。
 - **Final report 完整性 gate**：finalization 會逐一驗證每個 frozen session 的 on-disk `pair_state.json`（COMPLETED、symbol/date 相符），且最終報告只計入 campaign 自己的 session+symbol pairs（`expected_pair_dirs` 過濾）；pair 數不符時 fail closed，不產出報告。
 
-- 2026-09-23 審查缺陷修復驗收：**離線通過**（詳見 [驗收報告](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md)）。
+- 2026-09-23 審查缺陷修復驗收：**離線通過**（詳見 [文件總覽](docs/DOCUMENTATION.md)）。
 - Real Alpaca Paper recovery gate: **PENDING**（需 market-hours 對真實 Paper API 驗證 recovery/reconciliation 行為）。
-- Gate 的正式人工步驟與證據欄位見 [Real Alpaca Paper recovery gate](docs/REAL_ALPACA_PAPER_RECOVERY_GATE.md)。在該 gate 實際通過且有可靠市值資料來源前，不可宣稱已完成 30 日 campaign 啟動驗收。
+- Gate 的正式人工步驟與證據欄位見 [文件總覽](docs/DOCUMENTATION.md) 的 Paper recovery gate 章節。在該 gate 實際通過且有可靠市值資料來源前，不可宣稱已完成 30 日 campaign 啟動驗收。
 
 ## 產物在哪裡？
 
@@ -275,7 +275,7 @@ python -m pytest -q
 
 ### 剩餘驗證 gate
 
-- **2026-09-23 修復驗收：離線通過。** C01 的 state-only 中斷恢復與 C02–C04 獨立重現均通過；詳見 [驗收報告](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md)。本次啟動前修復後完整 suite：`1632 passed, 334 subtests passed`。
+- **2026-09-23 修復驗收：離線通過。** C01 的 state-only 中斷恢復與 C02–C04 獨立重現均通過；詳見 [文件總覽](docs/DOCUMENTATION.md)。本次啟動前修復後完整 suite：`1632 passed, 334 subtests passed`。
 - **真實 Paper recovery 驗證：尚未完成。** 必須在交易時段內，透過未修改的 production execution path 完成安全的 Paper submit/cancel，以及中斷後以原本的 `decision_id`、`client_order_id` 與 broker order 恢復/認領，並證明不會重複下單。
 - 2026-09-22 的 pre-30-day acceptance 當時因市場收盤，無法安全建立 production path 所需的測試訂單；驗收正確地沒有繞過市場時鐘或送出不受控訂單。
 
@@ -287,11 +287,7 @@ python -m pytest -q
 - [Architecture Guide](ARCHITECTURE.md)：模組、資料流與執行邊界細節
 - [Local LLM Guide](LOCAL_LLM_GUIDE.md)：local/OpenAI-compatible 模型設定
 - [Project Goals and Status](PROJECT_GOALS_AND_STATUS.md)：完整階段歷史與驗收紀錄（含歷史狀態）
-- [2026-09-22 最終深度審查](docs/FINAL_30D_DEEP_REVIEW_2026-09-22.md)：修復前的審查與重現基準
-- [2026-09-23 連續 30 日審查](docs/CONTINUOUS_30D_FINAL_AUDIT_2026-09-23.md)：修復前缺陷證據與離線重現結果
-- [2026-09-23 修復驗收](docs/CONTINUOUS_30D_ACCEPTANCE_2026-09-23.md)：C01–C04 離線再次驗收與前次失敗紀錄
-- [2026-09-22 Pre-30-Day Acceptance](docs/PRE_30D_SMOKE_RECOVERY_ACCEPTANCE.md)：最近一次 shadow、broker preflight 與待補的 Paper recovery 驗收
-- [Real Alpaca Paper recovery gate](docs/REAL_ALPACA_PAPER_RECOVERY_GATE.md)：正式 Paper crash/restart 人工驗收程序與證據清單
+- [文件總覽](docs/DOCUMENTATION.md)：合併後的審查、投資方法評估、A/B 設計、Paper recovery gate、來源與 SHA-256 索引
 
 ## 沿革與授權
 

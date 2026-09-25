@@ -2,7 +2,6 @@
 import ast
 import importlib
 import inspect
-import json
 from pathlib import Path
 
 import pytest
@@ -26,7 +25,7 @@ OWNERS = {
 }
 
 
-def test_boundary_document_ownership_matches_inventory():
+def test_boundary_document_ownership_matches_consolidated_summary():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -34,12 +33,11 @@ def test_boundary_document_ownership_matches_inventory():
     )
     sync = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sync)
-    inventory = json.loads((ROOT / 'docs/refactoring/execution-long-run-inventory.json').read_text())
-    document = (ROOT / 'docs/refactoring/execution-long-run-boundaries.md').read_text()
+    document = (ROOT / 'docs/DOCUMENTATION.md').read_text()
     assert document.count(sync.START) == document.count(sync.END) == 1
     actual = sync.START + document.split(sync.START, 1)[1].split(sync.END, 1)[0] + sync.END
-    assert actual == sync.render_ownership(inventory), (
-        'Ownership drift: run python scripts/refactoring/sync_boundary_ownership.py'
+    assert actual == sync.render_ownership(), (
+        'Ownership drift: update the ownership summary in docs/DOCUMENTATION.md'
     )
 
 

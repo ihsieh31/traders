@@ -147,7 +147,7 @@ through `ExecutionService`, every universe decision through Phase C screening,
 and every analysis through the normal graph. Explicit compatibility wrappers
 retain original imports and call-time dependency replacement; the support
 modules do not own a second stop flag or dependency container. Detailed contracts
-and all original symbol ownership are recorded under `docs/refactoring/`.
+and the consolidated ownership summary and historical source index are recorded in `docs/DOCUMENTATION.md`.
 
 1. **Setup + preflight** — non-secret config lives in
    `~/.tradingbuffett/long_run/config.json` (a write of suspected secret

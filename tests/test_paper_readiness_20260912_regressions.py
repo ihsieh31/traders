@@ -1,9 +1,10 @@
 """Formal corrected-behavior regressions for the 2026-09-12 paper-readiness
 review (N01-N05, N07-N12, N14-N16).
 
-Inverted from the defect evidence in ``docs/paper_readiness_20260912_repros.py``:
-passing here proves the FIXED behavior. Every transport is faked in-process —
-no network, no real Alpaca mutation, no paid LLM call, no sleeping.
+Inverted from the historical defect evidence summarized in
+`docs/DOCUMENTATION.md`: passing here proves the FIXED behavior. Every
+transport is faked in-process — no network, no real Alpaca mutation, no paid
+LLM call, no sleeping.
 """
 
 import importlib.util

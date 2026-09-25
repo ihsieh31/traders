@@ -1,6 +1,6 @@
 """D07 regression: PositionSizer must reject unknown numeric inputs.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D07: NaN
+Audit docs/DOCUMENTATION.md §3.3 D07: NaN
 current_gross_exposure (unknown book state) is silently coerced to 0 and
 the sizing approves as if the portfolio were empty; NaN atr silently uses
 the default stop. Unknown exposure must fail closed — the engine cannot

@@ -1,6 +1,6 @@
 """D08 regression: portfolio min_size_factor must stay within (0, 1].
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D08: the floor is taken
+Audit docs/DOCUMENTATION.md §3.3 D08: the floor is taken
 as-is from config, so min_size_factor=2 *multiplies* the requested size
 ($1000 -> $2000 in the audit repro). A floor above 1 is invalid — it can
 only ever enlarge a trade. Invalid configs must be clamped to 1.0

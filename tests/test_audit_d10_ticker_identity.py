@@ -1,6 +1,6 @@
 """D10 regression: ticker identity must be preserved.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D10:
+Audit docs/DOCUMENTATION.md §3.3 D10:
 - Stock share-class separators are stripped (BRK.B -> BRKB), changing the
   vendor identity of the symbol.
 - Crypto quote currency is forced to USD (BTC/USDC reported as BTC/USD),

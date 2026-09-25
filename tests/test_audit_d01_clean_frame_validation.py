@@ -1,6 +1,6 @@
 """D01 regression: _clean_frame must reject numerically invalid OHLCV rows.
 
-Audit docs/AUDIT_SECOND_OPINION_2026-09-17.md §3.3 D01: _clean_frame
+Audit docs/DOCUMENTATION.md §3.3 D01: _clean_frame
 validates timestamps and column presence but not values, so NaN prices,
 negative prices, inverted OHLC relationships (high < low), and negative
 volumes reach the indicator pipeline. volume=0 is legitimate (no-trade
