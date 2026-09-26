@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from math import isfinite
 from typing import Any, Mapping, Optional
 
-from tradingagents.execution.authority import broker_status_to_local
+from tradingagents.execution.authority import broker_status_to_local, canonical_symbol
 
 # Single source of terminal truth: the authority module's broker->local
 # status mapping (R06). An order is live unless the broker status maps to
@@ -95,7 +95,7 @@ def outstanding_increasing_notional(
         for sym, price in reference_prices.items():
             if sym is None or price is None:
                 continue
-            key = str(sym).upper().replace("/", "")
+            key = canonical_symbol(sym)
             try:
                 value = float(price)
             except (TypeError, ValueError):
@@ -259,8 +259,15 @@ def evaluate_opening_exposure(
     the candidate symbol's execution quote and only ever populates that one
     symbol's entry — it is never a global fallback price.
     """
-    sector_mapping = dict(sector_mapping or {})
-    normalized = (symbol or "").upper().replace("/", "")
+    sector_mapping = {
+        canonical_symbol(key): value
+        for key, value in dict(sector_mapping or {}).items()
+    }
+    # Single canonical symbol rule, shared with the authority snapshot's
+    # keys (which strip both "/" and "-"): a hyphenated listing ("RDS-A")
+    # must hit the same position/order/mapping keys the broker snapshot
+    # stores, or its exposure becomes invisible to every cap below.
+    normalized = canonical_symbol(symbol)
 
     price_map: dict[str, float] = dict(reference_prices or {})
     if quote_price is not None:
@@ -371,7 +378,7 @@ def evaluate_opening_exposure(
                 sector_exposure_used += abs(float(held.market_value))
 
         same_sector_symbols = {
-            str(sym or "").upper().replace("/", "")
+            canonical_symbol(sym or "")
             for sym, sec in sector_mapping.items()
             if sec == symbol_sector
         }

@@ -837,6 +837,20 @@ class ExecutionService:
                 if closing_specs and not self._verified_reducing_exit(
                     snapshot, intent_dict.get("symbol", ""), closing_specs
                 ):
+                    # Mirror the sibling race paths above: a verification
+                    # failure must not leave durably-committed close rows
+                    # behind — recovery would resubmit them on restart as a
+                    # real close made outside any analyzed decision. And with
+                    # protections already canceled, the protection-gap
+                    # invariant owns the verdict before a plain pause.
+                    if prepared_outbox is not None:
+                        self._abandon_prepared_rows(prepared_outbox)
+                    gap = self._evaluate_protection_gap(
+                        broker, snapshot, intent_dict.get("symbol", ""),
+                        canceled_protections=canceled_protections,
+                    )
+                    if gap is not None:
+                        return gap
                     paused = self._paused_result(
                         snapshot,
                         list(reconciliation.reasons)

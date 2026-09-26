@@ -445,6 +445,20 @@ class RunAuditLogger:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_name, path)
+            # Integrity sidecar: a persisted run log is audit evidence; the
+            # digest lets any reader detect post-hoc edits the way the
+            # selection store's seal does for its cache. Best-effort only:
+            # the run JSON itself is already durably committed above, so a
+            # sidecar write failure must never break the logging flow.
+            try:
+                import hashlib
+
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                path.with_name(path.name + ".sha256").write_text(
+                    f"{digest}  {path.name}\n", encoding="utf-8"
+                )
+            except OSError:
+                pass
         except BaseException:
             try:
                 os.unlink(tmp_name)

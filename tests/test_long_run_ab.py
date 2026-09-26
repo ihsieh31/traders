@@ -326,7 +326,7 @@ def test_ab_shared_screening_skips_after_submission_deadline(tmp_path):
     calls = []
     deps = lr.LongRunDeps(
         screening_fn=lambda *_a, **_k: calls.append(1) or initial,
-        now_fn=lambda: datetime(2026, 9, 23, 18, 0, tzinfo=timezone.utc),
+        now_fn=lambda: datetime(2026, 9, 23, 20, 0, tzinfo=timezone.utc),
     )
     journal = lr.run_ab_daily_round(
         run_id="lr-ab-deadline", session_date=SESSION,
@@ -335,6 +335,111 @@ def test_ab_shared_screening_skips_after_submission_deadline(tmp_path):
     )
     assert calls == []
     assert journal["shared_screening"]["reason"] == "SESSION_SUBMISSION_DEADLINE"
+    assert journal["status"] == "MISSED"
+    assert lr.settled_sessions("lr-ab-deadline") == [SESSION]
+
+
+def test_ab_shared_screening_runs_between_deadline_and_close(tmp_path, monkeypatch):
+    # The A/B submission fence is the authoritative close minus 15 minutes,
+    # NOT target+30min: a full-market pair runs up to 40 sequential analyses
+    # between 11:00 and the fence, so a 30-minute fence silently no-trades
+    # the whole campaign. A start at 14:00 ET (16:00 close) was settled
+    # MISSED under the old fence before any screening ran; it must screen.
+    # Arm preparation is stubbed here — arm execution has its own coverage
+    # and this test pins only the coordinator's fence decision.
+    root, config, _selection_value, initial, _deps = _ab_round_setup(tmp_path)
+    calls = []
+    deps = lr.LongRunDeps(
+        screening_fn=lambda *_a, **_k: calls.append(1) or initial,
+        now_fn=lambda: datetime(2026, 9, 23, 18, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(lr, "run_daily_round", lambda **_kwargs: lr.new_round_journal(SESSION, []))
+    # The Berkshire arm's held-review plan preparation consults broker
+    # positions; stub it so this test never constructs a real broker client.
+    monkeypatch.setattr(
+        "tradingagents.screening.pipeline.prepare_screening_round_from_selection",
+        lambda _runtime, selection, **_kwargs: _plan(selection),
+    )
+    journal = lr.run_ab_daily_round(
+        run_id="lr-ab-mid-window", session_date=SESSION,
+        long_cfg={"ab_results_root": str(root)}, runtime=config, deps=deps,
+        schedule_info={"effective_target": "11:00"},
+    )
+    assert calls == [1]
+    assert journal["shared_screening"]["status"] == "SCREENING_COMPLETE"
+    assert journal["status"] != "MISSED"
+
+
+@pytest.mark.parametrize("field,value", [("schema_version", 999), ("status", "BROKEN")])
+def test_ab_resume_rejects_invalid_coordinator_before_screening(tmp_path, field, value):
+    journal = lr.new_round_journal(SESSION, [])
+    journal.update({"mode": "ab", field: value})
+    lr.save_round_journal("corrupt-ab", journal)
+    before = lr.round_path("corrupt-ab", SESSION).read_bytes()
+    with patch.object(lr, "_read_ab_selection_artifact", side_effect=AssertionError("screening reached")):
+        with pytest.raises(lr.LongRunStop, match="STATE_CORRUPT"):
+            lr.run_ab_daily_round(
+                run_id="corrupt-ab", session_date=SESSION,
+                long_cfg={"ab_results_root": str(tmp_path / "ab")},
+                runtime=_screening_config(tmp_path),
+            )
+    assert lr.round_path("corrupt-ab", SESSION).read_bytes() == before
+
+
+def test_ab_resume_rejects_completed_arm_with_unknown_schema(tmp_path):
+    _run_interleaved_ab(tmp_path)
+    rounds = tmp_path / "state" / "runs"
+    for run_id, field, value in (("lr-ab-fixture", "status", "RUNNING"),
+                                 ("lr-ab-fixture-traders", "schema_version", 999)):
+        path = rounds / run_id / "rounds" / f"{SESSION}.json"
+        journal = lr.read_json(path)
+        journal[field] = value
+        lr.atomic_write_json(path, journal)
+    with pytest.raises(lr.LongRunStop, match="STATE_CORRUPT"):
+        _run_interleaved_ab(tmp_path)
+
+
+def test_ab_analysis_recovery_does_not_accept_invalid_intent():
+    journal = lr.new_round_journal(SESSION, ["AAPL"])
+    journal["symbols"]["AAPL"]["status"] = lr.SYMBOL_ANALYZING
+    prepared = lr._PreparedDailyRound(
+        run_id="ab-recovery-traders", session_date=SESSION, long_cfg={},
+        runtime={"shared_evidence_dir": "unused"}, schedule_info={},
+        deps=lr.LongRunDeps(), ends_at=None, journal=journal, service=None,
+        graph_factory=None, broker_factory=None,
+        recovery_can_submit=lambda: False, session_submit_allowed=lambda: False,
+    )
+    with patch.object(lr, "_build_graph_config", return_value={}), \
+         patch.object(lr, "_recover_intent_from_run_log", return_value={"action": "BUY"}):
+        lr._run_prepared_round_symbols(prepared, phase="analysis")
+    entry = journal["symbols"]["AAPL"]
+    assert entry["status"] == lr.SYMBOL_DONE
+    assert entry["trade_intent"] is None
+    assert entry["execution_result_summary"]["error"] == "SESSION_SUBMISSION_DEADLINE"
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_continuous_extension_retries_only_calendar_before_mutating_window(tmp_path, persistent):
+    state = {"run_id": "extension-retry", "mode": "ab", "status": "RUNNING",
+             "continuous": True, "ends_at": "2026-09-24T18:00:00+00:00",
+             "expected_sessions": [SESSION]}
+    original = copy.deepcopy(state)
+    sleeps = []
+    deps = lr.LongRunDeps(sleep_fn=sleeps.append)
+    results = ([RuntimeError("temporary calendar outage")] * 3 if persistent else
+               [RuntimeError("temporary calendar outage"), [date(2026, 9, 24)]])
+    with patch.object(lr, "fetch_session_dates", side_effect=results) as fetch:
+        if persistent:
+            with pytest.raises(lr.LongRunStop, match="CALENDAR_UNAVAILABLE"):
+                lr.extend_continuous_window(state, {"duration_calendar_days": 1}, deps)
+            assert state == original
+        else:
+            lr.extend_continuous_window(state, {"duration_calendar_days": 1}, deps)
+            assert state["ends_at"] == "2026-09-25T18:00:00+00:00"
+            assert state["expected_sessions"] == [SESSION, "2026-09-24"]
+            assert lr.load_active_state() == state
+    assert fetch.call_count == (3 if persistent else 2)
+    assert sleeps == [lr.SCHEDULER_RETRY_DELAY_SECONDS] * (fetch.call_count - 1)
 
 
 def test_unresolvable_session_target_does_not_silently_skip_the_round(
@@ -824,6 +929,21 @@ def test_invalid_intent_blocks_both_arms_for_symbol(tmp_path):
     assert result["status"] == "COMPLETED"
     assert not any(event[0] == "execution" and event[2] == "T00" for event in events)
     assert result["pair_evidence"]["T00"]["status"] == "FAILED"
+    counterpart = lr.read_json(tmp_path / "state" / "runs" / "lr-ab-fixture-berkshire"
+                               / "rounds" / f"{SESSION}.json")
+    assert counterpart["symbols"]["T00"]["status"] == lr.SYMBOL_DONE
+    assert counterpart["symbols"]["T00"]["execution_result_summary"]["no_trade"]
+
+
+def test_deadline_between_paired_analyses_blocks_unpaired_execution(tmp_path):
+    now = datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc)
+    result, events, _ = _run_interleaved_ab(
+        tmp_path, clock=[now], deadline=now + timedelta(seconds=30),
+        analysis_duration=timedelta(minutes=1),
+    )
+    assert result["status"] == "COMPLETED"
+    assert not any(event[0] == "execution" for event in events)
+    assert result["pair_evidence"]["T00"]["status"] == "FAILED"
 
 
 def test_pair_evidence_hash_mismatch_blocks_execution(tmp_path):
@@ -904,7 +1024,8 @@ def test_resume_between_arms_does_not_repeat_completed_arm(tmp_path):
     assert len(screen_calls) == 1
 
 
-def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tmp_path):
+@pytest.mark.parametrize("completed", [True, False])
+def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tmp_path, completed):
     state = {
         "run_id": "lr-ab-report", "mode": "ab", "status": "COMPLETED",
         "started_at": "2026-09-23T00:00:00+00:00", "ends_at": "2026-10-23T00:00:00+00:00",
@@ -913,9 +1034,9 @@ def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tm
     }
     root_round = lr.new_round_journal(SESSION, [])
     root_round.update({
-        "mode": "ab", "status": "COMPLETED",
-        "shared_screening": {"selection_hash": "f" * 64},
-        "screening": {"top20": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]},
+        "mode": "ab", "status": "COMPLETED" if completed else "STOPPED",
+        "shared_screening": {"selection_hash": "f" * 64, "top20": ["AAPL", "MSFT"]},
+        "screening": {"top20": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]} if completed else {},
     })
     lr.save_round_journal(state["run_id"], root_round)
     for backend, signal in (("traders", "BUY"), ("berkshire", "HOLD")):
@@ -923,6 +1044,8 @@ def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tm
         arm_round = lr.new_round_journal(SESSION, ["AAPL", "MSFT"])
         arm_round["status"] = "COMPLETED"
         arm_round["symbols"]["AAPL"].update({"status": "DONE", "signal": signal})
+        # Shared holdings outside Top20 are account management, not paired inputs.
+        arm_round["symbols"]["HELD"] = {"status": "DONE", "signal": signal}
         arm_round["symbols"]["AAPL"]["execution_started_at"] = (
             "2026-09-23T15:00:00+00:00" if backend == "traders"
             else "2026-09-23T15:00:02+00:00"
@@ -952,6 +1075,8 @@ def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tm
         )
 
     assert report["shared_screening"]["selection_hashes"][SESSION] == "f" * 64
+    assert report["shared_screening"]["top20_by_day"][SESSION] == ["AAPL", "MSFT"]
+    assert report["signal_disagreement"]["shared_symbol_session_count"] == 1
     assert report["comparison"]["traders"]["account_ref"] == "account-a"
     assert report["comparison"]["berkshire"]["account_ref"] == "account-b"
     assert report["signal_disagreement"]["disagreements"] == [
@@ -965,3 +1090,29 @@ def test_ab_report_compares_accounts_and_marks_unreliable_metrics_unavailable(tm
         if row["symbol"] == "AAPL"
     )["execution_time_gap_seconds"] == 2
     assert report["metrics_unavailable"]["realized_pl"]
+
+
+def test_ab_report_accounts_for_shared_screening_cost_once(tmp_path):
+    root = tmp_path / "ab"
+    runtime = dict(DEFAULT_CONFIG)
+    traders = apply_ab_backend_runtime_paths(runtime, "traders", root)
+    log_dir = Path(traders["results_dir"]) / "__SCREENING__" / "TradingAgentsStrategy_logs" / "runs"
+    log_dir.mkdir(parents=True)
+    for observation, tokens in (("ab-cost", 123), ("ab-cost-traders", 7), ("other-run", 999)):
+        (log_dir / f"{observation}.json").write_text(json.dumps({
+            "symbol": "__SCREENING__", "trade_date": SESSION,
+            "metadata": {"long_run_observation_id": observation},
+            "summary": {"total_llm_tokens": tokens}, "events": [],
+        }))
+    report = lr.aggregate_ab_final_report(
+        {"run_id": "ab-cost", "expected_sessions": [],
+         "started_at": "2026-09-23T00:00:00+00:00", "ends_at": "2026-09-24T00:00:00+00:00"},
+        {"ab_results_root": str(root)}, runtime,
+    )
+    shared = report["shared_screening"]["llm_operations"]
+    assert shared["available"]
+    assert shared["totals"]["total_tokens"] == 123
+    assert report["comparison"]["traders"]["llm_operations"]["totals"]["total_tokens"] == 7
+    assert report["comparison"]["berkshire"]["llm_operations"]["totals"]["total_tokens"] == 0
+    md_path, _ = lr.write_ab_final_report(report)
+    assert "Shared LLM tokens: 123" in Path(md_path).read_text()

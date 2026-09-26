@@ -11,7 +11,7 @@ from typing import Annotated, Union, Optional, List, Dict, Any, TYPE_CHECKING
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest, StockLatestQuoteRequest, CryptoLatestQuoteRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.data.enums import DataFeed
+from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     GetAssetsRequest,
@@ -285,39 +285,30 @@ def get_alpaca_crypto_client() -> CryptoHistoricalDataClient:
 
 PAPER_API_BASE_URL = "https://paper-api.alpaca.markets"
 
-_READ_ONLY_MUTATION_METHODS = frozenset(
-    {
-        "submit_order",
-        "cancel_order_by_id",
-        "cancel_orders",
-        "replace_order_by_id",
-        "close_position",
-        "close_all_positions",
-        "delete_order_by_id",
-        "exercise_options_position",
-    }
-)
-
 
 class PaperTradingEnforcementError(RuntimeError):
     """Raised when any live/non-paper trading path is attempted (fail closed)."""
 
 
 class ReadOnlyTradingClient:
-    """Delegate Alpaca reads while blocking every known mutation method."""
+    """Delegate Alpaca reads while blocking every non-read SDK method.
+
+    Allowlist, not denylist: a name-based mutation blocklist silently rots
+    as the SDK grows new mutation entry points (batch submits, options
+    exercises, raw transport helpers). Only the read surface this codebase
+    uses — the ``get_*`` family — is delegated; every other attribute fails
+    closed instead of falling through to the underlying client.
+    """
 
     def __init__(self, client: TradingClient):
         self._client = client
 
     def __getattr__(self, name: str):
-        if name in _READ_ONLY_MUTATION_METHODS:
-            def blocked(*args, **kwargs):
-                raise PaperTradingEnforcementError(
-                    f"Alpaca read-only mode blocks TradingClient.{name}"
-                )
-
-            return blocked
-        return getattr(self._client, name)
+        if name.startswith("get_"):
+            return getattr(self._client, name)
+        raise PaperTradingEnforcementError(
+            f"Alpaca read-only mode blocks TradingClient.{name}"
+        )
 
 
 class ExecutionTradingClient:
@@ -709,7 +700,8 @@ class AlpacaUtils:
         end_date: Optional[Union[str, datetime]] = None,
         timeframe: Union[str, TimeFrame] = "1Day",
         save_path: Optional[str] = None,
-        feed: DataFeed = DataFeed.IEX
+        feed: DataFeed = DataFeed.IEX,
+        adjustment: str = "split",
     ) -> pd.DataFrame:
         """
         Fetch historical OHLCV data for a stock or crypto symbol.
@@ -721,6 +713,12 @@ class AlpacaUtils:
             timeframe: e.g. "1Min","5Min","15Min","1Hour","1Day" or a TimeFrame instance
             save_path: if provided, path to write a CSV
             feed: DataFeed enum (default IEX)
+            adjustment: equity price-adjustment policy ("split", "dividend",
+                "all", "raw"). Defaults to "split" so the analyst's technical
+                data uses the same adjusted series as the screening scan —
+                raw bars would render any split inside the lookback window
+                as a fake gap and corrupt every indicator derived from it.
+                Ignored for crypto pairs (crypto bars have no adjustments).
 
         Returns:
             pandas DataFrame with columns ['timestamp','open','high','low','close','volume']
@@ -740,6 +738,15 @@ class AlpacaUtils:
             client = get_alpaca_crypto_client() if is_crypto else get_alpaca_stock_client()
 
             # build request params; always use a list for symbol_or_symbols
+            _adjustments = {
+                "raw": Adjustment.RAW,
+                "split": Adjustment.SPLIT,
+                "dividend": Adjustment.DIVIDEND,
+                "all": Adjustment.ALL,
+            }
+            adjustment_value = _adjustments.get(str(adjustment or "split").lower())
+            if adjustment_value is None and not is_crypto:
+                raise ValueError(f"unsupported bar adjustment: {adjustment!r}")
             params = (
                 CryptoBarsRequest(
                     symbol_or_symbols=[symbol],
@@ -753,7 +760,8 @@ class AlpacaUtils:
                     timeframe=tf,
                     start=start,
                     end=end,
-                    feed=feed
+                    feed=feed,
+                    adjustment=adjustment_value,
                 )
             )
             bars = client.get_crypto_bars(params) if is_crypto else client.get_stock_bars(params)

@@ -21,6 +21,26 @@ def normalize_action(raw) -> Optional[str]:
     return ACTION_ALIASES.get(str(raw).strip().upper()) if raw is not None else None
 
 
+def recorded_action(run: dict) -> Optional[str]:
+    """The replay signal for one recorded run: the typed intent's action.
+
+    ``summary.final_signal`` is a parsed LABEL — for a trading-mode decision
+    whose intent never materialized (or an investment-mode SHORT proposal
+    the canonical plan reduced to a hold) it can disagree with the
+    executable intent. Replaying the label would trade orders the system
+    never placed, so the intent action is authoritative and the parsed
+    label is only a fallback for runs without a final intent.
+    """
+    summary = run.get("summary") or {}
+    state = (run.get("snapshots") or {}).get("final_state") or {}
+    intent = state.get("final_trade_intent")
+    if isinstance(intent, dict):
+        action = normalize_action(intent.get("action"))
+        if action:
+            return action
+    return normalize_action(summary.get("final_signal"))
+
+
 def _sanitize_symbol_for_path(symbol: str) -> str:
     return re.sub(r"[^\w\-.]+", "_", symbol.strip()) or "unknown"
 
@@ -39,7 +59,7 @@ def load_recorded_runs(
             if payload.get("status") != "completed" or payload.get("symbol") != symbol:
                 continue
             summary = payload.get("summary") or {}
-            if not normalize_action(summary.get("final_signal")):
+            if not recorded_action(payload):
                 continue
             if summary.get("llm_call_events", 0) < 1 or summary.get("tool_events", 0) < 1:
                 continue
@@ -64,5 +84,6 @@ def load_recorded_runs(
 def load_recorded_signals(
     symbol: str, eval_results_dir: str | Path | None = None
 ) -> Dict[str, str]:
-    return {day: normalize_action(run["summary"]["final_signal"])
-            for day, run in load_recorded_runs(symbol, eval_results_dir).items()}
+    return {day: action
+            for day, run in load_recorded_runs(symbol, eval_results_dir).items()
+            if (action := recorded_action(run))}

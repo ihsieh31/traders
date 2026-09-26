@@ -389,22 +389,15 @@ class SafetyGuard:
         a percentage-change baseline, so only that value is treated as unavailable.
         Risk-reducing exits bypass exposure and circuit-breaker checks so a
         loss halt cannot trap an existing position. The explicit kill switch
-        still blocks all broker order flow.
+        still blocks all broker order flow — including when the safety layer
+        itself is disabled, because the flag file is an operator control that
+        no configuration may override.
         """
-        if not self.enabled:
-            return SafetyVerdict(
-                allowed=True, checks={"safety": {"status": "skipped", "detail": "disabled"}}
-            )
-
         reasons: List[str] = []
         codes: List[str] = []
         checks: Dict[str, dict] = {}
-        equity = _finite_float(account.get("equity")) if account else None
-        last_equity = _finite_float(account.get("last_equity")) if account else None
-        if last_equity == 0.0:
-            last_equity = None  # a 0 baseline can't produce a meaningful change %
 
-        # Kill switch dominates everything.
+        # Kill switch dominates everything, including a disabled safety layer.
         if self.kill_switch_active():
             reason = self.kill_switch_reason() or "engaged"
             reasons.append(f"Kill switch is engaged: {reason}")
@@ -412,6 +405,19 @@ class SafetyGuard:
             checks["kill_switch"] = {"status": "fail", "detail": reason}
         else:
             checks["kill_switch"] = {"status": "pass"}
+
+        if not self.enabled:
+            return SafetyVerdict(
+                allowed=not reasons,
+                reasons=reasons,
+                checks=checks,
+                reason_codes=codes,
+            )
+
+        equity = _finite_float(account.get("equity")) if account else None
+        last_equity = _finite_float(account.get("last_equity")) if account else None
+        if last_equity == 0.0:
+            last_equity = None  # a 0 baseline can't produce a meaningful change %
 
         if risk_reducing:
             for name in (

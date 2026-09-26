@@ -143,6 +143,16 @@ class GlobalRunnerLockBusy(RuntimeError):
 
 
 def global_runner_lock_path() -> Path:
+    """Application-wide runner lock location.
+
+    Lives in the app home by default (one lock per machine/user across all
+    modes), but honors the ``LONG_RUN_DIR`` override exactly like every
+    other long-run state file, so tests and sandboxed operators never write
+    the operator's real home directory.
+    """
+    override = get_env("LONG_RUN_DIR")
+    if override:
+        return validate_app_path(override, field="long_run_dir") / "runner.global.lock"
     return app_home() / "runner.global.lock"
 
 

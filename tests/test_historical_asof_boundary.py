@@ -136,17 +136,30 @@ class AlpacaWindowCutoffTests(unittest.TestCase):
     def test_historical_excludes_rows_after_cutoff(self):
         from tradingagents.dataflows import interface
 
+        cutoff = datetime.strptime(_past_date(5), "%Y-%m-%d")
+        # The violating row is defined RELATIVE to the analysis cutoff, not
+        # hard-coded: a hard-coded 2026-09 date silently stops being "after
+        # the cutoff" as the clock moves, and then deleting the second-layer
+        # cutoff cannot fail this test (verified by mutation on 2026-09-26).
+        bars = _bars(
+            [
+                (cutoff - timedelta(days=6)).strftime("%Y-%m-%dT00:00:00Z"),
+                (cutoff - timedelta(days=2)).strftime("%Y-%m-%dT00:00:00Z"),
+                (cutoff + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z"),
+            ]
+        )
         with patch.object(
             interface.AlpacaUtils,
             "get_stock_data",
-            staticmethod(lambda *a, **k: self._bars_with_future_row()),
+            staticmethod(lambda *a, **k: bars),
         ):
             report = interface.get_alpaca_data_window(
                 "AAPL", curr_date=_past_date(5), look_back_days=30
             )
-        future_date = (datetime.now(NY_TZ) - timedelta(days=4)).strftime("%Y-%m-%d")
-        self.assertNotIn(future_date, report)
-        self.assertIn("2026-08-25", report)
+        self.assertNotIn(
+            (cutoff + timedelta(days=1)).strftime("%Y-%m-%d"), report
+        )
+        self.assertIn((cutoff - timedelta(days=2)).strftime("%Y-%m-%d"), report)
 
     def test_historical_never_calls_latest_quote(self):
         from tradingagents.dataflows import interface

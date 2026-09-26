@@ -227,6 +227,75 @@ class SnapshotAndRetryTests(unittest.TestCase):
 
 
 class RecoveryAndReconciliationTests(unittest.TestCase):
+    def test_close_with_surviving_protection_abandons_committed_rows(self):
+        # Regression for the durable-close leak: a close intent commits its
+        # outbox rows BEFORE canceling the position's protections. If a
+        # protection DELETE fails and the child survives (R03 absorbs the
+        # race), the verified-exit check refuses the close — and that return
+        # used to leave the committed rows behind, so a restart resubmitted
+        # a real sell outside any analyzed decision. The return must abandon
+        # the rows (the still-live protection keeps the position safe; the
+        # next analysis retries the close on fresh facts).
+        class FlakyCancelBroker(FakeBroker):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self.cancel_calls = 0
+
+            def cancel_order_by_id(self, order_id):
+                self.cancel_calls += 1
+                raise TimeoutError("cancel transport lost")
+
+            def get_order_by_id(self, order_id, filter=None):
+                return SimpleNamespace(id=order_id, legs=[])
+
+        broker = FlakyCancelBroker(positions=[_position(qty=100, market_value=10000.0)])
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = _service(tmp, broker)
+            svc.store.ensure_account_binding("paper-1")
+            _, lot_rows, _ = svc.store.create_outbox(
+                decision_id="dec-lot", run_id=None, symbol="AAPL",
+                action="BUY", target_position="LONG", payload_json="{}",
+                orders=[{"client_order_id": "ta-lot-1", "symbol": "AAPL",
+                         "side": "buy", "quantity": 100.0, "notional": None}],
+            )
+            svc.store.record_fill(
+                execution_id="fill-lot", order_id=lot_rows[0]["order_id"],
+                qty=100.0, price=100.0,
+            )
+            svc.store.transition_order(lot_rows[0]["order_id"], "FILLED")
+            svc.store.sync_order_from_broker(
+                lot_rows[0]["order_id"], "FILLED",
+                broker_order_id="lot-1", filled_qty=100.0,
+            )
+            parent = svc.store.get_order(lot_rows[0]["order_id"])
+            svc.store.register_protective_child(parent, SimpleNamespace(
+                broker_order_id="protect-1", client_order_id="ta-protect-1",
+                symbol="AAPL", side="sell", qty=100.0,
+            ))
+            broker.orders = [SimpleNamespace(
+                id="lot-1", client_order_id="ta-lot-1", symbol="AAPL",
+                side="buy", status="filled", qty="100", filled_qty="100",
+                filled_avg_price="100", updated_at=datetime.now(timezone.utc),
+            ), SimpleNamespace(
+                id="protect-1", client_order_id="ta-protect-1", symbol="AAPL",
+                side="sell", status="new", type="stop", qty="100",
+                filled_qty="0", filled_avg_price=None,
+                updated_at=datetime.now(timezone.utc),
+            )]
+            result = svc.execute(trade_intent=_intent(action="SELL", current="LONG"))
+            self.assertFalse(result["success"])
+            self.assertEqual(broker.submit_calls, 0)  # close never re-POSTed here
+            self.assertEqual(broker.cancel_calls, 1)  # DELETE attempted, child survived
+            seeded_ids = {"ta-lot-1", "ta-protect-1"}
+            close_rows = [r for r in svc.store.list_all_orders()
+                          if r["client_order_id"] not in seeded_ids]
+            self.assertTrue(close_rows)
+            for row in close_rows:
+                self.assertNotIn(
+                    str(row["status"]).upper(), ("PENDING", "SUBMITTING"),
+                    f"row {row['client_order_id']} left committable: {row['status']}",
+                )
+
     def test_account_status_uses_ledger_with_protective_parent_links(self):
         broker = FakeBroker()
         with tempfile.TemporaryDirectory() as tmp:

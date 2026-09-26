@@ -36,3 +36,26 @@ def isolate_operator_llm_endpoint(monkeypatch):
     """Keep the operator's local .env routing from changing unit-test defaults."""
     monkeypatch.delenv("TRADINGBUFFETT_OPENAI_USE_LOCAL", raising=False)
     monkeypatch.delenv("TRADINGBUFFETT_OPENAI_BASE_URL", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def restore_global_trading_config():
+    """Snapshots and restores the process-wide trading config around each test.
+
+    The long-run/A-B coordinator installs its runtime as the global config
+    (set_config) before any broker-mutating path — by design, since the
+    execution gates read it. A/B rounds that now proceed deep enough to do
+    that installation must not leak the runtime into later tests: a leaked
+    ``auto_screening_enabled`` would entry-gate unrelated tests to a
+    selection cache they never wrote.
+    """
+    from tradingagents.dataflows import config as _config_module
+
+    snapshot = _config_module.get_config()
+    yield
+    # A merge-only restore would keep keys a test ADDED (e.g. the A/B
+    # runtime's ``_alpaca_account_profile``, which reroutes the client
+    # factory to per-account credentials). Rebuild from the defaults first,
+    # then merge the pre-test snapshot back over it.
+    _config_module._config = None
+    _config_module.set_config(snapshot)

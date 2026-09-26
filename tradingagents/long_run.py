@@ -35,7 +35,10 @@ from tradingagents.long_run_support import sessions as _sessions
 from tradingagents.long_run_support import preflight as _preflight
 from tradingagents.long_run_support import symbols as _symbols
 from tradingagents.long_run_support import round_support as _round_support
-from tradingagents.long_run_support.sessions import make_session_submit_guard
+from tradingagents.long_run_support.sessions import (
+    SESSION_SUBMISSION_GRACE_SECONDS,
+    make_session_submit_guard,
+)
 
 LONG_RUN_SCHEMA_VERSION = 1
 DEFAULT_DURATION_CALENDAR_DAYS = 30
@@ -1132,6 +1135,13 @@ def run_daily_round(
             session_date=session_date,
             effective_target=str(effective_target),
             now_fn=deps.now_fn,
+            # A/B arms pair 40 sequential analyses; they get the extended
+            # close-anchored fence. Single-backend rounds keep the default.
+            grace_seconds=(
+                _ab_session_grace_seconds(session_date, str(effective_target), deps)
+                if ab_mode
+                else SESSION_SUBMISSION_GRACE_SECONDS
+            ),
         )
     else:
         _session_submit_allowed = lambda: False
@@ -1344,6 +1354,36 @@ def run_daily_round(
 AB_BACKENDS = ("traders", "berkshire")
 
 
+def _ab_session_grace_seconds(
+    session_date: str, effective_target: str, deps: "LongRunDeps"
+) -> int:
+    """Submission fence for an A/B round: authoritative close minus a
+    15-minute settlement buffer, expressed as grace past the daily target.
+
+    A full-market A/B pair runs up to 40 sequential analyses between the
+    daily target and the fence. The default 30-minute grace provably fits
+    only a handful before every later symbol is forced no-trade, silently
+    hollowing out a full-market campaign; the fence still fails closed at
+    the same cutoff (never past the close). A session whose close cannot be
+    proven keeps the default grace — never shorter than today's behavior.
+    """
+    try:
+        close = session_close_et(
+            session_date,
+            calendar_client=deps.calendar_client,
+            calendar_rows=deps.calendar_rows,
+        )
+        target = datetime.strptime(str(effective_target), "%H:%M")
+        fence_minutes = close.hour * 60 + close.minute - 15
+        target_minutes = target.hour * 60 + target.minute
+        return max(
+            SESSION_SUBMISSION_GRACE_SECONDS,
+            (fence_minutes - target_minutes) * 60,
+        )
+    except Exception:
+        return SESSION_SUBMISSION_GRACE_SECONDS
+
+
 def _ab_arm_run_id(run_id: str, backend: str) -> str:
     return f"{run_id}-{backend}"
 
@@ -1466,6 +1506,9 @@ def run_ab_daily_round(
         save_round_journal(run_id, journal)
     elif journal.get("mode") != "ab":
         raise LongRunStop("STATE_CORRUPT", "A/B round journal mode mismatch")
+    elif (journal.get("schema_version") != LONG_RUN_SCHEMA_VERSION
+          or journal.get("status") not in ("PENDING", "RUNNING", *TERMINAL_ROUND_STATUSES)):
+        raise LongRunStop("STATE_CORRUPT", "A/B round journal schema or status is invalid")
     elif journal.get("status") in ("COMPLETED", "MISSED", "STOPPED"):
         if journal.get("status") == "COMPLETED":
             return journal
@@ -1513,12 +1556,21 @@ def run_ab_daily_round(
         window_closed = bool(effective_target) and not make_session_submit_guard(
             session_date=session_date, effective_target=str(effective_target),
             now_fn=deps.now_fn,
+            grace_seconds=_ab_session_grace_seconds(session_date, str(effective_target), deps),
         )()
         if window_closed:
             journal["shared_screening"] = {
                 "status": "SCREENING_SKIPPED", "reason": "SESSION_SUBMISSION_DEADLINE"
             }
+            # No frozen selection exists, so this session cannot start later.
+            # Settle it now; PENDING would make the scheduler spin until close.
+            journal["status"] = "MISSED"
+            journal["stop_reason"] = "SESSION_SUBMISSION_DEADLINE"
+            journal["finished_at"] = utc_now_iso()
             save_round_journal(run_id, journal)
+            log_event(run_id, "round_missed", {
+                "session": session_date, "reason": "SESSION_SUBMISSION_DEADLINE",
+            })
             return journal
         _apply_runtime_config(arm_runtimes["traders"])
         _validate_long_run_execution_config(arm_runtimes["traders"])
@@ -1617,6 +1669,8 @@ def run_ab_daily_round(
         arm_path = round_path(arm_id, session_date)
         if prior is None and arm_path.exists():
             raise LongRunStop("STATE_CORRUPT", f"A/B arm journal is unreadable: {arm_path}")
+        if prior is not None and prior.get("schema_version") != LONG_RUN_SCHEMA_VERSION:
+            raise LongRunStop("STATE_CORRUPT", f"{backend} arm journal schema is invalid")
         arm_entry = journal["arms"].setdefault(backend, {"run_id": arm_id})
         arm_entry["run_id"] = arm_id
         if prior is not None and prior.get("status") == "COMPLETED":
@@ -1780,8 +1834,20 @@ def run_ab_daily_round(
         save_round_journal(run_id, journal)
         if any(entry.get("evidence_packet_sha256") != sha for entry in entries):
             raise LongRunStop("STATE_CORRUPT", f"A/B arm evidence is missing or changed for {symbol}")
-        if any(entry.get("status") == SYMBOL_FAILED for entry in entries):
-            journal["pair_evidence"][symbol]["status"] = "FAILED"
+        if any(entry.get("status") == SYMBOL_FAILED or not entry.get("trade_intent")
+               for entry in entries):
+            # A deadline skip is DONE but has no analysis intent. It cannot
+            # authorize its counterpart to trade as a complete A/B pair.
+            if any(entry.get("status") == SYMBOL_EXECUTING for entry in entries):
+                raise LongRunStop("STATE_CORRUPT", f"incomplete A/B pair already executing: {symbol}")
+            for backend, entry in zip(AB_BACKENDS, entries):
+                if entry.get("status") == SYMBOL_ANALYZED:
+                    entry["status"] = SYMBOL_DONE
+                    entry["execution_result_summary"] = {
+                        "no_trade": True, "error": "AB_PAIR_INCOMPLETE",
+                    }
+                    save_round_journal(prepared_arms[backend].run_id, prepared_arms[backend].journal)
+            pair["status"] = "FAILED"
             save_round_journal(run_id, journal)
             continue
 
@@ -2098,14 +2164,17 @@ def extend_continuous_window(
     # date < ends_at). Including it would settle it MISSED after the next
     # extension without ever scheduling it.
     new_end_date = new_ends.astimezone(eastern_tz).date()
-    new_sessions = [
-        d for d in fetch_session_dates(
+    # Retry only the read: replaying the whole extension could grow the window
+    # twice if persistence failed after the in-memory state had changed.
+    calendar_days = _run_scheduler_operation_with_retry(
+        lambda: fetch_session_dates(
             last_session + timedelta(days=1),
             new_end_date,
             client=deps.calendar_client,
-        )
-        if d < new_end_date
-    ]
+        ),
+        deps=deps, run_id=run_id, label="continuous window calendar",
+    )
+    new_sessions = [d for d in calendar_days if d < new_end_date]
     for day in new_sessions:
         iso = day.isoformat()
         # Append only sessions strictly after the current last expected one.
@@ -2412,6 +2481,11 @@ def aggregate_ab_final_report(
         }
         arm_reports[backend] = aggregate_final_report(arm_state, long_cfg, arm_runtime)
 
+    # Shared screening logs live in Traders' directory under the parent id.
+    # Neither arm's exact-id cost scan includes them.
+    shared_llm_ops = _reporting.aggregate_llm_operations(
+        state["run_id"], apply_ab_backend_runtime_paths(runtime, "traders", root)
+    )
     top20_by_day: Dict[str, List[str]] = {}
     selection_hashes: Dict[str, str] = {}
     screening_cutoffs: Dict[str, Dict[str, Any]] = {}
@@ -2424,8 +2498,9 @@ def aggregate_ab_final_report(
         screening = coordinator.get("screening") or {}
         shared = coordinator.get("shared_screening") or {}
         top20_by_day[session] = [
-            str(row["symbol"]) for row in (screening.get("top20") or shared.get("top20") or [])
-            if isinstance(row, dict) and row.get("symbol")
+            str(row["symbol"] if isinstance(row, dict) else row)
+            for row in (screening.get("top20") or shared.get("top20") or [])
+            if (isinstance(row, dict) and row.get("symbol")) or (isinstance(row, str) and row)
         ]
         if shared.get("selection_hash"):
             selection_hashes[session] = str(shared["selection_hash"])
@@ -2446,13 +2521,20 @@ def aggregate_ab_final_report(
         for backend in AB_BACKENDS:
             arm_round = load_round_journal(_ab_arm_run_id(state["run_id"], backend), session) or {}
             for symbol, entry in (arm_round.get("symbols") or {}).items():
-                if entry.get("signal"):
+                if symbol in top20_by_day[session] and entry.get("signal"):
                     signals[backend][(session, symbol)] = str(entry["signal"]).upper()
 
     turnover = []
     previous: Optional[set[str]] = None
     for session, symbols in sorted(top20_by_day.items()):
         current = set(symbols)
+        if not current:
+            # A day without a frozen selection (settled MISSED/STOPPED, or
+            # screening skipped) has no membership facts. Counting it as
+            # "every name exited" — and the next selection as "all entered" —
+            # fabricates turnover that no account ever traded.
+            previous = None
+            continue
         if previous is not None:
             turnover.append({"session": session, "entered": sorted(current - previous),
                              "exited": sorted(previous - current)})
@@ -2576,10 +2658,19 @@ def aggregate_ab_final_report(
         "restart_count": int(state.get("restart_count") or 0),
         "shared_screening": {"selection_hashes": selection_hashes,
                              "top20_by_day": top20_by_day,
+                             "llm_operations": shared_llm_ops,
                              "cutoffs_by_day": screening_cutoffs, "turnover": turnover},
         "arms": arm_reports, "comparison": comparison,
-        "signal_disagreement": {"shared_symbol_session_count": len(shared_signals),
-                                 "disagreements": disagreements},
+        "signal_disagreement": {
+            # Denominators: pairing coverage must be visible. A disagreement
+            # count over the 5 of 20 symbol-sessions both arms actually
+            # signaled says nothing about the 15 that never compared.
+            "top20_symbol_sessions": sum(len(v) for v in top20_by_day.values()),
+            "traders_signal_sessions": len(signals["traders"]),
+            "berkshire_signal_sessions": len(signals["berkshire"]),
+            "shared_symbol_session_count": len(shared_signals),
+            "disagreements": disagreements,
+        },
         "pair_routes": pair_routes,
         "timing_fairness": timing_fairness,
         "metrics_unavailable": {
@@ -2601,6 +2692,14 @@ def write_ab_final_report(report: Dict[str, Any]) -> Tuple[str, str]:
              f"- Status: {report.get('final_status')}",
              f"- Window: {report.get('started_at')} → {report.get('ends_at')}", "",
              "## Shared screening"]
+    shared_costs = (report.get("shared_screening") or {}).get("llm_operations") or {}
+    if shared_costs.get("available"):
+        totals = shared_costs.get("totals") or {}
+        lines.append(f"- Shared LLM tokens: {totals.get('total_tokens', 0)} | "
+                     f"Priced cost: {_fmt_usd(totals.get('cost_usd'))} | "
+                     f"Unpriced tokens: {totals.get('unpriced_tokens', 0)}")
+    else:
+        lines.append("- Shared LLM cost: unavailable")
     for session, symbols in sorted((report.get("shared_screening", {}).get("top20_by_day") or {}).items()):
         lines.append(f"- {session} Top20: {', '.join(symbols)}")
     lines += ["", "## Account comparison", "",

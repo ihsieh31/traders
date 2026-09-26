@@ -25,3 +25,9 @@ output/
 tradingagents/dataflows/data_cache/
 cli/__pycache__
 assets/
+eval_results/
+tests/
+.venv-p2/
+.opencode/
+.zcode/
+.idea/

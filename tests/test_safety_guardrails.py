@@ -21,6 +21,7 @@ from tradingagents.safety import (
     get_safety_guard,
     reset_safety_guard,
 )
+from tradingagents.safety.guardrails import KILL_SWITCH
 
 
 def _ready_entry_policy():
@@ -194,12 +195,23 @@ class LLMBudgetTests(unittest.TestCase):
 
 
 class StatusAndTogglesTests(unittest.TestCase):
-    def test_disabled_safety_allows_everything(self):
+    def test_disabled_safety_still_honors_kill_switch(self):
+        # The kill switch is an operator flag file: it binds even when the
+        # safety layer is disabled by configuration (docstring contract).
         with tempfile.TemporaryDirectory() as tmp:
             guard = make_guard(tmp, safety_enabled=False, max_trade_notional_usd=1.0)
+            self.assertTrue(guard.check_order("AAPL", 1_000_000.0, account=ACCOUNT_OK).allowed)
             guard.engage_kill_switch("halt")
             verdict = guard.check_order("AAPL", 1_000_000.0, account=ACCOUNT_OK)
+            self.assertFalse(verdict.allowed)
+            self.assertEqual(verdict.reason_codes, [KILL_SWITCH])
+
+    def test_disabled_safety_skips_exposure_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guard = make_guard(tmp, safety_enabled=False, max_trade_notional_usd=1.0)
+            verdict = guard.check_order("AAPL", 1_000_000.0, account=ACCOUNT_OK)
             self.assertTrue(verdict.allowed)
+            self.assertEqual(set(verdict.checks), {"kill_switch"})
 
     def test_status_reports_every_guard(self):
         with tempfile.TemporaryDirectory() as tmp:

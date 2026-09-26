@@ -282,6 +282,12 @@ def run_symbol_work(
                     field="results_dir",
                 )),
             )
+            if recovered and record_timing:
+                # A completed graph log can precede the journal's validation
+                # checkpoint. Recovery must use the same A/B schema gate.
+                from tradingagents.execution.service import validate_trade_intent
+
+                recovered, _ = validate_trade_intent(recovered)
             if recovered:
                 entry["trade_intent"] = recovered
                 entry["signal"] = trade_intent_action(recovered)

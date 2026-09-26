@@ -76,6 +76,13 @@ def _symbol(value: Any) -> str:
     return str(value or "").upper().replace("/", "").replace("-", "")
 
 
+# Public name for the one canonical broker-key normalization rule (same
+# mapping _symbol applies to every snapshot position/order key). Exposure
+# caps and sector mappings must key their lookups identically or a hyphen
+# symbol's exposure becomes invisible to the caps.
+canonical_symbol = _symbol
+
+
 def get_with_retry(
     operation: Callable[[], Any],
     *,
@@ -623,6 +630,20 @@ class Reconciler:
                 reasons.append(f"broker identity conflict: {broker_order.client_order_id}")
                 continue
             local_status = broker_status_to_local(broker_order.status)
+            # A locally-terminal row the broker still reports live must never
+            # reconcile CLEAN: sync_order_from_broker deliberately keeps local
+            # terminal states from regressing, so without this check a false
+            # local terminal verdict (e.g. a misread rejection) would hide a
+            # live exposure behind a CLEAN account.
+            existing_terminal = str(local.get("status") or "").upper()
+            if existing_terminal in ("FILLED", "CANCELED", "REJECTED", "EXPIRED") and (
+                local_status not in ("FILLED", "CANCELED", "REJECTED", "EXPIRED")
+            ):
+                reasons.append(
+                    f"local order {broker_order.client_order_id} is terminal "
+                    f"({existing_terminal}) but the broker reports it live "
+                    f"({broker_order.status})"
+                )
             self.store.sync_order_from_broker(
                 local["order_id"],
                 local_status,

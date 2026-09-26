@@ -701,13 +701,16 @@ def _execute_core(
     if risk_sizing_info is not None:
         out["risk_sizing"] = risk_sizing_info
     # Broker protective-order status for callers/tests (advisory_only until
-    # a leg actually rides a bracket/OTO submit).
+    # a leg actually rides a bracket/OTO submit; a pre-submit rejection is
+    # not "advisory" — the order never reached the broker at all).
     protective_status = "advisory_only"
     for r in results:
         if r.get("order_class") == "bracket":
             protective_status = "submitted_bracket"
         elif r.get("order_class") == "oto":
             protective_status = "submitted_oto"
+        elif r.get("protective_required_rejected"):
+            protective_status = "rejected_pre_submit"
         elif r.get("protective_fallback"):
             protective_status = "bracket_rejected_fallback_plain"
             warnings.append(

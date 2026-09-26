@@ -118,6 +118,18 @@ class AgentState(MessagesState):
     ]
     trading_mode: Annotated[str, "investment or trading execution mode"]
     current_position: Annotated[str, "Live position state at final risk decision time"]
+    # Verified as-of portfolio context for historical analyses. LangGraph
+    # drops undeclared keys, so without these the Risk Manager's
+    # historical-context gate could never receive operator/evidence-supplied
+    # point-in-time facts (risk_manager reads state["position_stats"] /
+    # state["account_status"]) and every historical decision degenerated to
+    # an unexplained HOLD.
+    position_stats: Annotated[Dict[str, Any], "As-of position context for historical analyses"]
+    account_status: Annotated[Dict[str, Any], "As-of account context for historical analyses"]
+    # Stable reason code for a fail-closed risk verdict (e.g.
+    # "historical_portfolio_context_unavailable"). Declared so the A/B
+    # failure classification reads the real reason instead of guessing.
+    risk_invalid_reason: Annotated[Optional[str], "Why the risk decision failed closed, if it did"]
     recommended_action: Annotated[str, "Final executable signal extracted from the intent"]
     broker_account_id: Annotated[
         str,

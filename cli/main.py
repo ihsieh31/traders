@@ -1640,6 +1640,43 @@ def collect_long_run_config(
     return cfg, secrets
 
 
+@app.command("kill-switch")
+def kill_switch(
+    action: str = typer.Argument(
+        ..., help="One of: status | engage | release",
+    ),
+    reason: str = typer.Option(
+        "", "--reason",
+        help="Why the kill switch is being engaged (persisted in the flag file).",
+    ),
+) -> None:
+    """Operator control for the trading kill switch.
+
+    ``engage`` writes the flag file every SafetyGuard checks before any
+    broker order; ``release`` removes it; ``status`` reports the current
+    state without changing anything.
+    """
+    from tradingagents.safety import get_safety_guard
+
+    normalized = action.strip().lower()
+    guard = get_safety_guard()
+    if normalized == "status":
+        if guard.kill_switch_active():
+            typer.echo(f"ENGAGED: {guard.kill_switch_reason() or 'no reason recorded'}")
+        else:
+            typer.echo("not engaged")
+        return
+    if normalized == "engage":
+        guard.engage_kill_switch(reason or "manual halt via cli")
+        typer.echo(f"engaged: {guard.kill_switch_reason()}")
+        return
+    if normalized == "release":
+        guard.release_kill_switch()
+        typer.echo("released")
+        return
+    raise typer.BadParameter("action must be one of: status | engage | release")
+
+
 @app.command("long-run")
 def long_run(
     mode: str = typer.Option(

@@ -76,6 +76,7 @@ def make_session_submit_guard(
     effective_target: str,
     now_fn: Callable[[], datetime],
     stop_requested: Optional[Callable[[], bool]] = None,
+    grace_seconds: int = SESSION_SUBMISSION_GRACE_SECONDS,
 ) -> Callable[[], bool]:
     """Build a fail-closed callback for the final opening-submit boundary."""
     def allowed() -> bool:
@@ -83,7 +84,8 @@ def make_session_submit_guard(
             if stop_requested is not None and stop_requested():
                 return False
             return session_submission_allowed(
-                session_date, effective_target, now_fn()
+                session_date, effective_target, now_fn(),
+                grace_seconds=grace_seconds,
             )
         except Exception:
             return False

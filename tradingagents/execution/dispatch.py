@@ -295,6 +295,7 @@ def _submit_one(
         if spec.get("role") == "open" and protective_request is None:
             self._store.transition_order(order_id, "REJECTED")
             return {"ok": False, "status": "REJECTED", "broker_calls": 0,
+                    "protective_required_rejected": True,
                     "error": "Required protective order could not be constructed"}
         # R05: last safety point before ANY exposure-adding POST. A stale
         # snapshot/quote or an expired/reduced authorization must not slip
@@ -495,17 +496,21 @@ def _submit_authority_error(
                 return "stop/window authority revoked before the final submit"
         except Exception as exc:
             return f"stop/window authority unavailable before the final submit: {exc}"
+    # Fail closed: an unavailable safety guard must never widen the final
+    # submit boundary (N08 sibling _execute_core already refuses on the same
+    # condition). Recovery resubmits reach this helper without that earlier
+    # check, so this is the only guard standing there.
     try:
         from tradingagents.safety import get_safety_guard
 
         guard = get_safety_guard()
-    except Exception:
-        guard = None
+    except Exception as exc:
+        return f"safety guard unavailable before the final submit: {exc}"
     if (
-        guard is not None
-        and getattr(guard, "enabled", True)
-        and callable(getattr(guard, "kill_switch_active", None))
+        callable(getattr(guard, "kill_switch_active", None))
         and guard.kill_switch_active() is True
     ):
+        # The flag file is an operator control: it binds even when the safety
+        # layer's config disables the guard itself.
         return "kill switch engaged before the final submit"
     return None

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _PRICE_PATTERN = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
 
@@ -137,6 +137,26 @@ class TradeIntent(BaseModel):
 
     schema_version: str = Field(default="2.0")
     symbol: str
+
+    @field_validator("symbol")
+    @classmethod
+    def _reject_crypto_like_without_quote_separator(cls, value: str) -> str:
+        """Fail closed on crypto pairs written without the BASE/QUOTE form.
+
+        The crypto invariants (spot-only, no broker-side protective orders,
+        asset_class detection) key on ``"/" in symbol``. A hyphenated or
+        concatenated pair ("BTC-USD", "BTCUSD") would silently pass as an
+        equity and route into the equity order path — reject the spelling
+        outright instead of guessing a rewrite.
+        """
+        symbol = str(value or "").strip().upper()
+        if re.fullmatch(r"[A-Z0-9]{2,10}(-USDT?|USDT?)", symbol):
+            raise ValueError(
+                f"crypto-like symbol {value!r} must use the BASE/QUOTE form "
+                f"(e.g. {symbol.split('-')[0].split('USDT')[0]}/USD)"
+            )
+        return value
+
     trade_date: Optional[str] = None
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     trading_mode: str = Field(description="investment or trading.")

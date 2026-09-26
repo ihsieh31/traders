@@ -34,7 +34,12 @@ def _lookup_for_recovery(self, broker: Any, client_order_id: str, *, BrokerAutho
             last = exc
             text = f"{type(exc).__name__} {exc}".lower()
             status_code = getattr(exc, "status_code", None)
-            if status_code == 404 or "404" in text or "not found" in text or "does not exist" in text:
+            # R07: message text never proves an HTTP status. Only structured
+            # 404 evidence (status_code, or its literal in a stringified
+            # error when no structured code exists) may classify a lookup as
+            # an explicit not-found; prose like "not found" on a 5xx must
+            # stay uncertain and fail closed after the bounded retries.
+            if status_code == 404 or (status_code is None and "404" in text):
                 explicit_not_found += 1
             elif attempt == 2:
                 raise BrokerAuthorityError(

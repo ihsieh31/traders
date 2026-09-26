@@ -94,6 +94,27 @@ def compute_drawdown(equities: List[float]) -> Dict[str, Any]:
     return {"peak": peak, "trough": trough, "max_drawdown": max_dd}
 
 
+def aggregate_llm_operations(run_id: str, runtime: Dict[str, Any]) -> Dict[str, Any]:
+    """Read costs for exactly one observation, including shared A/B screening."""
+    try:
+        from tradingagents.llm_cost import aggregate_costs, scan_run_costs
+
+        records = scan_run_costs(
+            eval_results_dir=validate_app_path(
+                runtime.get("results_dir") or default_results_dir(),
+                field="results_dir",
+            ),
+            overrides=runtime.get("llm_pricing_per_million"),
+            metadata_match={"long_run_observation_id": run_id},
+        )
+        totals = aggregate_costs(records)
+        return {"available": True, "totals": totals.get("totals", {}),
+                "per_day": totals.get("per_day", {}),
+                "unpriced_tokens": totals.get("totals", {}).get("unpriced_tokens", 0)}
+    except Exception as exc:
+        return {"available": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
 def aggregate_final_report(
     state: Dict[str, Any],
     long_cfg: Dict[str, Any],
@@ -240,24 +261,7 @@ def aggregate_final_report(
     # LLM operations from existing cost aggregation (best-effort, no estimates).
     # F13: scoped to THIS observation's exact run-log metadata so manual,
     # old, or concurrent-observation runs can never enter these totals.
-    llm_ops: Dict[str, Any] = {"available": False}
-    try:
-        from tradingagents.llm_cost import aggregate_costs, scan_run_costs
-
-        records = scan_run_costs(
-            eval_results_dir=validate_app_path(
-                runtime.get("results_dir") or default_results_dir(),
-                field="results_dir",
-            ),
-            overrides=runtime.get("llm_pricing_per_million"),
-            metadata_match={"long_run_observation_id": run_id},
-        )
-        totals = aggregate_costs(records)
-        llm_ops = {"available": True, "totals": totals.get("totals", {}),
-                   "per_day": totals.get("per_day", {}),
-                   "unpriced_tokens": totals.get("totals", {}).get("unpriced_tokens", 0)}
-    except Exception as exc:
-        llm_ops = {"available": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+    llm_ops = aggregate_llm_operations(run_id, runtime)
 
     # Execution DB tallies (best-effort reference; journals stay primary).
     # F13: same resolver as ExecutionService, so the report and execution
