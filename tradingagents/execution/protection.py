@@ -134,6 +134,15 @@ def _cancel_protection_with_race_check(
         raise BrokerAuthorityError(
             f"Protection cancellation blocked: {market_closed}"
         )
+    # The clock GET above can block while the kill switch changes. Read it
+    # again at the final boundary before removing a live protective order.
+    if (
+        _guard is not None
+        and getattr(_guard, "enabled", True)
+        and callable(getattr(_guard, "kill_switch_active", None))
+        and _guard.kill_switch_active() is True
+    ):
+        return fresh, 0
     try:
         broker.cancel_order_by_id(order.broker_order_id)
     except Exception:

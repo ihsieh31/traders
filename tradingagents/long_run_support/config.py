@@ -158,6 +158,34 @@ def _validate_unattended_safety(
     error = _unattended_safety_error(runtime)
     if error:
         raise LongRunStop("SAFETY_DISABLED", error)
+    _validate_unattended_limits(runtime, LongRunStop=LongRunStop)
+
+
+def _validate_unattended_limits(config: Dict[str, Any], *, LongRunStop: type[RuntimeError]) -> None:
+    from tradingagents.default_config import DEFAULT_CONFIG
+    for key, upper in (
+        ("max_trade_notional_usd", None),
+        ("max_symbol_concentration_pct", 100),
+        ("daily_loss_halt_pct", 100),
+        ("max_drawdown_halt_pct", 100),
+    ):
+        raw = config.get(key, DEFAULT_CONFIG[key])
+        try:
+            value = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            value = math.nan
+        if isinstance(raw, bool) or not math.isfinite(value) or value <= 0 or (upper and value > upper):
+            raise LongRunStop("SAFETY_LIMIT_INVALID", f"{key} must be finite and in (0, {upper or 'infinity'}]")
+    raw = config.get("max_consecutive_rejections", DEFAULT_CONFIG["max_consecutive_rejections"])
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise LongRunStop("SAFETY_LIMIT_INVALID", "max_consecutive_rejections must be an integer >= 1")
+    timeout = config.get("llm_request_timeout_seconds", DEFAULT_CONFIG["llm_request_timeout_seconds"])
+    try:
+        timeout_value = float(timeout)
+    except (TypeError, ValueError, OverflowError):
+        timeout_value = math.nan
+    if isinstance(timeout, bool) or not math.isfinite(timeout_value) or timeout_value <= 0:
+        raise LongRunStop("SAFETY_LIMIT_INVALID", "llm_request_timeout_seconds must be finite and > 0")
 
 
 def validate_long_run_config(
@@ -512,6 +540,7 @@ def _validate_long_run_execution_config(
             "CONFIG_APPLY_FAILED", f"global execution config unreadable: {exc}"
         )
     effective = get_config() or {}
+    _validate_unattended_limits(effective, LongRunStop=LongRunStop)
     raw_budget = effective.get("daily_llm_token_budget", 0)
     if (
         isinstance(raw_budget, bool)

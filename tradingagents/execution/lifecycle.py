@@ -15,14 +15,27 @@ def remaining_lots(store):
         qty = float(fill["qty"]) * (1 if order["side"] == "buy" else -1)
         symbol = order["symbol"]
         book = lots[symbol]
-        while book and qty * book[0]["qty"] < 0:
-            consume = min(abs(qty), abs(book[0]["qty"]))
+        parent_id = store.protective_parent(order["order_id"])
+        if parent_id and not any(lot["order"]["order_id"] == parent_id for lot in book):
+            raise ValueError("Protective fill has no remaining parent lot")
+        while abs(qty) > 1e-8:
+            if parent_id:
+                index = next((i for i, lot in enumerate(book)
+                              if qty * lot["qty"] < 0
+                              and lot["order"]["order_id"] == parent_id), None)
+            else:
+                index = 0 if book and qty * book[0]["qty"] < 0 else None
+            if index is None:
+                break
+            consume = min(abs(qty), abs(book[index]["qty"]))
             direction = 1 if qty > 0 else -1
             qty -= direction * consume
-            book[0]["qty"] += direction * consume
-            if abs(book[0]["qty"]) < 1e-8:
-                book.pop(0)
+            book[index]["qty"] += direction * consume
+            if abs(book[index]["qty"]) < 1e-8:
+                book.pop(index)
         if abs(qty) > 1e-8:
+            if parent_id:
+                raise ValueError("Protective fill exceeds its parent lot")
             intent = store.get_intent_for_order(order["order_id"]) or {}
             payload = json.loads(intent.get("payload_json") or "{}")
             book.append({"qty": qty, "exit_by": (payload.get("entry_policy") or {}).get("exit_by"),

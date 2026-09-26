@@ -471,13 +471,17 @@ def _submit_one(
         }
 
 
+class ExecutionConfigUnavailable(RuntimeError):
+    """Opening authority cannot read the effective execution configuration."""
+
+
 def _get_execution_config() -> dict:
     try:
         from tradingagents.dataflows.config import get_config
 
         return get_config() or {}
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ExecutionConfigUnavailable(f"execution configuration unavailable: {exc}") from exc
 
 
 

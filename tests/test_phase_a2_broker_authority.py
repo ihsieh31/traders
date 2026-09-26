@@ -282,7 +282,7 @@ class RecoveryAndReconciliationTests(unittest.TestCase):
             self.assertEqual(broker.submit_calls, 1)
             self.assertEqual(broker.orders[0].client_order_id, orders[0]["client_order_id"])
 
-    def test_unknown_resubmits_once_only_after_three_explicit_not_found_lookups(self):
+    def test_unknown_stays_paused_after_three_explicit_not_found_lookups(self):
         broker = FakeBroker()
         broker.submit_error = TimeoutError("connection lost")
         with tempfile.TemporaryDirectory() as tmp:
@@ -292,9 +292,10 @@ class RecoveryAndReconciliationTests(unittest.TestCase):
             client_id = timed_out["orders"][0]["client_order_id"]
             broker.submit_error = None
             recovered = svc.startup_recover()
-            self.assertTrue(recovered["success"])
-            self.assertEqual(broker.submit_calls, 2)
-            self.assertEqual(broker.orders[0].client_order_id, client_id)
+            self.assertFalse(recovered["success"])
+            self.assertEqual(recovered["account_execution_state"], "PAUSED")
+            self.assertEqual(broker.submit_calls, 1)
+            self.assertEqual(svc.store.list_all_orders()[0]["client_order_id"], client_id)
 
     def test_unresolved_submitting_startup_stays_paused_without_post(self):
         broker = FakeBroker()

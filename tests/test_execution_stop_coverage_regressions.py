@@ -93,6 +93,28 @@ def test_live_standalone_close_covers_without_stops(protected):
     assert service._program_owned_live_reducing_qty(snapshot, "AAPL", "sell") == 9
 
 
+def test_unknown_repeated_absence_never_resubmits(protected):
+    service, broker = protected
+    row = seed_pending(service, "AAPL")
+    service.store.transition_order(row["order_id"], "SUBMITTING")
+    service.store.transition_order(row["order_id"], "UNKNOWN")
+    before = len(broker.submits)
+    for _ in range(2):
+        result = service.startup_recover()
+        assert not result["success"]
+        assert service.store.get_order(row["order_id"])["status"] == "UNKNOWN"
+    assert len(broker.submits) == before
+
+
+def test_unreadable_execution_config_blocks_opening(protected, monkeypatch):
+    service, broker = protected
+    monkeypatch.setattr("tradingagents.execution.service._get_execution_config",
+                        lambda: (_ for _ in ()).throw(RuntimeError("config unreadable")))
+    result = service.execute(trade_intent=opening(), dollar_amount=1000)
+    assert not result["success"]
+    assert broker.submits == []
+
+
 def test_relation_lookup_failure_never_promotes_target_to_close(protected, monkeypatch):
     service, broker = protected
     stop, _ = enter(protected)

@@ -255,6 +255,27 @@ class ToolkitWiringTests(unittest.TestCase):
             report = get_sec_ir_primary_source("AAPL", "2026-09-05")
         self.assertIn("disabled by configuration", report)
 
+    def test_live_sec_cutoff_is_capture_instant(self):
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        from tradingagents.dataflows.interface import get_sec_ir_primary_source
+
+        calls = []
+        class Client:
+            def latest_filings(self, *_args, **kwargs):
+                calls.append(kwargs["as_of"])
+                return []
+            def ir_page(self, *_args):
+                return None
+
+        today_et = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        with patch("tradingagents.dataflows.interface.get_config", return_value={}), \
+             patch("tradingagents.dataflows.sec_ir.default_client_from_config", return_value=Client()), \
+             patch("tradingagents.dataflows.sec_ir.render_sec_ir_report", return_value="ok"):
+            get_sec_ir_primary_source("AAPL", today_et)
+        assert len(calls) == 1
+        assert abs((datetime.now(timezone.utc) - calls[0]).total_seconds()) < 5
+
     def test_fundamentals_toolnode_includes_the_tool(self):
         import inspect
 

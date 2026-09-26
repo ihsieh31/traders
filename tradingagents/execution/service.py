@@ -1319,6 +1319,23 @@ class ExecutionService:
                     broker, expected_account_id=identity.account_id
                 )
                 snapshot, reconciliation = self._recover_locked(broker, snapshot)
+                # A previous ambiguous close may already be at the broker.
+                # Its absence from a bounded lookup is not authority to
+                # create a second liquidation identity.
+                for row in self._store.list_recoverable_orders():
+                    if row["symbol"] != sym or row["status"] not in {
+                        "UNKNOWN", "SUBMITTING", "ACCEPTED", "PARTIAL"
+                    }:
+                        continue
+                    prior_intent = self._store.get_intent_for_order(row["order_id"]) or {}
+                    try:
+                        prior_payload = json.loads(prior_intent.get("payload_json") or "{}")
+                    except (TypeError, ValueError):
+                        prior_payload = {}
+                    if prior_payload.get("kind") == "liquidation":
+                        return self._paused_result(snapshot, list(reconciliation.reasons) + [
+                            f"unresolved prior close: {row['client_order_id']}"
+                        ])
                 position = snapshot.position(sym)
                 side = "sell" if position and position.qty > 0 else "buy"
                 before_cancel_qty = float(position.qty) if position else None

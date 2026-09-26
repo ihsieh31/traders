@@ -113,6 +113,10 @@ def _run_team(llm: Any, state: Mapping[str, Any], config: Mapping[str, Any]) -> 
                 failure_exceptions.append(exc)
                 failures.append(f"{role}: {type(exc).__name__}: {exc}")
     if failures or set(role_reports) != set(ROLE_NAMES):
+        from tradingagents.llm_clients.retry import ProviderFailure
+        provider_failure = next((exc for exc in failure_exceptions if isinstance(exc, ProviderFailure)), None)
+        if provider_failure is not None:
+            raise provider_failure
         raise BerkshireAnalysisError(
             "Berkshire analysis failed closed; incomplete role team: " + "; ".join(sorted(failures)),
             retryable=any(_is_retryable_failure(exc) for exc in failure_exceptions),
@@ -124,6 +128,9 @@ def _run_team(llm: Any, state: Mapping[str, Any], config: Mapping[str, Any]) -> 
             parse_json_response(lead_response, label="team_lead")
         )
     except Exception as exc:
+        from tradingagents.llm_clients.retry import ProviderFailure
+        if isinstance(exc, ProviderFailure):
+            raise
         raise BerkshireAnalysisError(
             f"team_lead synthesis failed: {exc}",
             retryable=_is_retryable_failure(exc),

@@ -544,7 +544,42 @@ def _recover_locked(
         # unresolved and PAUSED. Never auto-resubmitted.
         "unresolved ACCEPTED order:",
     )
-    if any(not reason.startswith(recoverable_reasons) for reason in initial.reasons):
+    def _explained_pending_close_gap() -> str | None:
+        """Identify the sole durable, full-position close that explains a gap."""
+        rows = self._store.list_recoverable_orders()
+        if len(rows) != 1 or str(rows[0]["status"]).upper() != "PENDING":
+            return None
+        row = rows[0]
+        position = snapshot.position(row["symbol"])
+        if (position is None or row.get("notional") is not None
+                or row.get("quantity") is None
+                or not math.isfinite(float(row["quantity"]))
+                or abs(float(row["quantity"]) - abs(position.qty)) > 1e-8
+                or row["side"] != ("sell" if position.qty > 0 else "buy")):
+            return None
+        intent = self._store.get_intent_for_order(row["order_id"]) or {}
+        try:
+            payload = json.loads(intent.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            return None
+        from .store import client_order_id_for
+        if (payload.get("kind") != "liquidation"
+                or intent.get("symbol") != row["symbol"]
+                or intent.get("target_position") != "NEUTRAL"
+                or row["client_order_id"] != client_order_id_for(
+                    intent.get("decision_id", ""), row["symbol"], row["side"],
+                    role="close", seq=0)):
+            return None
+        gap_prefix = f"PROTECTION_GAP: {row['symbol']} "
+        if not any(reason.startswith(gap_prefix) for reason in initial.reasons):
+            return None
+        return row["client_order_id"]
+
+    explained_close = _explained_pending_close_gap()
+    explained_symbol = self._store.list_recoverable_orders()[0]["symbol"] if explained_close else None
+    if any(not reason.startswith(recoverable_reasons)
+           and not (explained_symbol and reason.startswith(f"PROTECTION_GAP: {explained_symbol} "))
+           for reason in initial.reasons):
         return snapshot, self._apply_protection_coverage(snapshot, initial)
     def _broker_clients(current: BrokerSnapshot) -> set[str]:
         return {order.client_order_id for order in current.orders}
@@ -570,6 +605,8 @@ def _recover_locked(
             blocking.append(reason)
         return blocking
     for local in list(self._store.list_recoverable_orders()):
+        if explained_close and local["client_order_id"] != explained_close:
+            break
         if local["client_order_id"] in _broker_clients(snapshot):
             continue
         if self._store.protective_parent(local["order_id"]):
@@ -581,12 +618,15 @@ def _recover_locked(
         if found is not None:
             self._adopt_recovery_order(local, found)
             changed = True
-        elif status in {"PENDING", "UNKNOWN"}:
+        elif status == "PENDING":
             self._resubmit_recovered(broker, local, snapshot, can_submit=can_submit,
                                      maintenance=maintenance)
             changed = True
         else:
-            # SUBMITTING/PARTIAL without a broker fact is not safe to replay.
+            # UNKNOWN means a previous POST may have reached the broker. A
+            # bounded series of 404s cannot prove that it did not. Keep the
+            # original identity unresolved and the account paused.
+            # SUBMITTING/ACCEPTED/PARTIAL have the same no-replay rule.
             # F04: this row's turn came and the bounded lookup still found
             # no broker fact, so its submit outcome stays ambiguous. It is
             # no longer exempted queued work: stop the round immediately —

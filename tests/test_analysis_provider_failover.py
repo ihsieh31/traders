@@ -22,6 +22,7 @@ from tradingagents.llm_clients.retry import (
     FailoverRetryingLLM,
     ProviderFailure,
     RetryingLLM,
+    trace_failover_routes,
 )
 from tradingagents.llm_clients.roles import (
     RoleConfigError,
@@ -384,6 +385,13 @@ class SharedBudgetFailoverTests(unittest.TestCase):
 
 
 class PerInvocationStateTests(unittest.TestCase):
+    def test_successful_route_is_traced_for_pair_reporting(self):
+        llm, _, _ = _failover([TimeoutError("timed out")], ["ok"])
+        with trace_failover_routes() as routes:
+            self.assertEqual(llm.invoke("a").content, "ok")
+        self.assertEqual(routes, [{"role": "analysis", "provider": "openrouter",
+                                   "model": "muse-spark-1.3", "route": "fallback"}])
+
     def test_next_invocation_starts_on_primary_again(self):
         llm, primary, fallback = _failover(
             ["ok-1", TimeoutError("timed out"), "ok-3"], ["ok-2"]

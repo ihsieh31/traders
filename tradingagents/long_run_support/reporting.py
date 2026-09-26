@@ -7,6 +7,8 @@ reporting remains independent of orchestration and its patchable boundaries.
 from __future__ import annotations
 
 import json
+import hashlib
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -262,19 +264,35 @@ def aggregate_final_report(
     # can never point at different files (env read at call time).
     exec_db: Dict[str, Any] = {"available": False}
     try:
-        from tradingagents.execution import ExecutionStore, resolve_execution_db_path
+        from tradingagents.execution import resolve_execution_db_path
+        from tradingagents.execution.store import ACCOUNT_BINDING_DECISION_ID
 
-        store = ExecutionStore(
-            resolve_execution_db_path(runtime.get("execution_db_path"))
-        )
-        orders = store.list_all_orders()
+        db_path = Path(resolve_execution_db_path(runtime.get("execution_db_path")))
+        if not db_path.exists():
+            exec_db = {"available": False, "missing": True}
+            raise FileNotFoundError(f"execution DB missing: {db_path}")
+        with sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            orders = [dict(row) for row in conn.execute("SELECT * FROM orders ORDER BY rowid")]
+            binding_row = conn.execute(
+                "SELECT payload_json FROM execution_intents WHERE decision_id=?",
+                (ACCOUNT_BINDING_DECISION_ID,),
+            ).fetchone()
+        expected_account = state.get("account_ref")
+        binding = (json.loads(binding_row["payload_json"]).get("account_id")
+                   if binding_row else None)
+        if expected_account and (
+            not binding or hashlib.sha256(binding.encode()).hexdigest()[:16] != expected_account
+        ):
+            raise ValueError("execution DB account binding does not match report arm")
         by_status: Dict[str, int] = {}
         for order in orders:
             status = str(order.get("status") or "UNKNOWN").upper()
             by_status[status] = by_status.get(status, 0) + 1
         exec_db = {"available": True, "orders_total": len(orders), "by_status": by_status}
     except Exception as exc:
-        exec_db = {"available": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+        exec_db = {**exec_db, "available": False,
+                   "error": f"{type(exc).__name__}: {exc}"[:200]}
 
     # Safety: final guard status (best-effort) + deterministic gate tallies.
     safety: Dict[str, Any] = {
@@ -286,8 +304,13 @@ def aggregate_final_report(
     }
     try:
         from tradingagents.safety import get_safety_guard
-
-        status = get_safety_guard().status()
+        kill_path = runtime.get("safety_kill_switch_path")
+        if kill_path:
+            path = Path(kill_path)
+            status = {"kill_switch_active": path.exists(),
+                      "kill_switch_reason": path.read_text(encoding="utf-8").strip() if path.exists() else ""}
+        else:
+            status = get_safety_guard().status()
         if isinstance(status, dict):
             safety["kill_switch_active"] = bool(status.get("kill_switch_active"))
             safety["kill_switch_reason"] = str(

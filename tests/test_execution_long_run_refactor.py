@@ -45,7 +45,11 @@ UPDATED_CANONICAL_HASHES = {
     # Recovery cap evaluation now retains conservative exposure from the
     # account's live protective OCO children.
     "gap_between_items": "0b89641b87c59a768a445521413976093cc48f0eb7ff26c415e21a7669873b4b",
-    "contracts": "e7f78fffa5fb228d62573f680bb33ba83cec8129c8dd0e7bab50e1eceafd22fe",
+    "contracts": "af1ef28c11a81f72175753f881a9f3a16639d608eaaafafb747bd31a691f61a5",
+    # Missing execution DB is now reported as unavailable without creating
+    # a new empty ledger; these are the resulting complete report snapshots.
+    "long_run_fresh": "3437abc6b80e5965ddd94c97925adc16a4863f1b341810edd185357bc3c74b47",
+    "long_run_resume": "5420793cdcd243437ee3b096cbda23cd351b1c2cd498dbebc44e07b9550ff734",
 }
 
 

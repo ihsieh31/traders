@@ -360,7 +360,12 @@ def run_symbol_work(
                 # created lazily once, never per symbol.
                 if graph is None:
                     graph = graph_factory(graph_config)
-            final_state, _signal = graph.propagate(symbol, session_date)
+            from tradingagents.llm_clients.retry import trace_failover_routes
+            with trace_failover_routes() as analysis_routes:
+                final_state, _signal = graph.propagate(symbol, session_date)
+            if record_timing:
+                entry["analysis_routes"] = list(analysis_routes)
+                save_round_journal(run_id, journal)
             # F10 checkpoint 3: immediately after analysis returns, BEFORE
             # persisting a tradeable intent or starting broker execution.
             control = _control_stop_reason(deps, ends_at)
@@ -390,17 +395,23 @@ def run_symbol_work(
             intent = _normalize_intent((final_state or {}).get("final_trade_intent"))
             if record_timing:
                 entry["analysis_finished_at"] = utc_now_iso()
-            if not intent:
                 from tradingagents.execution.service import validate_trade_intent
-
-                _, err = validate_trade_intent(None)
-                entry["status"] = SYMBOL_DONE  # fail closed: completed, no trade.
+                intent, err = validate_trade_intent(intent)
+            else:
+                err = "missing TradeIntent"
+            if not intent:
+                if not record_timing:
+                    from tradingagents.execution.service import validate_trade_intent
+                    _, err = validate_trade_intent(None)
+                entry["status"] = SYMBOL_FAILED if record_timing else SYMBOL_DONE
                 entry["signal"] = None
                 entry["execution_result_summary"] = {
-                    "no_trade": True, "error": f"no schema-valid TradeIntent ({err})",
+                    **({} if record_timing else {"no_trade": True}),
+                    "error": f"INVALID_INTENT: {err}" if record_timing else f"no schema-valid TradeIntent ({err})",
                 }
                 save_round_journal(run_id, journal)
-                log_event(run_id, "symbol_no_intent", {"symbol": symbol})
+                log_event(run_id, "symbol_invalid_intent" if record_timing else "symbol_no_intent",
+                          {"symbol": symbol})
                 continue
             entry["trade_intent"] = intent
             entry["signal"] = trade_intent_action(intent)

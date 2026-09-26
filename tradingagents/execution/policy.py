@@ -10,6 +10,14 @@ from dataclasses import dataclass
 import math
 
 
+def canonical_protective_price(value):
+    """Return the exact cent precision used by the equity broker request."""
+    price = round(float(value), 2)
+    if not math.isfinite(price) or price <= 0:
+        raise ValueError("invalid protective price")
+    return price
+
+
 def utc_timestamp(value):
     stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if stamp.tzinfo is None or stamp.utcoffset() is None:
@@ -32,9 +40,9 @@ def worst_case_risk_reward(
 ) -> RiskRewardTerms | None:
     """Calculate R/R at the least favorable price in the authorized range."""
     try:
-        low, high, stop, target = map(
-            float, (minimum_price, maximum_price, stop_loss_price, take_profit_price)
-        )
+        low, high = map(float, (minimum_price, maximum_price))
+        stop = canonical_protective_price(stop_loss_price)
+        target = canonical_protective_price(take_profit_price)
         if not all(math.isfinite(value) and value > 0 for value in (low, high, stop, target)):
             return None
         if low > high:
@@ -90,7 +98,7 @@ def entry_check(intent: dict, *, now=None, price=None, equity=None, requested=No
             raise ValueError("exit deadline must follow entry expiry and be within 30 calendar days")
         low = float(policy.get("minimum_price"))
         high = float(policy.get("maximum_price"))
-        stop = float(controls.get("stop_loss_price"))
+        stop = canonical_protective_price(controls.get("stop_loss_price"))
         risk = float(policy.get("risk_fraction", 0.01))
         if not all(math.isfinite(v) and v > 0 for v in (low, high, stop, risk)) or low > high or risk > 0.03:
             raise ValueError("invalid entry prices, stop or risk budget")
@@ -113,7 +121,7 @@ def entry_check(intent: dict, *, now=None, price=None, equity=None, requested=No
             if terms.ratio < 2.0:
                 raise ValueError(f"opening exposure requires at least 2:1 R/R at worst authorized entry (got {terms.ratio:.2f}:1)")
         elif target is not None:
-            target = float(target)
+            target = canonical_protective_price(target)
             if not math.isfinite(target) or target <= 0 or (short and target >= low) or (not short and target <= high):
                 raise ValueError("target must be beyond the entry range on the profit side")
         if "/" in intent.get("symbol", ""):

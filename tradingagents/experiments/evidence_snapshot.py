@@ -58,25 +58,46 @@ def _invoke(tool: Any, args: Mapping[str, Any]) -> Any:
     raise TypeError(f"evidence source is not callable: {tool!r}")
 
 
-def _usable_source_value(value: Any) -> bool:
-    """Return whether a tool response contains usable evidence.
-
-    Tool adapters sometimes return transport failures as ordinary strings or
-    JSON objects.  Treat those envelopes as unavailable instead of allowing a
-    hash to make an error response look like evidence.
-    """
+def classify_source_value(value: Any) -> str:
+    """Classify a captured adapter response before it becomes frozen evidence."""
     if value is None or value == "" or value == [] or value == {}:
-        return False
+        return "empty"
     if isinstance(value, str):
         lowered = value.strip().lower()
-        if lowered.startswith(("error:", "exception:", "unavailable:", "timeout:")):
-            return False
+        if lowered.startswith("{"):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, Mapping):
+                return classify_source_value(decoded)
+        if lowered.startswith(("no indicator data available", "historical data unavailable",
+                               "unavailable:", "no historical data available")):
+            return "unavailable"
+        if lowered.startswith(("error:", "error getting", "exception:", "timeout:",
+                               "**error**")):
+            return "error"
+        # Macro/FRED adapters build one markdown report and append a
+        # "### <indicator>\n**Error**: ..." line per failed series, so the
+        # marker lands mid-document rather than at the start. Only a line that
+        # BEGINS with the bolded marker counts, which keeps a bolded word
+        # inside ordinary prose classified as real content.
+        if any(line.strip().lower().startswith("**error**")
+               for line in value.splitlines()[1:]):
+            return "error"
         if lowered in {"error", "unavailable", "timed out", "timeout"}:
-            return False
+            return "error" if lowered != "unavailable" else "unavailable"
     if isinstance(value, Mapping):
-        if "error" in value or value.get("status") in {"error", "unavailable"}:
-            return False
-    return True
+        status = str(value.get("status") or "").lower()
+        if "error" in value or status in {"error", "failed", "failure"}:
+            return "error"
+        if status == "unavailable":
+            return "unavailable"
+    return "available"
+
+
+def _usable_source_value(value: Any) -> bool:
+    return classify_source_value(value) == "available"
 
 
 def _available(toolkit: Any, capability: str | None) -> bool:
@@ -155,9 +176,9 @@ def _capture_source(
         return
     try:
         value = _invoke(tool, args)
-        usable = _usable_source_value(value)
+        status = classify_source_value(value)
         section[source_name] = {
-            "status": "available" if usable else "error" if value not in (None, "", [], {}) else "empty",
+            "status": status,
             "as_of": trade_date,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "value": value,
@@ -358,6 +379,7 @@ def load_evidence_packet(
     except (OSError, json.JSONDecodeError) as exc:
         raise EvidenceIntegrityError(f"cannot read evidence packet {packet_path}") from exc
     validated = _validate_packet(packet, symbol=symbol, trade_date=trade_date)
+    validate_evidence_completeness(validated)
     if expected_sha256 and validated.get("sha256") != expected_sha256:
         raise EvidenceIntegrityError(
             "evidence packet does not match the SHA-256 pinned by the run configuration"
@@ -385,21 +407,10 @@ def build_or_load_evidence_packet(
         )
     else:
         packet = _capture_packet(toolkit or Toolkit(config=dict(config or {})), symbol, trade_date)
-        # Do not publish a packet containing tool error/empty envelopes.  A
-        # deliberately unavailable source is still retained for the caller's
-        # completeness gate, but malformed responses must never become a
-        # reusable frozen artifact.
-        has_invalid_response = any(
-            isinstance(section, Mapping)
-            and any(
-                isinstance(entry, Mapping)
-                and entry.get("status") in {"error", "empty"}
-                for entry in section.values()
-            )
-            for section in (packet.get(name) for name in _SECTIONS)
-        )
-        if has_invalid_response:
-            validate_evidence_completeness(packet)
+        validate_evidence_completeness(packet)
+        configured_hash = (config or {}).get("evidence_packet_sha256")
+        if configured_hash and configured_hash != packet["sha256"]:
+            raise EvidenceIntegrityError("configured evidence_packet_sha256 does not match captured packet")
         atomic_write_json(packet_path, packet)
 
     configured_hash = (config or {}).get("evidence_packet_sha256")

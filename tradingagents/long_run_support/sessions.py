@@ -157,6 +157,7 @@ def next_due_session(
     started_at: datetime,
     ends_at: datetime,
     settled: List[str],
+    expected_sessions: Optional[List[str]] = None,
     calendar_client: Any = None,
     calendar_rows: Optional[List[Any]] = None,
     eastern_now: Callable[[Any], datetime],
@@ -177,6 +178,26 @@ def next_due_session(
     done = set(settled or [])
     start_day = started_at.astimezone(eastern.tzinfo).date()
     end_day = ends_at.astimezone(eastern.tzinfo).date()
+    if expected_sessions is not None:
+        # The observation already froze authoritative membership. Inspect
+        # only the earliest unsettled session instead of re-querying every
+        # settled date on every poll of a continuous run.
+        pending = sorted(day for day in expected_sessions if day not in done
+                         and start_day <= date.fromisoformat(day) < end_day)
+        if not pending:
+            return None
+        session_day = date.fromisoformat(pending[0])
+        info = effective_target_for_session(
+            session_day, run_time_et,
+            calendar_client=calendar_client, calendar_rows=calendar_rows,
+        )
+        naive = datetime.strptime(
+            f"{info['session_date']} {info['effective_target']}", "%Y-%m-%d %H:%M"
+        )
+        effective = eastern.tzinfo.localize(naive)
+        info["due"] = effective <= eastern
+        info["effective_at"] = effective.isoformat()
+        return info
     cursor = min(eastern.date(), end_day)
     # Walk from the observation start through the earlier of today/ends_at to
     # find overdue incomplete sessions first (resume-before-advance).

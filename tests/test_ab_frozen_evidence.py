@@ -12,6 +12,7 @@ from tradingagents.experiments.evidence_snapshot import (
     evidence_packet_sha256,
     load_evidence_packet,
     validate_evidence_completeness,
+    classify_source_value,
 )
 
 
@@ -52,7 +53,10 @@ def _valid_packet(symbol="NVDA", trade_date="2026-09-21"):
         "trade_date": trade_date,
         "captured_at": "2026-09-21T00:00:00+00:00",
         "market": {"ohlcv": {"status": "available", "value": "fixture"}},
-        "fundamentals": {}, "news": {}, "macro": {}, "social": {},
+        "fundamentals": {"fixture": {"status": "available", "value": "fixture"}},
+        "news": {"fixture": {"status": "available", "value": "fixture"}},
+        "macro": {"fixture": {"status": "available", "value": "fixture"}},
+        "social": {"fixture": {"status": "available", "value": "fixture"}},
         "sources": [], "errors": [],
     }
     packet["sha256"] = evidence_packet_sha256(packet)
@@ -60,20 +64,40 @@ def _valid_packet(symbol="NVDA", trade_date="2026-09-21"):
 
 
 class FrozenEvidenceTests(unittest.TestCase):
-    def test_builder_captures_sources_once_then_only_loads(self):
+    def test_adapter_failure_envelopes_are_not_available(self):
+        for value in ('{"error":"provider failed"}', 'Error getting indicators',
+                      'No indicator data available for AAPL', '**Error** FRED unavailable'):
+            self.assertNotEqual(classify_source_value(value), "available")
+
+    def test_macro_report_error_line_is_not_available(self):
+        # The FRED adapter appends one "### <indicator>\n**Error**: ..." line
+        # per failed series, so the marker sits mid-document, not at the front.
+        report = "### Real GDP\nvalue 2.1\n\n### CPI\n**Error**: 503 from FRED\n"
+        self.assertEqual(classify_source_value(report), "error")
+        # A fully populated report of the same shape is real evidence.
+        self.assertEqual(
+            classify_source_value("### Real GDP\n2.1\n\n### CPI\n3.1\n"), "available")
+        # A bolded word inside prose is content, not a transport failure.
+        self.assertEqual(
+            classify_source_value("# Notes\nThe vendor raised an **Error** today.\n"),
+            "available")
+
+    def test_genuinely_empty_search_result_is_available(self):
+        """Zero hits is a real answer, not a provider outage."""
+        for value in ("No results found for 'acme corp'", '{"results": []}',
+                      {"data": [], "count": 0}):
+            self.assertEqual(classify_source_value(value), "available")
+
+    def test_incomplete_capture_is_never_published(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "evidence_packet.json"
             first_toolkit = CountingEvidenceToolkit()
-            first = build_or_load_evidence_packet(
-                path, symbol="NVDA", trade_date="2026-09-21", toolkit=first_toolkit
-            )
-            call_count = len(first_toolkit.calls)
-            second = build_or_load_evidence_packet(
-                path, symbol="NVDA", trade_date="2026-09-21",
-                toolkit=NoNetworkToolkit(path),
-            )
-        self.assertGreater(call_count, 0)
-        self.assertEqual(first["sha256"], second["sha256"])
+            with self.assertRaisesRegex(EvidenceIntegrityError, "completeness"):
+                build_or_load_evidence_packet(
+                    path, symbol="NVDA", trade_date="2026-09-21", toolkit=first_toolkit
+                )
+            self.assertGreater(len(first_toolkit.calls), 0)
+            self.assertFalse(path.exists())
 
     def test_packet_round_trip_and_tamper_detection(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,6 +133,7 @@ class FrozenEvidenceTests(unittest.TestCase):
 
     def test_completeness_requires_a_usable_source_in_every_section(self):
         packet = _valid_packet()
+        packet["fundamentals"] = {}
         with self.assertRaisesRegex(EvidenceIntegrityError, "fundamentals"):
             validate_evidence_completeness(packet)
 

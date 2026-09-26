@@ -1913,7 +1913,20 @@ def get_sec_ir_primary_source(
     from .sec_ir import SecIrClient, SecIrError  # noqa: F401 (re-export parity)
 
     from datetime import datetime, timezone
-    cutoff = datetime.fromisoformat(curr_date).replace(tzinfo=timezone.utc)
+    from zoneinfo import ZoneInfo
+    requested = datetime.fromisoformat(curr_date.replace("Z", "+00:00"))
+    now_utc = datetime.now(timezone.utc)
+    market_today = now_utc.astimezone(ZoneInfo("America/New_York")).date()
+    if requested.tzinfo is not None:
+        cutoff = requested.astimezone(timezone.utc)
+        if cutoff > now_utc:
+            raise ValueError("SEC/IR as_of cannot be in the future")
+    elif requested.date() == market_today:
+        cutoff = now_utc
+    elif requested.date() < market_today:
+        cutoff = requested.replace(tzinfo=timezone.utc)
+    else:
+        raise ValueError("SEC/IR trade date cannot be in the future")
     client = default_client_from_config(get_config())
     if client is None:
         return (
@@ -1929,7 +1942,9 @@ def get_sec_ir_primary_source(
     else:
         mapping_error = None
     try:
-        if curr_date >= datetime.now(timezone.utc).date().isoformat():
+        requested_market_date = (requested.astimezone(ZoneInfo("America/New_York")).date()
+                                 if requested.tzinfo is not None else requested.date())
+        if requested_market_date == market_today:
             records.append(client.ir_page(ticker))
         # A current IR page cannot reconstruct its historical contents.
     except SecIrError as exc:

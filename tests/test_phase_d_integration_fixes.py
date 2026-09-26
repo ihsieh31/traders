@@ -405,6 +405,144 @@ class FallbackPreflightTest(_PreflightTest):
         )
 
 
+class FallbackCapabilityPreflightTest(_PreflightTest):
+    """F20: a configured fallback must support structured output and tool
+    binding BEFORE the observation exists.
+
+    A healthy primary plus a fundamentally incompatible fallback is a
+    healthy run for days and a mid-round hard stop the first time the
+    primary blips. The preflight capability probe converts that into a
+    refusal to start, without contacting the broker or any transport.
+    """
+
+    class _StubLLM:
+        def __init__(self, fail_on=None):
+            self.fail_on = fail_on
+            self.structured = 0
+            self.tools = 0
+
+        def with_structured_output(self, *_a, **_kw):
+            self.structured += 1
+            if self.fail_on == "structured":
+                raise TypeError("this adapter has no structured output support")
+            return self
+
+        def bind_tools(self, *_a, **_kw):
+            self.tools += 1
+            if self.fail_on == "tools":
+                raise TypeError("this adapter cannot bind tools")
+            return self
+
+    def _cfg_with_fallback(self, **overrides):
+        return _valid_cfg(
+            analysis_fallback_provider="openai",
+            analysis_fallback_model="gpt-fake-fallback",
+            **overrides,
+        )
+
+    def _run_with_stub_llm(self, cfg, fail_on, probe=None):
+        llm = self._StubLLM(fail_on=fail_on)
+        with patch.dict(os.environ, _all_role_keys()), patch(
+            "tradingagents.llm_clients.factory.create_llm_client",
+            return_value=SimpleNamespace(get_llm=lambda: llm),
+        ):
+            return llm, lr.run_preflight(
+                cfg, lr.build_runtime_config(cfg),
+                self._deps(probe or _RecordingProbe()),
+            )
+
+    def test_fallback_without_structured_output_fails_preflight(self):
+        probe = _RecordingProbe()
+        cfg = self._cfg_with_fallback()
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            self._run_with_stub_llm(cfg, "structured", probe)
+        self.assertIn("PREFLIGHT_FAILED", str(ctx.exception))
+        self.assertIn("structured/tool binding", str(ctx.exception))
+        # Refused before any transport probe and before any broker contact.
+        self.assertEqual(probe.calls, [])
+
+    def test_fallback_without_tool_binding_fails_preflight(self):
+        probe = _RecordingProbe()
+        cfg = self._cfg_with_fallback()
+        with self.assertRaises(lr.LongRunStop) as ctx:
+            self._run_with_stub_llm(cfg, "tools", probe)
+        self.assertIn("PREFLIGHT_FAILED", str(ctx.exception))
+        self.assertIn("structured/tool binding", str(ctx.exception))
+        self.assertEqual(probe.calls, [])
+
+    def test_capable_fallback_passes_preflight_and_is_actually_bound(self):
+        probe = _RecordingProbe()
+        cfg = self._cfg_with_fallback()
+        llm, result = self._run_with_stub_llm(cfg, None, probe)
+        self.assertTrue(result["ok"], result)
+        # The probe really exercised both capabilities; it is not a no-op.
+        self.assertEqual(llm.structured, 1)
+        self.assertEqual(llm.tools, 1)
+        self.assertIn("analysis_fallback", [c["role"] for c in probe.calls])
+
+    def test_no_fallback_requires_no_capability_probe(self):
+        cfg = _valid_cfg()
+        runtime = lr.build_runtime_config(cfg)
+        with patch.dict(os.environ, _all_role_keys()), patch(
+            "tradingagents.llm_clients.factory.create_llm_client",
+            side_effect=AssertionError("no fallback configured; nothing to probe"),
+        ):
+            result = lr.run_preflight(cfg, runtime, self._deps(_RecordingProbe()))
+        self.assertTrue(result["ok"], result)
+
+
+class NormalizedModelParamForwardingTest(unittest.TestCase):
+    """F21: normalized model params must survive into the built model for the
+    providers this experiment actually routes through.
+
+    Scope is deliberately the OpenAI / local-OpenAI path. The third-party
+    OpenAI-compatible branch forwards only a fixed key whitelist (see the
+    deferred-gap characterization test below).
+    """
+
+    def _build(self, provider, model):
+        from tradingagents.llm_clients.factory import create_llm_client
+
+        return create_llm_client(
+            provider, model, "http://localhost:1234/v1",
+            api_key="offline-test", model_role="deep",
+            max_output_tokens=16000, timeout=9, temperature=0.2,
+        ).get_llm()
+
+    def test_openai_route_keeps_normalized_params(self):
+        llm = self._build("openai", "agnes-3.0-flash")
+        self.assertEqual(llm.max_tokens, 16000)
+        self.assertEqual(llm.request_timeout, 9.0)
+        self.assertEqual(llm.temperature, 0.2)
+
+    def test_local_openai_route_keeps_normalized_params(self):
+        llm = self._build("local_openai", "agnes-3.0-flash")
+        self.assertEqual(llm.max_tokens, 16000)
+        self.assertEqual(llm.request_timeout, 9.0)
+        self.assertEqual(llm.temperature, 0.2)
+
+    def test_responses_model_route_keeps_normalized_params(self):
+        # gpt-5.2 / gpt-5-mini are registry-recognised Responses-API models and
+        # take the GPT5ChatModel branch rather than the Chat Completions one.
+        llm = self._build("openai", "gpt-5.2")
+        self.assertEqual(llm.max_output_tokens, 16000)
+        self.assertEqual(llm.timeout, 9.0)
+
+    def test_third_party_compatible_route_drops_normalized_params(self):
+        """Known deferred gap, pinned deliberately.
+
+        DeepSeek/OpenRouter/Ollama forward only timeout + headers, so
+        max_output_tokens and temperature are silently dropped. F21 scopes
+        the repair to the providers this experiment uses, so this stays
+        unfixed — but it is pinned here so nobody "fixes" one adapter
+        without a scope decision, and so the gap stays visible.
+        """
+        llm = self._build("deepseek", "deepseek-chat")
+        self.assertEqual(llm.request_timeout, 9.0)   # whitelisted: survives
+        self.assertIsNone(llm.max_tokens)            # dropped: known gap
+        self.assertIsNone(llm.temperature)           # dropped: known gap
+
+
 class FallbackPersistenceTest(_PreflightTest):
     """E: save/load/runtime/resolve full chain for the fallback keys."""
 

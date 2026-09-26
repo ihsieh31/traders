@@ -22,7 +22,8 @@ def _packet(symbol="NVDA", trade_date="2026-09-21"):
         "symbol": symbol,
         "trade_date": trade_date,
         "captured_at": "2026-09-21T00:00:00+00:00",
-        "market": {}, "fundamentals": {}, "news": {}, "macro": {}, "social": {},
+        **{section: {"fixture": {"status": "available", "value": "fixture"}}
+           for section in ("market", "fundamentals", "news", "macro", "social")},
         "sources": [], "errors": [],
     }
     packet["sha256"] = evidence_packet_sha256(packet)
@@ -168,6 +169,23 @@ class BerkshireAnalysisBackendTests(unittest.TestCase):
             with self.assertRaises(BerkshireAnalysisError):
                 node({"company_of_interest": "NVDA", "trade_date": "2026-09-21"})
         self.assertEqual(len(llm.calls), 4)
+
+    def test_provider_failure_keeps_long_run_stop_semantics(self):
+        from tradingagents.llm_clients.retry import ProviderFailure
+
+        class FailedProvider(FakeRoleLLM):
+            def invoke(self, messages):
+                if "Role name: risk_assessor" in str(messages[-1].content):
+                    raise ProviderFailure(role="analysis", provider="fixture", model="fixture",
+                                          attempts=1, category="permanent", detail="provider unavailable")
+                return super().invoke(messages)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "evidence_packet.json"
+            path.write_text(json.dumps(_packet()), encoding="utf-8")
+            node = create_berkshire_analysis_team(FailedProvider(), {"evidence_packet_path": str(path)})
+            with self.assertRaises(ProviderFailure):
+                node({"company_of_interest": "NVDA", "trade_date": "2026-09-21"})
 
 
 if __name__ == "__main__":

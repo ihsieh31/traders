@@ -160,11 +160,12 @@ def _resolve_protective_prices(
             )
             return None
 
+    from .policy import canonical_protective_price
     out: dict[str, float] = {}
     if stop_price:
-        out["stop_loss_price"] = float(stop_price)
+        out["stop_loss_price"] = canonical_protective_price(stop_price)
     if target_price:
-        out["take_profit_price"] = float(target_price)
+        out["take_profit_price"] = canonical_protective_price(target_price)
     return out or None
 
 

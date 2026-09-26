@@ -92,14 +92,13 @@ class FakeService:
         self.recover_calls = 0
         self.execute_calls = []
         self.posts = {}  # decision_id -> broker_calls
+        self.store = SimpleNamespace(list_recoverable_orders=lambda: [])
 
     def startup_recover(self, can_submit=None):
-        # R02: long-run callers pass their stop/window authority as a
-        # submit-boundary callback; the fixture accepts it and fails the
-        # recovery the same way the real service would when it refuses.
-        if can_submit is not None and not can_submit():
-            return {"success": False, "account_execution_state": "PAUSED",
-                    "reconciliation_reasons": ["stop/window authority refused recovery submit"]}
+        # An empty outbox reconciles cleanly even when submission is disabled
+        # at the final settlement gate.
+        if can_submit is not None:
+            can_submit()
         self.recover_calls += 1
         return {"success": True, "account_execution_state": "CLEAN",
                 "reconciliation_reasons": []}

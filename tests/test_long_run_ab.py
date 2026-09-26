@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+import pytest
 
 from tradingagents import long_run as lr
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -112,6 +113,7 @@ def _complete_arm(**kwargs):
     }
     for symbol in journal["symbols"]:
         journal["symbols"][symbol]["status"] = lr.SYMBOL_DONE
+        journal["symbols"][symbol]["evidence_packet_sha256"] = "e" * 64
     journal["symbols"]["T00"]["signal"] = (
         "BUY" if kwargs["runtime"]["analysis_backend"] == "traders" else "HOLD"
     )
@@ -203,13 +205,265 @@ def test_both_backends_bind_to_the_same_frozen_evidence_identity(tmp_path):
     assert resolve_analysis_backend(b_config) == "berkshire"
 
 
+def test_ab_completion_waits_for_both_execution_ledgers(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(lr, "_apply_runtime_config", lambda runtime: None)
+    state = {"run_id": "settlement-gate", "mode": "ab", "status": "RUNNING",
+             "expected_sessions": []}
+    lr.save_active_state(state)
+    services = iter([
+        SimpleNamespace(startup_recover=lambda **kwargs: {"success": True, "account_execution_state": "CLEAN"},
+                        store=SimpleNamespace(list_recoverable_orders=lambda: [])),
+        SimpleNamespace(startup_recover=lambda **kwargs: {"success": False, "account_execution_state": "PAUSED"},
+                        store=SimpleNamespace(list_recoverable_orders=lambda: [{"status": "UNKNOWN"}])),
+    ])
+    deps = lr.LongRunDeps(execution_service_factory=lambda: next(services))
+    with pytest.raises(lr.LongRunStop, match="SETTLEMENT_UNRESOLVED"):
+        lr.finalize_observation(
+            state, {"ab_results_root": str(tmp_path / "ab")}, dict(DEFAULT_CONFIG),
+            deps, final_status="COMPLETED")
+    assert lr.load_active_state()["status"] == "RUNNING"
+    assert not (lr.run_dir("settlement-gate") / "final_report.json").exists()
+
+
+@pytest.mark.parametrize("status", ["PENDING", "UNKNOWN", "SUBMITTING", "ACCEPTED", "PARTIAL"])
+def test_single_completion_rejects_nonterminal_order(tmp_path, monkeypatch, status):
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(lr, "_apply_runtime_config", lambda runtime: None)
+    state = {"run_id": "single-settlement", "status": "RUNNING", "expected_sessions": []}
+    lr.save_active_state(state)
+    service = SimpleNamespace(
+        startup_recover=lambda **_kw: {"success": True, "account_execution_state": "CLEAN"},
+        store=SimpleNamespace(list_recoverable_orders=lambda: [{"status": status}]),
+    )
+    with pytest.raises(lr.LongRunStop, match="SETTLEMENT_UNRESOLVED"):
+        lr.finalize_observation(
+            state, {}, dict(DEFAULT_CONFIG),
+            lr.LongRunDeps(execution_service_factory=lambda: service), final_status="COMPLETED")
+    assert lr.load_active_state()["status"] == "RUNNING"
+
+
+@pytest.mark.parametrize("status", ["PENDING", "UNKNOWN", "SUBMITTING", "ACCEPTED", "PARTIAL"])
+def test_ab_completion_rejects_each_nonterminal_order(tmp_path, monkeypatch, status):
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(lr, "_apply_runtime_config", lambda runtime: None)
+    state = {"run_id": "nonterminal-gate", "mode": "ab", "status": "RUNNING",
+             "expected_sessions": []}
+    lr.save_active_state(state)
+    calls = iter([0, 1])
+    def service():
+        arm = next(calls)
+        return SimpleNamespace(
+            startup_recover=lambda **_kw: {"success": True, "account_execution_state": "CLEAN"},
+            store=SimpleNamespace(list_recoverable_orders=lambda: [] if arm == 0 else [{"status": status}]),
+        )
+    with pytest.raises(lr.LongRunStop, match="SETTLEMENT_UNRESOLVED"):
+        lr.finalize_observation(
+            state, {"ab_results_root": str(tmp_path / "ab")}, dict(DEFAULT_CONFIG),
+            lr.LongRunDeps(execution_service_factory=service), final_status="COMPLETED")
+    assert lr.load_active_state()["status"] == "RUNNING"
+
+
+@pytest.mark.parametrize("key,value", [
+    ("max_trade_notional_usd", 0),
+    ("max_symbol_concentration_pct", float("nan")),
+    ("daily_loss_halt_pct", -1),
+    ("max_drawdown_halt_pct", float("inf")),
+    ("max_consecutive_rejections", 0),
+])
+def test_unattended_invalid_safety_limits_fail_preflight(key, value):
+    with pytest.raises(lr.LongRunStop, match="SAFETY_LIMIT_INVALID"):
+        lr._validate_unattended_safety({"safety_enabled": True, key: value})
+
+
+def test_wrong_date_round_journal_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "state"))
+    path = lr.round_path("wrong-date", SESSION)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"session_date": "2026-09-24", "status": "COMPLETED"}))
+    with pytest.raises(lr.LongRunStop, match="STATE_CORRUPT"):
+        lr.load_round_journal("wrong-date", SESSION)
+
+
+def test_terminal_parent_still_finalizes_running_arm(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(lr, "_apply_runtime_config", lambda runtime: None)
+    parent = lr.new_round_journal(SESSION, [])
+    parent["status"] = "STOPPED"
+    lr.save_round_journal("parent-terminal", parent)
+    arm_id = lr._ab_arm_run_id("parent-terminal", "traders")
+    arm = lr.new_round_journal(SESSION, [])
+    arm["status"] = "RUNNING"
+    lr.save_round_journal(arm_id, arm)
+    other_id = lr._ab_arm_run_id("parent-terminal", "berkshire")
+    other = lr.new_round_journal(SESSION, [])
+    other["status"] = "COMPLETED"
+    lr.save_round_journal(other_id, other)
+    monkeypatch.setattr(lr, "aggregate_ab_final_report", lambda *_a: {})
+    monkeypatch.setattr(lr, "write_ab_final_report", lambda *_a: ("report.md", "report.json"))
+    monkeypatch.setattr(lr, "send_long_run_alert", lambda *_a, **_kw: None)
+    state = {"run_id": "parent-terminal", "mode": "ab", "status": "RUNNING",
+             "expected_sessions": [SESSION], "started_at": "2026-09-23T00:00:00+00:00",
+             "ends_at": "2026-09-24T00:00:00+00:00"}
+    lr.finalize_observation(state, {"ab_results_root": str(tmp_path / "ab")},
+                            dict(DEFAULT_CONFIG), final_status="STOPPED")
+    assert lr.load_round_journal(arm_id, SESSION)["status"] == "STOPPED"
+    assert lr.load_round_journal(other_id, SESSION)["status"] == "COMPLETED"
+
+
 def _ab_round_setup(tmp_path):
     root = tmp_path / "ab-results" / "lr-ab-fixture"
     config = _screening_config(tmp_path)
     selection = _selection(config)
     initial = _plan(selection, extras=["AAPL"])
-    deps = lr.LongRunDeps(screening_fn=lambda *_a, **_k: initial)
+    deps = lr.LongRunDeps(screening_fn=lambda *_a, **_k: initial,
+                          now_fn=lambda: datetime(2026, 9, 23, 14, 0, tzinfo=timezone.utc))
     return root, config, selection, initial, deps
+
+
+def test_ab_shared_screening_skips_after_submission_deadline(tmp_path):
+    root, config, _selection_value, initial, _deps = _ab_round_setup(tmp_path)
+    calls = []
+    deps = lr.LongRunDeps(
+        screening_fn=lambda *_a, **_k: calls.append(1) or initial,
+        now_fn=lambda: datetime(2026, 9, 23, 18, 0, tzinfo=timezone.utc),
+    )
+    journal = lr.run_ab_daily_round(
+        run_id="lr-ab-deadline", session_date=SESSION,
+        long_cfg={"ab_results_root": str(root)}, runtime=config, deps=deps,
+        schedule_info={"effective_target": "11:00"},
+    )
+    assert calls == []
+    assert journal["shared_screening"]["reason"] == "SESSION_SUBMISSION_DEADLINE"
+
+
+def test_scheduler_uses_frozen_unsettled_session_without_history_calendar_gets(monkeypatch):
+    monkeypatch.setattr("tradingagents.dataflows.market_calendar.is_us_trading_day_auth",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("history re-queried")))
+    calls = []
+    monkeypatch.setattr(lr, "effective_target_for_session",
+                        lambda day, *_a, **_kw: calls.append(day) or
+                        {"session_date": day.isoformat(), "effective_target": "11:00"})
+    sessions = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(250)]
+    result = lr.next_due_session(
+        now=datetime(2026, 9, 8, 15, 0, tzinfo=timezone.utc),
+        run_time_et="11:00",
+        started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        settled=sessions[:-1], expected_sessions=sessions,
+    )
+    assert result["session_date"] == sessions[-1]
+    assert len(calls) == 1
+
+
+def test_experiment_fingerprint_tracks_behavior_not_api_keys():
+    config = lr.default_long_run_config()
+    runtime = dict(DEFAULT_CONFIG)
+    baseline = lr.experiment_fingerprint(config, runtime)
+    assert lr.experiment_fingerprint(config, {**runtime, "max_trade_notional_usd": 500}) != baseline
+    assert lr.experiment_fingerprint(config, {**runtime, "analysis_model": "changed-model"}) != baseline
+    assert lr.experiment_fingerprint(config, {**runtime, "openai_api_key": "changed-secret"}) == baseline
+    nested = {**runtime, "deep_llm_params": {**runtime["deep_llm_params"], "auth_token": "secret"}}
+    assert lr.experiment_fingerprint(config, nested) == baseline
+
+
+def test_experiment_fingerprint_survives_the_active_state_sanitize_round_trip():
+    """The resume path rebuilds its config from the sanitized active state.
+
+    ``sanitize_for_log`` rewrites every ``*_url`` key through ``sanitize_url``,
+    which turns an unset ``None`` into ``""``. If the fingerprint hashed the
+    raw ``None``, every crash/resume of a live observation would be refused as
+    CONFIG_DRIFT — the exact interruption the gate exists to prevent.
+    """
+    created_cfg = dict(lr.default_long_run_config())
+    created_cfg.update({
+        "duration_calendar_days": 30,
+        "base_trade_notional_usd": 50_000,
+        "analysis_provider": "openai",
+        "analysis_model": "test-analysis-model",
+    })
+    created_cfg["ab_results_root"] = "/tmp/ab-root/lr-fixture"
+    created_runtime = lr.build_runtime_config(created_cfg)
+    stored = json.loads(json.dumps(lr.sanitize_for_log(created_cfg)))
+    recorded = lr.experiment_fingerprint(created_cfg, created_runtime)
+
+    resumed_cfg = dict(lr.default_long_run_config())
+    resumed_cfg.update(stored)
+    assert lr.experiment_fingerprint(
+        resumed_cfg, lr.build_runtime_config(resumed_cfg)) == recorded
+
+    # A real behavioral change must still be refused on that same round trip.
+    drifted = dict(resumed_cfg)
+    drifted["base_trade_notional_usd"] = 10_000
+    assert lr.experiment_fingerprint(drifted, lr.build_runtime_config(drifted)) != recorded
+    assert lr.experiment_fingerprint(
+        resumed_cfg,
+        {**lr.build_runtime_config(resumed_cfg), "openai_api_key": "rotated"},
+    ) == recorded
+
+
+def test_ab_pair_order_is_deterministic_and_balanced():
+    """F14: neither arm may always take the first quote/execution window."""
+    def first_arm(session, symbol):
+        parity = int.from_bytes(
+            hashlib.sha256(f"{session}:{symbol}".encode()).digest()[:8], "big") % 2
+        return "traders" if parity == 0 else "berkshire"
+
+    symbols = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "SPY", "QQQ", "IWM"]
+    sessions = [f"2026-09-{day:02d}" for day in range(1, 21)]
+    firsts = [first_arm(session, symbol) for session in sessions for symbol in symbols]
+    assert set(firsts) == {"traders", "berkshire"}
+    assert abs(firsts.count("traders") - firsts.count("berkshire")) <= 0.1 * len(firsts)
+
+
+def test_ab_report_reads_each_arms_own_kill_switch(tmp_path, monkeypatch):
+    """F18-D: the two arms keep independent kill-switch files under their arm dir."""
+    monkeypatch.setenv("TRADINGBUFFETT_LONG_RUN_DIR", str(tmp_path / "state"))
+    root = str(tmp_path / "ab" / "lr-kill-fixture")
+    runtimes = {backend: apply_ab_backend_runtime_paths(
+        dict(DEFAULT_CONFIG), backend, root) for backend in lr.AB_BACKENDS}
+    assert runtimes["traders"]["safety_kill_switch_path"] != \
+        runtimes["berkshire"]["safety_kill_switch_path"]
+
+    halted = Path(runtimes["traders"]["safety_kill_switch_path"])
+    halted.parent.mkdir(parents=True, exist_ok=True)
+    halted.write_text("operator halt", encoding="utf-8")
+
+    base_state = {"run_id": "kill-fixture", "expected_sessions": [],
+                  "started_at": "2026-09-01T00:00:00+00:00",
+                  "ends_at": "2026-10-01T00:00:00+00:00"}
+    reports = {backend: lr.aggregate_final_report(dict(base_state), {}, arm_runtime)
+               for backend, arm_runtime in runtimes.items()}
+    assert reports["traders"]["safety"]["kill_switch_active"] is True
+    assert reports["traders"]["safety"]["kill_switch_reason"] == "operator halt"
+    assert reports["berkshire"]["safety"]["kill_switch_active"] is False
+
+
+def test_ab_startup_requires_flat_comparable_accounts():
+    snapshots = {
+        "traders": {"account_ref": "account-a", "equity": 100_000, "positions": []},
+        "berkshire": {"account_ref": "account-b", "equity": 100_500, "positions": []},
+    }
+    lr.validate_ab_startup_snapshots(snapshots)
+    with pytest.raises(lr.LongRunStop, match="AB_BASELINE_INVALID"):
+        lr.validate_ab_startup_snapshots({**snapshots, "traders": {
+            **snapshots["traders"], "positions": [{"symbol": "AAPL", "qty": 1}]
+        }})
+    with pytest.raises(lr.LongRunStop, match="AB_BASELINE_INVALID"):
+        lr.validate_ab_startup_snapshots({**snapshots, "berkshire": {
+            **snapshots["berkshire"], "equity": 90_000
+        }})
+
+
+def test_selected_local_openai_adapter_keeps_supported_model_params():
+    from tradingagents.llm_clients.factory import create_llm_client
+    llm = create_llm_client(
+        "local_openai", "agnes-3.0-flash", "http://localhost:1234/v1",
+        api_key="offline-test", model_role="deep", max_output_tokens=16000,
+        timeout=9,
+    ).get_llm()
+    assert llm.max_tokens == 16000
+    assert llm.request_timeout == 9
 
 
 def _run_interleaved_ab(
@@ -223,6 +477,8 @@ def _run_interleaved_ab(
     extras=None,
     preanalyzed_traders=(),
     crash_at=None,
+    invalid_arm=None,
+    mismatched_evidence=False,
 ):
     """Exercise the real A/B coordinator and symbol state machine with fakes."""
     root, config, selection, _initial, _deps = _ab_round_setup(tmp_path)
@@ -257,6 +513,7 @@ def _run_interleaved_ab(
                 if backend == "traders" and symbol in journal["symbols"]:
                     journal["symbols"][symbol].update({
                         "status": lr.SYMBOL_ANALYZED,
+                        "evidence_packet_sha256": "e" * 64,
                         "trade_intent": {"symbol": symbol, "action": "BUY",
                                          "target_position": "LONG"},
                         "signal": "BUY",
@@ -276,6 +533,8 @@ def _run_interleaved_ab(
                 events.append(("analysis_started", backend, symbol, clock[0]))
                 clock[0] += analysis_duration
                 events.append(("analysis_finished", backend, symbol, clock[0]))
+                if backend == invalid_arm and symbol == "T00":
+                    return ({"final_trade_intent": None}, "HOLD")
                 return ({"final_trade_intent": {
                     "symbol": symbol, "action": "BUY", "target_position": "LONG",
                 }}, "BUY")
@@ -351,6 +610,8 @@ def _run_interleaved_ab(
         stack.enter_context(patch.object(lr, "run_daily_round", side_effect=prepare_arm))
         stack.enter_context(patch.object(lr, "_finish_prepared_daily_round", side_effect=finish))
         stack.enter_context(patch.object(lr, "_execute_intent", side_effect=execute))
+        stack.enter_context(patch("tradingagents.execution.service.validate_trade_intent",
+                                  side_effect=lambda intent: (intent, None)))
         stack.enter_context(patch.object(
             lr, "utc_now_iso", side_effect=lambda: clock[0].isoformat()
         ))
@@ -359,7 +620,7 @@ def _run_interleaved_ab(
             side_effect=lambda graph_config, runtime, **_kwargs: (
                 dict(graph_config),
                 {"path": str(root / "shared" / "evidence" / SESSION / "T00" / "evidence_packet.json"),
-                 "sha256": "e" * 64},
+                 "sha256": ("f" if mismatched_evidence and runtime["analysis_backend"] == "berkshire" else "e") * 64},
             ),
         ))
         if crash_at is not None:
@@ -418,17 +679,16 @@ def test_ab_interleaves_each_symbol_and_reapplies_account_runtime(tmp_path):
 
     assert result["status"] == "COMPLETED"
     assert [(event[0], event[1], event[2]) for event in events[:6]] == [
-        ("analysis_started", "traders", "T00"),
-        ("analysis_finished", "traders", "T00"),
         ("analysis_started", "berkshire", "T00"),
         ("analysis_finished", "berkshire", "T00"),
-        ("execution", "traders", "T00"),
+        ("analysis_started", "traders", "T00"),
+        ("analysis_finished", "traders", "T00"),
         ("execution", "berkshire", "T00"),
+        ("execution", "traders", "T00"),
     ]
-    # Preparation installs each arm; these later calls prove A→B→A→B
-    # switching before the first pair's analysis and execution phases.
+    # Preparation installs each arm; the first pair's order is deterministic.
     assert runtime_switches[4:8] == [
-        "traders", "berkshire", "traders", "berkshire",
+        "berkshire", "traders", "berkshire", "traders",
     ]
     assert events[4][5] != events[5][5]  # execution databases remain arm-local
 
@@ -446,25 +706,25 @@ def test_ab_interleaves_each_symbol_and_reapplies_account_runtime(tmp_path):
     assert traders["symbols"]["T00"]["evidence_packet_sha256"] == berkshire["symbols"]["T00"]["evidence_packet_sha256"]
 
 
-def test_ab_resume_after_traders_execution_only_executes_berkshire(tmp_path):
+def test_ab_resume_after_first_arm_execution_only_executes_second(tmp_path):
     events = []
     try:
         _run_interleaved_ab(
             tmp_path, events=events,
-            crash_at=("berkshire", "execution", "T00"),
+            crash_at=("traders", "execution", "T00"),
         )
     except RuntimeError as exc:
         assert "simulated coordinator crash" in str(exc)
     else:
-        raise AssertionError("expected simulated crash after Traders execution")
+        raise AssertionError("expected simulated crash after first-arm execution")
 
     before_resume = list(events)
     result, _, _ = _run_interleaved_ab(tmp_path, events=events)
     t00_after = [event for event in events[len(before_resume):] if event[2] == "T00"]
     assert result["status"] == "COMPLETED"
     assert not [event for event in t00_after if event[0].startswith("analysis_")]
-    assert not [event for event in t00_after if event[0] == "execution" and event[1] == "traders"]
-    assert len([event for event in t00_after if event[0] == "execution" and event[1] == "berkshire"]) == 1
+    assert not [event for event in t00_after if event[0] == "execution" and event[1] == "berkshire"]
+    assert len([event for event in t00_after if event[0] == "execution" and event[1] == "traders"]) == 1
 
 
 def test_ab_resume_mid_analysis_pair_reuses_traders_intent(tmp_path):
@@ -476,8 +736,8 @@ def test_ab_resume_mid_analysis_pair_reuses_traders_intent(tmp_path):
     assert [(event[0], event[1]) for event in t00] == [
         ("analysis_started", "berkshire"),
         ("analysis_finished", "berkshire"),
-        ("execution", "traders"),
         ("execution", "berkshire"),
+        ("execution", "traders"),
     ]
 
 
@@ -521,6 +781,20 @@ def test_ab_fake_clock_keeps_both_arms_inside_submission_window(tmp_path):
         event for event in events if event[0] == "analysis_started" and event[1] == "berkshire"
     )
     assert first_berkshire_analysis[3] < deadline
+
+
+def test_invalid_intent_blocks_both_arms_for_symbol(tmp_path):
+    result, events, _ = _run_interleaved_ab(tmp_path, invalid_arm="traders")
+    assert result["status"] == "COMPLETED"
+    assert not any(event[0] == "execution" and event[2] == "T00" for event in events)
+    assert result["pair_evidence"]["T00"]["status"] == "FAILED"
+
+
+def test_pair_evidence_hash_mismatch_blocks_execution(tmp_path):
+    events = []
+    with pytest.raises(lr.LongRunStop, match="STATE_CORRUPT"):
+        _run_interleaved_ab(tmp_path, events=events, mismatched_evidence=True)
+    assert not any(event[0] == "execution" for event in events)
 
 
 def test_resume_after_shared_screening_does_not_rescreen(tmp_path):

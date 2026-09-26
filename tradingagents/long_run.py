@@ -260,6 +260,119 @@ def git_baseline_commit() -> str:
     return _long_run_config.git_baseline_commit()
 
 
+# One chunk boundary can legitimately contain no trading day (a short chunk
+# landing on a weekend, for example). That must delay the next growth attempt,
+# never cancel it: the observation would otherwise stop extending its window
+# and silently trade nothing for the rest of an unbounded run.
+EMPTY_EXTENSION_RETRY_SECONDS = 300.0
+
+
+def _extension_retry_due(state: Dict[str, Any], now: datetime) -> bool:
+    """Whether a previously empty continuous growth attempt may be retried."""
+    raw = state.get("extension_retry_after")
+    if not raw:
+        return True
+    try:
+        retry_after = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return True
+    if retry_after.tzinfo is None:
+        retry_after = retry_after.replace(tzinfo=now.tzinfo)
+    return now >= retry_after
+
+
+def experiment_fingerprint(long_cfg: Dict[str, Any], runtime: Dict[str, Any]) -> str:
+    """Hash non-secret inputs that can change an unattended A/B decision."""
+    from tradingagents.default_config import DEFAULT_CONFIG
+    import hashlib
+
+    excluded = {
+        "project_dir", "results_dir", "data_dir", "data_cache_dir",
+        "memory_log_path", "agent_memory_dir", "evidence_packet_path",
+        "evidence_packet_sha256", "alerts_enabled", "alert_cooldown_seconds",
+    }
+    def behavioral(key: str) -> bool:
+        lowered = key.lower()
+        return (key not in excluded and not lowered.endswith(("_path", "_dir"))
+                and not any(marker in lowered for marker in (
+                    "api_key", "secret", "password", "webhook", "telegram", "chat_id",
+                    "access_token", "auth_token", "private_key")))
+
+    def without_secrets(value: Any, key: Any = None) -> Any:
+        """Drop non-behavioral/secret material and survive the state round trip.
+
+        The active state is persisted through ``sanitize_for_log``, which
+        rewrites every ``*_url`` key with ``sanitize_url`` — and that maps an
+        unset ``None`` to ``""``. The resume path rebuilds its config from that
+        sanitized copy, so hashing the raw ``None`` would make every resume of
+        a live observation a permanent CONFIG_DRIFT.
+        """
+        if isinstance(value, dict):
+            return {child: without_secrets(item, child) for child, item in value.items()
+                    if behavioral(str(child))}
+        if isinstance(value, (list, tuple)):
+            return [without_secrets(item) for item in value]
+        if value is None and (str(key).lower().endswith("_url")
+                              or str(key).lower() in {"backend_url", "endpoint"}):
+            return ""
+        return value
+
+    def canonical(key: str, value: Any) -> Any:
+        """Survive the sanitize_for_log round trip the active state goes through.
+
+        ``sanitize_for_log`` rewrites every ``*_url`` key through
+        ``sanitize_url``, which maps an unset ``None`` to ``""``. The resume
+        path rebuilds its config from that sanitized copy, so hashing the raw
+        ``None`` would make every resume a permanent CONFIG_DRIFT.
+        """
+        if value is None and (str(key).lower().endswith("_url")
+                              or str(key).lower() in {"backend_url", "endpoint"}):
+            return ""
+        return value
+
+    effective = {key: canonical(key, without_secrets(runtime.get(key, value), key))
+                 for key, value in DEFAULT_CONFIG.items() if behavioral(key)}
+    parameters = {key: canonical(key, without_secrets(value, key)) for key, value in long_cfg.items()
+                  if behavioral(key) and key not in {"ab_results_root"}}
+    prompt_root = Path(__file__).resolve().parent / "prompts" / "templates"
+    prompts = {str(path.relative_to(prompt_root)): hashlib.sha256(path.read_bytes()).hexdigest()
+               for path in sorted(prompt_root.rglob("*.md"))}
+    project_root = Path(__file__).resolve().parent.parent
+    sources = {
+        str(path.relative_to(project_root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for folder in (project_root / "tradingagents", project_root / "cli")
+        for path in sorted(folder.rglob("*.py"))
+    }
+    payload = {"commit": git_baseline_commit(), "runtime": effective,
+               "long_run": parameters, "prompts": prompts, "sources": sources}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def validate_ab_startup_snapshots(snapshots: Dict[str, Dict[str, Any]]) -> None:
+    """Require flat, distinct, comparably funded Paper accounts at startup."""
+    import math
+    if set(snapshots) != set(AB_BACKENDS):
+        raise LongRunStop("AB_BASELINE_INVALID", "both A/B account snapshots are required")
+    refs = [str(snapshots[backend].get("account_ref") or "") for backend in AB_BACKENDS]
+    if not all(refs) or len(set(refs)) != 2:
+        raise LongRunStop("AB_BASELINE_INVALID", "A/B Paper account identities are not distinct")
+    equities = []
+    for backend in AB_BACKENDS:
+        snapshot = snapshots[backend]
+        if snapshot.get("positions"):
+            raise LongRunStop("AB_BASELINE_INVALID", f"{backend} account is not flat")
+        try:
+            equity = float(snapshot.get("equity"))
+        except (TypeError, ValueError):
+            equity = math.nan
+        if not math.isfinite(equity) or equity <= 0:
+            raise LongRunStop("AB_BASELINE_INVALID", f"{backend} account equity is invalid")
+        equities.append(equity)
+    if abs(equities[0] - equities[1]) / max(equities) > 0.01:
+        raise LongRunStop("AB_BASELINE_INVALID", "A/B starting equities differ by more than 1%")
+
+
 # ---------------------------------------------------------------------------
 # Scheduling (authoritative Alpaca calendar only)
 # ---------------------------------------------------------------------------
@@ -300,6 +413,7 @@ def next_due_session(
     started_at: datetime,
     ends_at: datetime,
     settled: List[str],
+    expected_sessions: Optional[List[str]] = None,
     calendar_client: Any = None,
     calendar_rows: Optional[List[Any]] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -317,6 +431,7 @@ def next_due_session(
         started_at=started_at,
         ends_at=ends_at,
         settled=settled,
+        expected_sessions=expected_sessions,
         calendar_client=calendar_client,
         calendar_rows=calendar_rows,
         eastern_now=eastern_now,
@@ -689,12 +804,15 @@ def save_round_journal(run_id: str, journal: Dict[str, Any]) -> None:
 
 
 def load_round_journal(run_id: str, session_date: str) -> Optional[Dict[str, Any]]:
-    return _state.load_round_journal(
+    journal = _state.load_round_journal(
         run_id,
         session_date,
         read_json=read_json,
         round_path=round_path,
     )
+    if journal is not None and journal.get("session_date") != session_date:
+        raise LongRunStop("STATE_CORRUPT", f"round journal date mismatch for {session_date}")
+    return journal
 
 
 def _normalize_intent(intent: Any) -> Optional[Dict[str, Any]]:
@@ -1373,6 +1491,27 @@ def run_ab_daily_round(
             raise LongRunStop("STATE_CORRUPT", "completed shared selection artifact is missing")
         if _control_stop_reason(deps, ends_at):
             return journal
+        effective_target = (schedule_info or {}).get("effective_target")
+        if not effective_target:
+            try:
+                target_info = effective_target_for_session(
+                    date.fromisoformat(session_date),
+                    str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
+                    calendar_client=deps.calendar_client or runtime.get("calendar_client"),
+                    calendar_rows=deps.calendar_rows or runtime.get("calendar_rows"),
+                )
+                effective_target = target_info["effective_target"]
+            except Exception:
+                effective_target = None
+        if not effective_target or not make_session_submit_guard(
+            session_date=session_date, effective_target=str(effective_target),
+            now_fn=deps.now_fn,
+        )():
+            journal["shared_screening"] = {
+                "status": "SCREENING_SKIPPED", "reason": "SESSION_SUBMISSION_DEADLINE"
+            }
+            save_round_journal(run_id, journal)
+            return journal
         _apply_runtime_config(arm_runtimes["traders"])
         _validate_long_run_execution_config(arm_runtimes["traders"])
         try:
@@ -1566,20 +1705,79 @@ def run_ab_daily_round(
         return journal
 
     top20_symbols = [str(row["symbol"]) for row in selection.get("top20", [])]
+    def _arm_symbol_entry(backend: str, symbol: str) -> Dict[str, Any]:
+        arm_journal = (prepared_arms[backend].journal if backend in prepared_arms
+                       else load_round_journal(_ab_arm_run_id(run_id, backend), session_date) or {})
+        return (arm_journal.get("symbols") or {}).get(symbol) or {}
+
+    def _pair_evidence_sha(symbol: str) -> Optional[str]:
+        pair = journal.setdefault("pair_evidence", {}).setdefault(symbol, {})
+        hashes = {pair["sha256"]} if pair.get("sha256") else set()
+        for backend in AB_BACKENDS:
+            sha = _arm_symbol_entry(backend, symbol).get("evidence_packet_sha256")
+            if sha:
+                hashes.add(sha)
+        if len(hashes) > 1:
+            raise LongRunStop("STATE_CORRUPT", f"A/B evidence hash differs for {symbol}")
+        if not hashes:
+            return None
+        sha = next(iter(hashes))
+        pair["sha256"] = sha
+        save_round_journal(run_id, journal)
+        return sha
+
     # Pair by symbol: both analysis intents are durable before either account
     # executes. Every switch reapplies its arm config and safety guard.
     for symbol in top20_symbols:
-        for backend in AB_BACKENDS:
+        import hashlib
+        first_arm = int.from_bytes(hashlib.sha256(f"{session_date}:{symbol}".encode()).digest()[:8], "big") % 2
+        pair_order = AB_BACKENDS if first_arm == 0 else tuple(reversed(AB_BACKENDS))
+        if all(journal["arms"].get(backend, {}).get("status") == "COMPLETED"
+               for backend in AB_BACKENDS):
+            break
+        for backend in pair_order:
             prepared = prepared_arms.get(backend)
             if prepared is None:
                 continue
+            sha = _pair_evidence_sha(symbol)
+            entry = prepared.journal["symbols"].get(symbol) or {}
+            if sha and not entry.get("evidence_packet_sha256"):
+                entry["evidence_packet_sha256"] = sha
+                save_round_journal(prepared.run_id, prepared.journal)
             stop_reason = _run_prepared_round_symbols(
                 prepared, phase="analysis", symbols=[symbol], reapply_runtime=True,
             )
             if stop_reason:
                 return _yield_ab_round()
 
-        for backend in AB_BACKENDS:
+        sha = _pair_evidence_sha(symbol)
+        if sha is None:
+            statuses = [_arm_symbol_entry(backend, symbol).get("status") for backend in AB_BACKENDS]
+            if all(status in (None, SYMBOL_PENDING, SYMBOL_DONE, SYMBOL_FAILED) for status in statuses):
+                continue
+            raise LongRunStop("STATE_CORRUPT", f"A/B evidence was not pinned for {symbol}")
+        entries = [_arm_symbol_entry(backend, symbol) for backend in AB_BACKENDS]
+        routes = {backend: list(_arm_symbol_entry(backend, symbol).get("analysis_routes") or [])
+                  for backend in AB_BACKENDS}
+        pair = journal["pair_evidence"][symbol]
+        pair["analysis_routes"] = routes
+        pair["route_contaminated"] = any(
+            route.get("route") == "fallback" for arm_routes in routes.values()
+            for route in arm_routes
+        )
+        pair["route_status"] = (
+            "fallback" if pair["route_contaminated"] else
+            "primary" if all(routes.values()) else "unknown"
+        )
+        save_round_journal(run_id, journal)
+        if any(entry.get("evidence_packet_sha256") != sha for entry in entries):
+            raise LongRunStop("STATE_CORRUPT", f"A/B arm evidence is missing or changed for {symbol}")
+        if any(entry.get("status") == SYMBOL_FAILED for entry in entries):
+            journal["pair_evidence"][symbol]["status"] = "FAILED"
+            save_round_journal(run_id, journal)
+            continue
+
+        for backend in pair_order:
             prepared = prepared_arms.get(backend)
             if prepared is None:
                 continue
@@ -1995,6 +2193,7 @@ def run_observation_loop(
                 started_at=datetime.fromisoformat(state["started_at"]),
                 ends_at=ends_at,
                 settled=settled_sessions(run_id),
+                expected_sessions=state.get("expected_sessions") or None,
                 calendar_client=deps.calendar_client,
                 calendar_rows=deps.calendar_rows,
             )
@@ -2028,12 +2227,13 @@ def run_observation_loop(
             # that day's target, otherwise it is added post-close and settled
             # MISSED. Grow the window as soon as the current chunk is
             # provably spent (never merely because nothing is due now).
-            if should_extend_continuous_window(
+            if (_extension_retry_due(state, now)
+                and should_extend_continuous_window(
                 state=state, ends_at=ends_at, now=now,
                 run_time_et=str(long_cfg.get("run_time_et") or DEFAULT_RUN_TIME_ET),
                 calendar_client=deps.calendar_client,
                 calendar_rows=deps.calendar_rows,
-            ):
+            )):
                 before = len(state.get("expected_sessions") or [])
                 try:
                     extend_continuous_window(state, long_cfg, deps)
@@ -2052,13 +2252,21 @@ def run_observation_loop(
                     next_ends = next_ends.replace(tzinfo=timezone.utc)
                 ends_at = next_ends
                 if len(state.get("expected_sessions") or []) > before:
+                    state.pop("extension_retry_after", None)
+                    save_active_state(state)
                     # A new session is schedulable: re-enter the scheduler
                     # instead of sleeping, so the boundary date is frozen
                     # well before its target.
                     continue
                 # Nothing appended (a range with no session at all): never
-                # spin — fall through to the bounded wait and let the next
-                # pass grow the following chunk.
+                # spin. Back off for one bounded wait, then let a later pass
+                # grow the following chunk — a chunk boundary that lands on a
+                # weekend must not disable continuous growth for the rest of
+                # the run.
+                state["extension_retry_after"] = (
+                    now + timedelta(seconds=EMPTY_EXTENSION_RETRY_SECONDS)
+                ).isoformat()
+                save_active_state(state)
             # No session left before ends_at: wait out the window in chunks.
             remaining = (ends_at - now).total_seconds()
             deps.sleep_fn(min(60.0, max(1.0, remaining)))
@@ -2192,23 +2400,25 @@ def aggregate_ab_final_report(
             "expected_sessions": state.get("expected_sessions") or [],
             "restart_count": state.get("restart_count", 0),
             "baseline_commit": state.get("baseline_commit", "unknown"),
+            "account_ref": ((state.get("arms") or {}).get(backend) or {}).get("account_ref"),
         }
         arm_reports[backend] = aggregate_final_report(arm_state, long_cfg, arm_runtime)
 
     top20_by_day: Dict[str, List[str]] = {}
     selection_hashes: Dict[str, str] = {}
     screening_cutoffs: Dict[str, Dict[str, Any]] = {}
+    pair_routes: Dict[str, Dict[str, Any]] = {}
     signals: Dict[str, Dict[tuple[str, str], str]] = {b: {} for b in AB_BACKENDS}
     for session in state.get("expected_sessions") or []:
         coordinator = load_round_journal(state["run_id"], session)
         if not isinstance(coordinator, dict):
             continue
         screening = coordinator.get("screening") or {}
+        shared = coordinator.get("shared_screening") or {}
         top20_by_day[session] = [
-            str(row["symbol"]) for row in screening.get("top20", [])
+            str(row["symbol"]) for row in (screening.get("top20") or shared.get("top20") or [])
             if isinstance(row, dict) and row.get("symbol")
         ]
-        shared = coordinator.get("shared_screening") or {}
         if shared.get("selection_hash"):
             selection_hashes[session] = str(shared["selection_hash"])
         screening_cutoffs[session] = {
@@ -2216,6 +2426,14 @@ def aggregate_ab_final_report(
             "data_feed": shared.get("data_feed"),
             "config_fingerprint": shared.get("config_fingerprint"),
             "top40": shared.get("top40") or [],
+        }
+        pair_routes[session] = {
+            symbol: {"analysis_routes": pair.get("analysis_routes") or {},
+                     "route_contaminated": bool(pair.get("route_contaminated")),
+                     "route_status": pair.get("route_status", "unknown"),
+                     "status": pair.get("status")}
+            for symbol, pair in (coordinator.get("pair_evidence") or {}).items()
+            if isinstance(pair, dict)
         }
         for backend in AB_BACKENDS:
             arm_round = load_round_journal(_ab_arm_run_id(state["run_id"], backend), session) or {}
@@ -2354,6 +2572,7 @@ def aggregate_ab_final_report(
         "arms": arm_reports, "comparison": comparison,
         "signal_disagreement": {"shared_symbol_session_count": len(shared_signals),
                                  "disagreements": disagreements},
+        "pair_routes": pair_routes,
         "timing_fairness": timing_fairness,
         "metrics_unavailable": {
             "realized_pl": "broker snapshots do not provide reliable realized P/L attribution",
@@ -2386,6 +2605,8 @@ def write_ab_final_report(report: Dict[str, Any]) -> Tuple[str, str]:
                      f"{row['equity_return']} | {row['max_drawdown']} |")
     lines += ["", "## Signal disagreement", "",
               json.dumps(report.get("signal_disagreement"), ensure_ascii=False, sort_keys=True),
+              "", "## Analysis routes by pair", "",
+              json.dumps(report.get("pair_routes"), ensure_ascii=False, sort_keys=True),
               "", "## Timing fairness", "",
               json.dumps(report.get("timing_fairness"), ensure_ascii=False, sort_keys=True),
               "", "## Metrics marked unavailable"]
@@ -2442,6 +2663,27 @@ def finalize_observation(
     """Finalize the window: persist status, reports, alerts; clear active."""
     deps = deps or LongRunDeps()
     run_id = state["run_id"]
+    if final_status == "COMPLETED":
+        if state.get("mode") == "ab":
+            root = str(long_cfg.get("ab_results_root") or "")
+            if not root:
+                raise LongRunStop("SETTLEMENT_UNRESOLVED", "A/B results root is unavailable")
+            settlement_runtimes = [(backend, apply_ab_backend_runtime_paths(runtime, backend, root))
+                                   for backend in AB_BACKENDS]
+        else:
+            settlement_runtimes = [(str(runtime.get("analysis_backend") or "traders"), runtime)]
+        for backend, arm_runtime in settlement_runtimes:
+            try:
+                _apply_runtime_config(arm_runtime)
+                service = (deps.execution_service_factory or _default_execution_service)()
+                recovered = service.startup_recover(can_submit=lambda: False)
+                if not recovered.get("success") or recovered.get("account_execution_state") != "CLEAN":
+                    raise ValueError(f"{backend} reconciliation is not CLEAN: {recovered.get('reconciliation_reasons')}")
+                unresolved = service.store.list_recoverable_orders()
+                if unresolved:
+                    raise ValueError(f"{backend} has {len(unresolved)} nonterminal execution orders")
+            except Exception as exc:
+                raise LongRunStop("SETTLEMENT_UNRESOLVED", str(exc)) from exc
     # Sessions in the window that never completed were missed: record them so
     # they stay in the denominator instead of silently disappearing. An
     # unfinished journal keeps its partial per-symbol evidence — those
@@ -2449,6 +2691,21 @@ def finalize_observation(
     for session_day in sorted(state.get("expected_sessions") or []):
         journal = load_round_journal(run_id, session_day)
         if journal is not None and journal.get("status") in TERMINAL_ROUND_STATUSES:
+            if state.get("mode") == "ab":
+                for backend in AB_BACKENDS:
+                    arm_id = _ab_arm_run_id(run_id, backend)
+                    arm_journal = load_round_journal(arm_id, session_day)
+                    arm_file = round_path(arm_id, session_day)
+                    if arm_journal is None and arm_file.exists():
+                        log_event(run_id, "ab_arm_round_unreadable", {
+                            "session": session_day, "backend": backend,
+                        })
+                        continue
+                    if arm_journal is not None and arm_journal.get("status") not in TERMINAL_ROUND_STATUSES:
+                        arm_journal["status"] = "STOPPED"
+                        arm_journal["stop_reason"] = "PARENT_TERMINAL_ARM_UNFINISHED"
+                        arm_journal["finished_at"] = arm_journal.get("finished_at") or utc_now_iso()
+                        save_round_journal(arm_id, arm_journal)
             continue
         journal_file = round_path(run_id, session_day)
         if journal is None and journal_file.exists():

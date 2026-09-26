@@ -248,6 +248,29 @@ def run_preflight(
 
     roles = resolve_role_config(runtime)
     screening = resolve_screening_config(runtime)
+    fallback = roles.get("analysis_fallback")
+    if fallback is not None:
+        try:
+            from pydantic import BaseModel
+            from tradingagents.llm_clients.factory import create_llm_client
+
+            class _CapabilityProbe(BaseModel):
+                value: str
+
+            candidate = create_llm_client(
+                fallback.provider, fallback.model, fallback.backend_url or None,
+                api_key=REDACTED_API_KEY,
+                model_role="quick",
+            ).get_llm()
+            candidate.with_structured_output(_CapabilityProbe)
+            candidate.bind_tools([{
+                "name": "capability_probe", "description": "Local capability check",
+                "parameters": {"type": "object", "properties": {}},
+            }])
+        except Exception as exc:
+            raise LongRunStop(
+                "PREFLIGHT_FAILED", f"analysis fallback lacks required structured/tool binding: {exc}"
+            ) from exc
     max_retries = int(runtime.get("llm_max_retries", 3))
 
     # One transport probe per role route — never deduped across roles. Two

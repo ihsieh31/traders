@@ -7,6 +7,7 @@ wrappers so its module attributes stay the patch seams tests resolve.
 from __future__ import annotations
 
 from typing import Any, Callable, Optional
+from .policy import canonical_protective_price
 
 _TIMEOUT_MARKERS = (
     "timeout",
@@ -111,12 +112,12 @@ def _build_protective_request(
     try:
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         stop_loss = (
-            StopLossRequest(stop_price=round(float(stop_loss_price), 2))
+            StopLossRequest(stop_price=canonical_protective_price(stop_loss_price))
             if stop_loss_price
             else None
         )
         take_profit = (
-            TakeProfitRequest(limit_price=round(float(take_profit_price), 2))
+            TakeProfitRequest(limit_price=canonical_protective_price(take_profit_price))
             if take_profit_price
             else None
         )

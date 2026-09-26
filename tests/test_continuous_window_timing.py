@@ -720,7 +720,11 @@ class HolidayAndOutageTests(_LongRunIsolatedTestCase):
             self._run(state, cfg, deps)
 
         kinds = [kind for kind, _at in clock.events]
-        self.assertEqual(kinds.count("extend"), 1, kinds)
+        attempts = kinds.count("extend")
+        self.assertGreaterEqual(attempts, 2, kinds)
+        self.assertLessEqual(attempts, len(clock.sleeps), kinds)
+        self.assertLessEqual(max(clock.sleeps), 60.0)
+        self.assertNoHotGrowth(clock)
         # It then waited out the whole simulated span at the loop's own pace.
         self.assertGreaterEqual(len(clock.sleeps), 50)
         self.assertLessEqual(max(clock.sleeps), 60.0)
@@ -755,8 +759,10 @@ class HolidayAndOutageTests(_LongRunIsolatedTestCase):
 
         kinds = [kind for kind, _at in clock.events]
         attempts = kinds.count("extend")
-        self.assertGreaterEqual(attempts, 5, kinds)
-        self.assertGreaterEqual(len(clock.sleeps), attempts)
+        # Empty growth must be retried, just never hot: a chunk boundary that
+        # holds no trading day delays the next attempt, it does not cancel it.
+        self.assertGreaterEqual(attempts, 2, kinds)
+        self.assertLessEqual(attempts, len(clock.sleeps), kinds)
         self.assertLessEqual(max(clock.sleeps), 60.0)
         self.assertNoHotGrowth(clock)
         # Twenty simulated minutes of empty growths: the boundary advanced

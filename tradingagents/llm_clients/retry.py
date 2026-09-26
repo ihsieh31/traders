@@ -35,6 +35,8 @@ from __future__ import annotations
 import math
 import os
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from tradingagents.app_identity import get_env
 from typing import Any, Optional
@@ -57,6 +59,21 @@ _SCHEMA_VALIDATION_ERRORS: tuple[type[BaseException], ...] = (
     ValidationError,
     OutputParserException,
 )
+
+_active_route_trace: ContextVar[Optional[list[dict[str, str]]]] = ContextVar(
+    "active_llm_route_trace", default=None
+)
+
+
+@contextmanager
+def trace_failover_routes():
+    """Collect successful failover-wrapper routes for one synchronous analysis."""
+    routes: list[dict[str, str]] = []
+    token = _active_route_trace.set(routes)
+    try:
+        yield routes
+    finally:
+        _active_route_trace.reset(token)
 
 # 520-527 and 530 are Cloudflare's extended origin-failure family (the
 # router gateways in front of several LLM providers emit them); they are
@@ -408,7 +425,13 @@ class _FailoverRetryController:
             model = self.fallback_model if use_fallback else self.primary_model
             call = fallback_call if use_fallback else primary_call
             try:
-                return call()
+                result = call()
+                trace = _active_route_trace.get()
+                if trace is not None:
+                    trace.append({"role": self.role, "provider": provider,
+                                  "model": model,
+                                  "route": "fallback" if use_fallback else "primary"})
+                return result
             except ProviderFailure:
                 raise
             except _SCHEMA_VALIDATION_ERRORS:

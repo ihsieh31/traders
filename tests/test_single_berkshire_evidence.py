@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,21 +38,23 @@ class _FakeTool:
 
 
 class _FakeToolkit:
-    """Offline toolkit: no live capabilities, every tool returns data."""
+    """Offline toolkit with deterministic source responses."""
 
-    config = {"online_tools": False}
+    config = {"online_tools": True}
 
     def __getattr__(self, name):
         if name.startswith("has_"):
-            return lambda: False
+            return lambda: True
         return _FakeTool(name)
 
 
+@contextmanager
 def _patch_toolkit():
-    return patch(
-        "tradingagents.experiments.evidence_snapshot.Toolkit",
-        lambda config=None: _FakeToolkit(),
-    )
+    with patch("tradingagents.experiments.evidence_snapshot.Toolkit",
+               lambda config=None: _FakeToolkit()), patch(
+                   "tradingagents.experiments.evidence_snapshot._market_today_iso",
+                   return_value=SESSION):
+        yield
 
 
 def _runtime(tmp, backend="berkshire"):

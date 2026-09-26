@@ -2031,6 +2031,9 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
                 cfg = dict(lr.default_long_run_config())
                 cfg.update(active_cfg)
                 runtime = lr.build_runtime_config(cfg)
+                if active.get("experiment_fingerprint") != lr.experiment_fingerprint(cfg, runtime):
+                    console.print("[bold red]A/B experiment configuration or code changed; refusing resume (CONFIG_DRIFT).[/bold red]")
+                    raise typer.Exit(code=1)
                 from tradingagents.dataflows.alpaca_utils import get_alpaca_trading_client
 
                 stored_arms = active.get("arms")
@@ -2121,6 +2124,23 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
     if not all(account_refs.values()) or account_refs["traders"] == account_refs["berkshire"]:
         console.print("[bold red]A/B preflight did not prove two distinct Paper accounts.[/bold red]")
         raise typer.Exit(code=1)
+    try:
+        from tradingagents.execution.authority import capture_broker_snapshot, broker_status_to_local
+        lr.validate_ab_startup_snapshots({
+            backend: preflights[backend]["snapshot"] for backend in lr.AB_BACKENDS
+        })
+        for backend in lr.AB_BACKENDS:
+            account = "A" if backend == "traders" else "B"
+            broker_snapshot = capture_broker_snapshot(
+                get_alpaca_trading_client(account=account, read_only=True)
+            )
+            if any(broker_status_to_local(order.status) not in {
+                "FILLED", "CANCELED", "REJECTED", "EXPIRED"
+            } for order in broker_snapshot.orders):
+                raise lr.LongRunStop("AB_BASELINE_INVALID", f"{backend} has live broker orders")
+    except Exception as exc:
+        console.print(f"[bold red]A/B startup accounts are not comparable: {exc}[/bold red]")
+        raise typer.Exit(code=1)
 
     console.print("\n[bold]Full-market A/B Paper observation[/bold]")
     console.print(f"Duration: {cfg['duration_calendar_days']} calendar days | daily at {cfg['run_time_et']} ET")
@@ -2166,6 +2186,12 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
                     raise typer.Exit(code=1)
                 startup_snapshots[backend] = snapshot
 
+            try:
+                lr.validate_ab_startup_snapshots(startup_snapshots)
+            except lr.LongRunStop as exc:
+                console.print(f"[bold red]A/B startup baseline changed: {exc.code}: {exc.detail}[/bold red]")
+                raise typer.Exit(code=1)
+
             eastern = lr.eastern_now()
             end_day = eastern.date() + _timedelta(days=int(cfg["duration_calendar_days"]))
             try:
@@ -2180,6 +2206,7 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
             state = candidate
             state["expected_sessions"] = expected
             state["mode"] = "ab"
+            state["experiment_fingerprint"] = lr.experiment_fingerprint(run_cfg, base_runtime)
             state["config"] = lr.sanitize_for_log(run_cfg)
             state["arms"] = {
                 backend: {

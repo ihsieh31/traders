@@ -89,6 +89,9 @@ class FakeBroker:
 
 
 class FakeService:
+    def __init__(self):
+        self.store = SimpleNamespace(list_recoverable_orders=lambda: [])
+
     def enforce_exit_deadlines(self, can_submit=None):
         return {"success": True, "deadline_exits": [], "broker_calls": 0}
 
