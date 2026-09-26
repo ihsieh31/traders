@@ -337,6 +337,42 @@ def test_ab_shared_screening_skips_after_submission_deadline(tmp_path):
     assert journal["shared_screening"]["reason"] == "SESSION_SUBMISSION_DEADLINE"
 
 
+def test_unresolvable_session_target_does_not_silently_skip_the_round(
+    tmp_path, monkeypatch
+):
+    """An unknown submission window is not proof that the window closed.
+
+    The F15 gate once treated "no effective target" as "deadline passed" and
+    returned SESSION_SUBMISSION_DEADLINE, turning a calendar outage into a
+    silent no-trade session. Only a provably closed window may skip.
+    """
+    root, config, selection, initial, deps = _ab_round_setup(tmp_path)
+    screen_calls = []
+    deps = lr.LongRunDeps(
+        screening_fn=lambda *_a, **_k: screen_calls.append(1) or initial,
+        now_fn=lambda: datetime(2026, 9, 23, 18, 0, tzinfo=timezone.utc),
+    )
+    # No calendar authority, and no schedule_info carrying an effective target.
+    monkeypatch.setattr(
+        lr, "effective_target_for_session",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("calendar unavailable")),
+    )
+    with patch.object(lr, "_apply_runtime_config"), \
+         patch.object(lr, "_validate_long_run_execution_config"), \
+         patch("tradingagents.safety.get_safety_guard", return_value=SimpleNamespace(
+             check_llm_budget=lambda: SimpleNamespace(allowed=True, reasons=[]))), \
+         patch("tradingagents.screening.pipeline.prepare_screening_round_from_selection",
+               side_effect=lambda *_a, **_kw: _plan(selection)), \
+         patch.object(lr, "run_daily_round", side_effect=_complete_arm):
+        journal = lr.run_ab_daily_round(
+            run_id="lr-ab-fixture", session_date=SESSION,
+            long_cfg={"ab_results_root": str(root)}, runtime=config, deps=deps,
+        )
+
+    assert screen_calls, "screening must still run when the window is unknown"
+    assert journal["shared_screening"].get("reason") != "SESSION_SUBMISSION_DEADLINE"
+
+
 def test_scheduler_uses_frozen_unsettled_session_without_history_calendar_gets(monkeypatch):
     monkeypatch.setattr("tradingagents.dataflows.market_calendar.is_us_trading_day_auth",
                         lambda *a, **kw: (_ for _ in ()).throw(AssertionError("history re-queried")))

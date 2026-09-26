@@ -1491,8 +1491,15 @@ def run_ab_daily_round(
             raise LongRunStop("STATE_CORRUPT", "completed shared selection artifact is missing")
         if _control_stop_reason(deps, ends_at):
             return journal
+        # F15: apply the submission-window gate the single-backend path already
+        # uses, before shared screening spends any LLM budget. Only a window
+        # that is provably closed skips screening. An unresolvable target is
+        # NOT proof that the window closed: it means the calendar authority is
+        # unavailable, and skipping the round here would silently turn an
+        # infrastructure gap into a no-trade session. The per-arm submit
+        # boundary still fails closed downstream when no target is known.
         effective_target = (schedule_info or {}).get("effective_target")
-        if not effective_target:
+        if not effective_target and schedule_info is None:
             try:
                 target_info = effective_target_for_session(
                     date.fromisoformat(session_date),
@@ -1503,10 +1510,11 @@ def run_ab_daily_round(
                 effective_target = target_info["effective_target"]
             except Exception:
                 effective_target = None
-        if not effective_target or not make_session_submit_guard(
+        window_closed = bool(effective_target) and not make_session_submit_guard(
             session_date=session_date, effective_target=str(effective_target),
             now_fn=deps.now_fn,
-        )():
+        )()
+        if window_closed:
             journal["shared_screening"] = {
                 "status": "SCREENING_SKIPPED", "reason": "SESSION_SUBMISSION_DEADLINE"
             }

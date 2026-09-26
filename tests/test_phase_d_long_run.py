@@ -1348,7 +1348,15 @@ class LateResumeTest(IsolatedTest):
             "execution_result_summary": {"broker_calls": 1},
         }
         lr.save_round_journal("run-fin", partial)
-        deps = lr.LongRunDeps(alert_fn=lambda s, b, r: {}, sleep_fn=lambda s: None)
+        # F04: reaching COMPLETED now runs a settlement gate that uses the real
+        # execution service unless the caller injects one. This test asserts
+        # missed-session bookkeeping, not broker settlement, so it supplies a
+        # reconciling fake rather than letting finalization reach for live
+        # broker credentials.
+        deps = lr.LongRunDeps(
+            alert_fn=lambda s, b, r: {}, sleep_fn=lambda s: None,
+            execution_service_factory=lambda: FakeService(),
+        )
         out = lr.finalize_observation(
             state, cfg, lr.build_runtime_config(cfg), deps,
             final_status="COMPLETED")
