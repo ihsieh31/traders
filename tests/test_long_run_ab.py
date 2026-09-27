@@ -327,6 +327,7 @@ def test_ab_shared_screening_skips_after_submission_deadline(tmp_path):
     deps = lr.LongRunDeps(
         screening_fn=lambda *_a, **_k: calls.append(1) or initial,
         now_fn=lambda: datetime(2026, 9, 23, 20, 0, tzinfo=timezone.utc),
+        calendar_rows=[{"date": SESSION, "open": "09:30", "close": "16:00"}],
     )
     journal = lr.run_ab_daily_round(
         run_id="lr-ab-deadline", session_date=SESSION,
@@ -352,6 +353,9 @@ def test_ab_shared_screening_runs_between_deadline_and_close(tmp_path, monkeypat
     deps = lr.LongRunDeps(
         screening_fn=lambda *_a, **_k: calls.append(1) or initial,
         now_fn=lambda: datetime(2026, 9, 23, 18, 0, tzinfo=timezone.utc),
+        # The fence needs an authoritative close; never fetch it using the
+        # operator's .env credentials (which are absent in offline CI).
+        calendar_rows=[{"date": SESSION, "open": "09:30", "close": "16:00"}],
     )
     monkeypatch.setattr(lr, "run_daily_round", lambda **_kwargs: lr.new_round_journal(SESSION, []))
     # The Berkshire arm's held-review plan preparation consults broker
