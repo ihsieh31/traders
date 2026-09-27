@@ -18,7 +18,7 @@ The strongest credibility probe here is A6/B4: reconstruct the equal-weighted
 market return from the cross-section and check it against known market history
 (March 2020, the 2022 drawdown). Random or shuffled data cannot reproduce them.
 
-    python -m research.factor_ic.src.audit_data
+    python -m research.src.audit_data
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Sequence
 
-from research.factor_ic.src import common
-from research.factor_ic.src.common import log
+from research.src import common
+from research.src.common import log
 
 #: A cross-section of US equities on an ordinary day has meaningfully positive
 #: average pairwise correlation. Genuine market data sits far above this;
@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
 def load_frame(trusted: Optional[str], max_symbols: int):
     import pandas as pd
 
-    from research.factor_ic.src import verify_data as V
+    from research.src import verify_data as V
 
     df, _files, _ = V.load(common.BARS_DIR)
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
@@ -522,7 +522,7 @@ def audit_volume(df) -> dict:
 
 
 def audit_identity(df) -> dict:
-    from research.factor_ic.src import verify_data as V
+    from research.src import verify_data as V
 
     kinds = df["symbol"].map(V.classify_instrument)
     tally = Counter(kinds.groupby(df["symbol"]).first().tolist())

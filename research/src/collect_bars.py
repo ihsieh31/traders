@@ -1,26 +1,32 @@
-"""Collect multi-year daily bars for the factor IC study.
+"""Collect multi-year daily bars. This is the project's data foundation.
 
-READ PLAN.md SECTIONS 3.2, 3.4 AND 5.3 FIRST.
+READ research/plan.md SECTIONS 4.1-4.3 FIRST.
 
 Data sources
 ------------
-``--source yfinance`` (default)
-    Consolidated OHLCV from Yahoo via ``yfinance``. No market-data
-    entitlement required. Volume is all-exchange consolidated, so the
-    production ``$20M ADV20`` threshold keeps its meaning. Split handling is
-    reconstructed to match Alpaca's ``Adjustment.SPLIT`` exactly (see
-    ``split_only_adjust``).
+``--source alpaca-sip`` (default)
+    Alpaca ``DataFeed.SIP``, ``Adjustment.SPLIT``. Preferred when entitled,
+    because it is the same feed production uses. It is the only source this
+    project recommends: its calendar gap rate is 1.14%.
 
-``--source alpaca-sip``
-    Alpaca ``DataFeed.SIP``. Preferred when entitled, because it is the same
-    feed production uses. There is deliberately NO IEX fallback: IEX volume is
-    roughly 2-3% of consolidated, so the $20M ADV20 gate would silently become
-    a ~$600K gate and stop meaning what it means in production.
+    There is deliberately NO IEX fallback: IEX volume is roughly 2-3% of
+    consolidated, so the production ``$20M ADV20`` threshold would silently
+    become a ~$600K threshold and stop meaning what it means in production.
+
+``--source yfinance``
+    Consolidated OHLCV from Yahoo. No market-data entitlement required.
+    **TESTED AND REJECTED as a primary feed** -- it drops ~22% of calendar
+    sessions, which makes ``validate_and_clean_bars`` fail closed and zeroes
+    most cross-sections. Kept only for entitlement-free environments.
+
+    Both sources deliver split-adjusted values. Do NOT apply a split adjustment
+    on top of either one; doing so produced a 19x phantom error on every date
+    before a split. See research/process.md S-17.
 
 Resumable: one compressed CSV per batch under ``data/bars/``. Re-running skips
 batches that already exist unless ``--force`` is given.
 
-    python -m research.factor_ic.src.collect_bars --source yfinance
+    python -m research.src.collect_bars --start 2016-01-01 --end 2026-09-01
 """
 
 from __future__ import annotations
@@ -30,8 +36,8 @@ import time
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-from research.factor_ic.src import common
-from research.factor_ic.src.common import log
+from research.src import common
+from research.src.common import log
 
 #: Alpaca's multi-symbol daily-bars request ceiling. Mirrors the production
 #: default (default_config.py ``screening_bars_batch_size``).
@@ -57,8 +63,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Bars provider. Default alpaca-sip: same feed production uses. "
             "yfinance is kept only as a documented, TESTED-AND-REJECTED "
-            "fallback -- it drops ~22% of calendar sessions, which zeroes most "
-            "cross-sections (PLAN.md 3.4)."
+            "fallback -- it drops ~22%% of calendar sessions, which zeroes most "
+            "cross-sections (plan.md 4.3)."
         ),
     )
     parser.add_argument(
@@ -112,8 +118,9 @@ def universe_from_alpaca() -> List[dict]:
     """ACTIVE, tradable US_EQUITY from the Alpaca trading API.
 
     Listing assets is free and needs no market-data entitlement. The
-    ``market_cap`` field it attaches is deliberately ignored: this study does
-    no market-cap filtering (PLAN.md section 3.2).
+    ``market_cap`` field it attaches is deliberately ignored: this project has
+    no point-in-time market cap, so filtering on it would be look-ahead bias.
+    See research/plan.md section 4.4 item 2.
     """
     from tradingagents.screening.universe import fetch_us_equity_universe
 

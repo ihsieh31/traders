@@ -4,7 +4,7 @@ Kept separate from ``audit_data.py`` on purpose: the audit measures, this
 only formats. The JSON is the source of truth; regenerate this at any time
 without re-running the measurement.
 
-    python -m research.factor_ic.src.audit_report
+    python -m research.src.audit_report
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from research.factor_ic.src import common
-from research.factor_ic.src.common import log
+from research.src import common
+from research.src.common import log
 
 
 def _pct(x: Any, nd: int = 2) -> str:
@@ -248,7 +248,7 @@ def main() -> int:
     src = common.OUT_DIR / "data_audit.json"
     if not src.exists():
         raise SystemExit(
-            f"{src} not found. Run: python -m research.factor_ic.src.audit_data"
+            f"{src} not found. Run: python -m research.src.audit_data"
         )
     payload = json.loads(src.read_text(encoding="utf-8"))
     text = render(payload.get("audit", {}))

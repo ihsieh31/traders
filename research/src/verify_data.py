@@ -1,6 +1,11 @@
-"""Data quality verification for the factor IC study's bars cache.
+"""Data quality GATE for the project's bars cache.
 
-READ PLAN.md SECTIONS 3.1, 3.2 AND 3.4 FIRST.
+READ research/plan.md SECTION 4 AND research/process.md SECTION C FIRST.
+
+This module answers one question: which symbols can be trusted as inputs to a
+formula test? It passes or fails and emits ``out/trusted_symbols.txt``.
+It never edits data. To describe what the cache actually is rather than whether
+it is usable, use ``audit_data.py`` instead -- the two are not substitutes.
 
 This module answers three questions the operator asked directly:
 
@@ -14,8 +19,8 @@ to ``out/trusted_symbols.txt`` for the study to consume. Nothing is dropped
 in place: the cache stays exactly as collected so a later run can change a
 threshold and re-derive the trusted set without re-downloading.
 
-    python -m research.factor_ic.src.verify_data
-    python -m research.factor_ic.src.verify_data --cross-check 300
+    python -m research.src.verify_data
+    python -m research.src.verify_data --cross-check 300
 """
 
 from __future__ import annotations
@@ -31,8 +36,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from research.factor_ic.src import common
-from research.factor_ic.src.common import log
+from research.src import common
+from research.src.common import log
 
 # --------------------------------------------------------------------------
 # Thresholds. Every one is a CLI flag; the defaults are the values used for
@@ -102,7 +107,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Symbols to cross-validate against an independent source (yfinance). "
             "0 disables. Uses only the overlap, since yfinance drops ~22%% of "
-            "sessions (PLAN.md 3.4)."
+            "sessions (plan.md 4.3)."
         ),
     )
     parser.add_argument(
@@ -372,12 +377,13 @@ def cross_validate(
 ) -> dict:
     """Compare SIP closes against an independent source on shared sessions.
 
-    yfinance is unusable as a *primary* feed (22% session loss, PLAN.md 3.4)
+    yfinance is unusable as a *primary* feed (22% session loss, plan.md 4.3)
     but it is perfectly good as a *witness* on the dates it does have. A
     systematic offset here would mean the two feeds disagree about
     adjustment policy, which would invalidate every ratio in the study.
 
-    Two things this got wrong on its first run, both now fixed:
+    Two things this got wrong on its first run, both now fixed. Both are
+    recorded as process.md S-17 and S-18:
 
     1. It re-applied a split adjustment to Yahoo's ``Close``. Yahoo already
        delivers split-adjusted prices identical to Alpaca's

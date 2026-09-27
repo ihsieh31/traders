@@ -1,6 +1,6 @@
-"""Shared paths, env isolation, calendar and cache for the factor IC study.
+"""Shared paths, env isolation, calendar and bars cache for the research project.
 
-READ PLAN.md BEFORE CHANGING ANYTHING HERE.
+READ research/plan.md AND research/process.md BEFORE CHANGING ANYTHING HERE.
 
 Two environment constraints shape this module:
 
@@ -114,6 +114,52 @@ from tradingagents.screening.metrics import (  # noqa: E402
     validate_and_clean_bars,
 )
 
+# Re-exports, not dead code. This module is the facade: a formula harness
+# imports the production screening primitives from here so that the research
+# universe and the production universe cannot drift apart (plan.md D5). They
+# are "unused" inside this file by construction.
+__all__ = [
+    # project infrastructure
+    "RESEARCH_ROOT",
+    "DATA_DIR",
+    "OUT_DIR",
+    "BARS_DIR",
+    "CALENDAR_PATH",
+    "ISOLATED_ENV",
+    "apply_env_isolation",
+    "log",
+    "require_credentials",
+    "get_thresholds",
+    # calendar / bars cache
+    "load_calendar_rows",
+    "calendar_sessions",
+    "batch_cache_path",
+    "save_batch",
+    "load_all_bars",
+    "bars_coverage",
+    "BAR_COLUMNS",
+    # measurement primitives
+    "spearman_ic",
+    "spearman_fast",
+    "percentiles_fast",
+    "newey_west",
+    "describe",
+    "distribution",
+    "STUDY_SERIES",
+    "HORIZONS",
+    "MIN_CROSS_SECTION",
+    "WINDOW_SLACK_BARS",
+    # re-exported production screening primitives
+    "FACTOR_KEYS",
+    "SCORE_WEIGHTS",
+    "EligibilityThresholds",
+    "SymbolFeatures",
+    "ascending_percentiles",
+    "compute_features",
+    "score_features",
+    "validate_and_clean_bars",
+]
+
 #: The seven factors plus the composite score produced by ``score_features``.
 STUDY_SERIES: tuple[str, ...] = FACTOR_KEYS + ("score",)
 
@@ -128,7 +174,7 @@ MIN_CROSS_SECTION = 20
 #: Maximum bars handed to ``validate_and_clean_bars`` per (symbol, as_of).
 #: The function only ever keeps the trailing ``required_bars`` window, so a
 #: slightly larger slice is sufficient and keeps the per-call cost O(1)
-#: instead of O(full history). See PLAN.md section 6.3.
+#: instead of O(full history). See plan.md section 6.2 step 3.
 WINDOW_SLACK_BARS = 10
 
 
@@ -137,10 +183,14 @@ def get_thresholds() -> EligibilityThresholds:
 
     ``from_config({})`` yields exactly the production defaults. The
     ``min_market_cap_usd`` field is present and required (it is a frozen
-    dataclass that rejects non-positive values) but is NEVER read by
-    ``compute_features`` -- market-cap filtering lives only in
-    ``scan_universe``, which this study deliberately does not call. See
-    PLAN.md section 8.
+    dataclass that rejects non-positive values, so passing ``None`` or ``0``
+    raises) but is NEVER read by ``compute_features`` -- market-cap filtering
+    lives only in ``scan_universe``, which this project deliberately does not
+    call.
+
+    Do NOT try to "disable" the market-cap filter by passing a sentinel value.
+    Skipping it is achieved by not calling ``scan_universe``; the threshold is
+    simply never consulted. See plan.md rule D5.
     """
     return EligibilityThresholds.from_config({})
 
@@ -396,8 +446,11 @@ def newey_west(series: Iterable[float], lag: int) -> tuple[float, float]:
     ``t_textbook * sqrt(n/(n-1))`` rather than ``t_textbook``. That is
     expected, not a bug.
 
-    PLAN.md section 3.3: a study that reports only ordinary t-statistics is
-    invalid.
+    The lag argument is in SAMPLING units, not bars: pass
+    ``max(1, ceil(horizon / date_step))``. Passing ``horizon`` inflates |t| by
+    0.3-1.5, enough to push noise over a |t| = 2 line. See process.md S-1.
+
+    Reporting only ordinary t-statistics invalidates a result. See plan.md R8 (statistics).
     """
     import numpy as np
 
@@ -437,7 +490,11 @@ def describe(values: Sequence[float]) -> dict:
 
 
 def distribution(values: Sequence[float]) -> dict:
-    """Percentile block for forward-return distributions (PLAN.md 7.1)."""
+    """Percentile block for forward-return distributions.
+
+    Reported alongside every IC block so a reader can estimate how much of a
+    gross edge trading costs would eat. See plan.md R12 (trading cost).
+    """
     import numpy as np
 
     clean = [float(v) for v in values if v is not None and math.isfinite(float(v))]

@@ -1,0 +1,31 @@
+# research/ is the formula-search project. Read plan.md first.
+#
+# Version control trade-offs, stated once:
+#
+#   data/  275 MB of raw OHLCV, regenerable in ~20 minutes with collect_bars.py.
+#          It stays OUT of version control. It stays ON disk.
+#
+#   out/   Evidence. A formula's verdict is meaningless without the numbers and
+#          the trusted universe it was computed on, so these files ARE tracked.
+#          Per-round detail goes in out/<round-id>/ and history.md points at it.
+#
+#   src/   The harness is a hand-off contract, so it is tracked too. The repo
+#          root .gitignore has a bare `src/` rule intended for the Python
+#          package layout; it would silently swallow this directory.
+#
+# Ordering matters: the re-includes below MUST come before the ignore rules.
+# A negation placed after an ignore re-includes everything it covers, which
+# would pull __pycache__ and .DS_Store back in.
+
+!src/
+!src/**
+
+data/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Scratch written by probing / throwaway scripts during a round. Never evidence.
+_scratch/
+src/_*.py
+src/probe_*.py
