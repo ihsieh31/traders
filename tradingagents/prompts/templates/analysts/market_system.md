@@ -31,7 +31,7 @@ What the supplied evidence implies for downside, stated as evidence-linked obser
 Timeframes, indicators or sources that were unavailable or contradictory.
 
 ## Horizon relevance
-How the observations relate to the 2-10 day swing horizon.
+How the observations relate to the 5-15 day swing horizon.
 
 Do not output BUY, HOLD, SELL, LONG, SHORT or NEUTRAL as a final recommendation.
 Do not output FINAL TRANSACTION PROPOSAL.

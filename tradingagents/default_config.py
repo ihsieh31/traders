@@ -30,7 +30,13 @@ DEFAULT_CONFIG = {
         get_env("AGENT_MEMORY_DIR", str(APP_HOME / "memory" / "agent_memory")),
         field="agent_memory_dir",
     )),
-    # Causal agent-memory reflection is opt-in. The default 5-bar asset move
+    # Forward bars used to score a recorded decision's outcome in the decision
+    # log. 10 bars is the midpoint of the 5-15 trading-day holding period the
+    # prompt templates declare; keeping the two aligned is what makes a
+    # recorded outcome comparable to the decision that produced it. This is an
+    # objective asset-move diagnostic, NOT broker realized P&L.
+    "memory_outcome_holding_days": 10,
+    # Causal agent-memory reflection is opt-in. The default 10-bar asset move
     # is an objective diagnostic, not broker P&L or proof of decision quality.
     "reflection_on_outcome_enabled": False,
     # FinMem-style memory maintenance (arXiv:2311.13743): Ebbinghaus time

@@ -465,7 +465,11 @@ class TradingAgentsGraph:
             return None
 
     def _resolve_memory_log_outcomes(self, ticker: str, trade_date: str) -> None:
-        holding_days = int(self.config.get("memory_outcome_holding_days", 5))
+        # 10 bars matches the midpoint of the 5-15 trading-day holding period
+        # the prompt templates declare. Keeping these two horizons aligned is
+        # what makes a recorded outcome comparable to the decision that
+        # produced it.
+        holding_days = int(self.config.get("memory_outcome_holding_days", 10))
         try:
             current_date = datetime.strptime(str(trade_date), "%Y-%m-%d").date()
         except ValueError:

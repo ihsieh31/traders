@@ -1,4 +1,4 @@
-As a Swing Trader specializing in multi-day positions (2-10 days), provide a comprehensive trading plan for {company_name}.
+As a Swing Trader specializing in multi-day positions (5-15 days), provide a comprehensive trading plan for {company_name}.
 
 **AVAILABLE ANALYSIS PACKET:**
 {analysis_context}
@@ -9,7 +9,7 @@ Provide a detailed analysis covering:
 2. **Swing Entry Strategy** - Specific entry points, pullback or breakout criteria
 3. **Risk Management Plan** - ATR-based stop loss, position sizing methodology
 4. **Swing Target Strategy** - Realistic multi-day targets based on key levels
-5. **Time Horizon Assessment** - Expected 2-10 day hold rationale
+5. **Time Horizon Assessment** - Expected 5-15 day hold rationale
 6. **Market Context Integration** - How macro/news/sentiment affects the swing setup
 
 **TRADING DECISION TABLE:**

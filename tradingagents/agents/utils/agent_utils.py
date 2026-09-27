@@ -1513,7 +1513,7 @@ class Toolkit:
         results.append("- **Williams %R:** Values -20 to -80 = Normal range | Below -80 = Oversold (buy) | Above -20 = Overbought (sell)")
         results.append("- **ATR:** Use for position sizing (1-2x ATR for stop loss) | Higher ATR = More volatile")
         results.append("")
-        results.append("**Swing Strategy:** Look for multi-timeframe trend + momentum + volume confirmation for 2-10 day positions")
+        results.append("**Swing Strategy:** Look for multi-timeframe trend + momentum + volume confirmation for 5-15 day positions")
         
         return "\n".join(results)
 

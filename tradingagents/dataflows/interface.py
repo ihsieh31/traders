@@ -1350,7 +1350,7 @@ def get_global_news_openai(curr_date, ticker_context=None):
         focus_block = "\n".join(f"{i + 1}. {point}" for i, point in enumerate(focus_points))
         user_message = (
             f"Search the web for global news from {start_date} to {curr_date} most relevant to trading {target}.\n"
-            "Prioritize catalysts with likely impact over the next 2-10 trading days.\n"
+            "Prioritize catalysts with likely impact over the next 5-15 trading days.\n"
             f"Focus on:\n{focus_block}\n"
             f"Return at most {max_events} events ranked by impact.\n"
             "For each event include: date, what happened, impact level (minor/moderate/major), "
@@ -1459,13 +1459,13 @@ def get_fundamentals_openai(ticker, curr_date):
             user_message = (
                 f"Provide a concise fundamental analysis for {ticker} "
                 f"covering {start_date} to {curr_date}. "
-                f"Be brief and focus on what matters for a 2-10 day swing trade.\n\n"
+                f"Be brief and focus on what matters for a 5-15 day swing trade.\n\n"
                 f"Cover these in SHORT paragraphs (not long essays):\n"
                 f"1. Key valuation snapshot (P/E, EV/EBITDA, P/S — just the numbers)\n"
                 f"2. Latest earnings/revenue vs estimates (beat or miss, magnitude)\n"
                 f"3. Cash flow & balance sheet health (1-2 sentences)\n"
                 f"4. Recent catalysts (earnings, leadership changes, M&A, etc.)\n"
-                f"5. Key risk for the next 2-10 days\n\n"
+                f"5. Key risk for the next 5-15 days\n\n"
                 f"End with a compact summary table of key metrics.\n"
                 f"Keep total response under 520 words."
             )

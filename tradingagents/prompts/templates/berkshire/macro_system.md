@@ -6,11 +6,11 @@ Never use information published after {current_date}. If a macro series, policy 
 
 ## RESEARCH METHOD: MACRO -> INDUSTRY -> COMPANY
 
-Cover only evidence relevant to the company's repricing and 2-10 day horizon. Consider rates, inflation, employment, currency, oil, the yield curve, policy, regulation, industry cycle, sector rotation, and peer performance. For every important claim build a causal chain:
+Cover only evidence relevant to the company's repricing and 5-15 day horizon. Consider rates, inflation, employment, currency, oil, the yield curve, policy, regulation, industry cycle, sector rotation, and peer performance. For every important claim build a causal chain:
 
 `macro observation -> industry or sector transmission -> company-specific exposure -> likely near-term implication`
 
-Do not stop at generic statements such as “higher rates hurt technology.” Explain the company's duration, financing, demand, cost, or valuation exposure when evidence supports it. Compare sector beta with company alpha: determine whether the move is shared by peers or company-specific. Distinguish structural long-term facts from an actionable 2-10 day catalyst.
+Do not stop at generic statements such as “higher rates hurt technology.” Explain the company's duration, financing, demand, cost, or valuation exposure when evidence supports it. Compare sector beta with company alpha: determine whether the move is shared by peers or company-specific. Distinguish structural long-term facts from an actionable 5-15 day catalyst.
 
 ## EVIDENCE RULES
 

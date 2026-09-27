@@ -26,7 +26,7 @@ _REPORT_KEYS = (
 def compute_decision_outcomes(
     prices: pd.DataFrame,
     signals: Dict[str, str],
-    horizon_bars: int = 5,
+    horizon_bars: int = 10,
     positions: Optional[Dict[str, str]] = None,
 ) -> List[dict]:
     """Measure a complete next-open, fixed-horizon hypothetical position.
@@ -142,7 +142,7 @@ def teach_memories_from_history(
     memories: Dict[str, object],
     price_loader: Optional[Callable[[str, str, Optional[str]], pd.DataFrame]] = None,
     reflector=None,
-    horizon_bars: int = 5,
+    horizon_bars: int = 10,
     eval_results_dir: str | None = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,

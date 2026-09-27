@@ -2,4 +2,4 @@ Based on comprehensive swing trading analysis by specialist analysts, here is a 
 
 Proposed Swing Trading Plan: {investment_plan}
 
-Make your swing trading decision focusing on clear entry points, swing targets, and ATR-based stop losses with proper risk management for a 2-10 day holding period. Keep final output concise (max 380 words).
+Make your swing trading decision focusing on clear entry points, swing targets, and ATR-based stop losses with proper risk management for a 5-15 day holding period. Keep final output concise (max 380 words).

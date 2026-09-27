@@ -298,7 +298,7 @@ class RawForwardOutcomeTests(unittest.TestCase):
             kwargs = graph.memory_log.update_with_outcome.call_args.kwargs
             self.assertEqual(kwargs["raw_return"], 0.04)
             self.assertIsNone(kwargs["alpha_return"])
-            self.assertEqual(kwargs["holding_days"], 5)
+            self.assertEqual(kwargs["holding_days"], 10)
             self.assertIn("not strategy realized P&L", kwargs["reflection"])
             graph._reflect_agents_on_outcome.assert_not_called()
 
