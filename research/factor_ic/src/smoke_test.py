@@ -310,6 +310,51 @@ def check_units() -> None:
     assert math.isnan(common.newey_west([], 5)[1])
     assert math.isnan(common.newey_west([1.0, 2.0], 5)[1])
 
+    # --- spearman_fast must equal spearman_ic EXACTLY ------------------
+    # The factor scan needs 94 factors x 6 horizons x 537 dates, which the
+    # pure-Python spearman_ic cannot serve. spearman_fast is the numpy
+    # restatement, so its equivalence to the production-tie-rule original is
+    # an ASSUMPTION until it is asserted. It is checked here on permuted,
+    # heavily tied (quantised) and NaN-containing inputs, because those are
+    # the three ways a rank implementation silently disagrees.
+    import numpy as _np
+
+    rng = _np.random.default_rng(11)
+    worst = 0.0
+    checked = 0
+    for trial in range(200):
+        n = int(rng.integers(30, 700))
+        x = rng.normal(size=n)
+        y = rng.normal(size=n)
+        if trial % 3 == 1:
+            # quantising creates massive ties, which is where an average-rank
+            # implementation diverges from an ordinal-rank one
+            x = _np.round(x * 4) / 4
+            y = _np.round(y * 4) / 4
+        if trial % 3 == 2:
+            x[rng.random(n) < 0.1] = _np.nan
+            y[rng.random(n) < 0.1] = _np.nan
+        order = rng.permutation(n)
+        x, y = x[order], y[order]
+        keep = _np.isfinite(x) & _np.isfinite(y)
+        if int(keep.sum()) < 20:
+            continue
+        slow = common.spearman_ic(x[keep].tolist(), y[keep].tolist())
+        fast = common.spearman_fast(x, y, mask=keep, min_n=20)
+        if math.isnan(slow) and math.isnan(fast):
+            continue
+        assert math.isfinite(fast), (trial, slow, fast)
+        worst = max(worst, abs(slow - fast))
+        checked += 1
+    assert checked > 50, checked
+    assert worst <= 1e-12, f"spearman_fast diverges from spearman_ic by {worst}"
+    assert math.isnan(common.spearman_fast(_np.ones(50), rng.normal(size=50), min_n=20))
+    assert math.isnan(common.spearman_fast(rng.normal(size=5), rng.normal(size=5), min_n=20))
+    print(
+        f"  spearman_fast == spearman_ic: {checked} cases, max diff {worst:.2e}",
+        flush=True,
+    )
+
     print("  unit checks: spearman + newey_west OK (exact + properties)", flush=True)
 
 

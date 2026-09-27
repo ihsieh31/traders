@@ -288,6 +288,94 @@ def spearman_ic(xs: Sequence[float], ys: Sequence[float]) -> float:
     return num / (dx * dy)
 
 
+def _average_ranks(a):
+    """0-based average ranks, ties sharing the average -- the same rule as
+    ``metrics.ascending_percentiles``, vectorised.
+
+    Pearson correlation is invariant to an affine map of either argument, and
+    ``ascending_percentiles`` applies exactly one -- ``(rank-1)/(n-1)``. So
+    correlating raw average ranks gives a bit-for-bit different-looking but
+    numerically identical answer to correlating the percentiles.
+    """
+    import numpy as np
+
+    n = a.size
+    order = np.argsort(a, kind="stable")
+    s = a[order]
+    is_new = np.ones(n, dtype=bool)
+    is_new[1:] = s[1:] != s[:-1]
+    group = np.cumsum(is_new) - 1
+    idx = np.arange(n, dtype=float)
+    counts = np.bincount(group)
+    sums = np.bincount(group, weights=idx)
+    out = np.empty(n, dtype=float)
+    out[order] = (sums / counts)[group]
+    return out
+
+
+def spearman_fast(x, y, mask=None, min_n: int = 20) -> float:
+    """Vectorised Spearman for the factor scan.
+
+    ``spearman_ic`` above is pure Python and reuses the production tie rule
+    directly, which is what makes it trustworthy -- but at ~20k operations per
+    call it cannot serve a scan of 94 factors x 6 horizons x 537 dates. This is
+    the same statistic with the same tie handling, evaluated in numpy.
+
+    The equivalence is not assumed: ``smoke_test.check_units`` asserts
+    ``spearman_fast`` matches ``spearman_ic`` to 1e-12 on permuted, tied, and
+    NaN-containing inputs. If you change either function, that check is the
+    thing that will tell you.
+
+    ``mask`` selects the rows to use, which is how a factor that is undefined
+    for a short-history name is dropped for that factor alone instead of
+    shrinking the cross-section for every other factor on the same date.
+    """
+    import numpy as np
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool)
+        x = x[mask]
+        y = y[mask]
+    ok = np.isfinite(x) & np.isfinite(y)
+    if not ok.all():
+        x = x[ok]
+        y = y[ok]
+    n = x.size
+    if n < max(2, min_n):
+        return float("nan")
+    rx = _average_ranks(x)
+    ry = _average_ranks(y)
+    rx = rx - rx.mean()
+    ry = ry - ry.mean()
+    den = math.sqrt(float(np.dot(rx, rx)) * float(np.dot(ry, ry)))
+    if den == 0.0 or not math.isfinite(den):
+        return float("nan")
+    return float(np.dot(rx, ry)) / den
+
+
+def percentiles_fast(values) -> "object":
+    """Vectorised ``metrics.ascending_percentiles`` for one cross-section.
+
+    ``ascending_percentiles`` returns ``(average_rank_1based - 1) / (n - 1)``
+    with ties sharing the average rank. ``_average_ranks`` returns the 0-based
+    average index, and ``average_rank_1based = index + 1``, so the percentile
+    is exactly ``average_index / (n - 1)``.
+
+    Used to reproduce the production composite ``score`` inside the factor scan
+    without a Python loop over the universe. Equivalence to the production
+    function is asserted by ``smoke_test`` and by the scan's own preflight.
+    """
+    import numpy as np
+
+    a = np.asarray(values, dtype=float)
+    n = a.size
+    if n == 1:
+        return np.array([0.5])
+    return _average_ranks(a) / (n - 1.0)
+
+
 def newey_west(series: Iterable[float], lag: int) -> tuple[float, float]:
     """Newey-West adjusted t-statistic for the sample mean.
 
