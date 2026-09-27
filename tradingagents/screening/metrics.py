@@ -21,6 +21,8 @@ Data-quality contract (fail-closed per symbol, never forward-filled):
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -590,7 +592,7 @@ def fetch_daily_bars_batch(
         except Exception as exc:
             # Transient hiccups retried bounded above; still no silent IEX
             # retry: surface SIP/entitlement context and stop fail-closed.
-            raise RuntimeError(f"SIP consolidated bars unavailable (feed=sip): {exc}") from exc
+            raise RuntimeError(f"SIP consolidated bars unavailable (feed=sip): {sanitize_for_log(str(exc))}") from exc
         batch_df = response.df.reset_index()
         for symbol in chunk:
             frames[symbol] = bars_for_symbol(batch_df, symbol)

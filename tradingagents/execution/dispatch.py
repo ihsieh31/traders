@@ -6,6 +6,8 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import math
 from typing import Any, Callable, Optional
 from pathlib import Path
@@ -32,7 +34,7 @@ def _market_clock_closed(self, broker: Any) -> Optional[str]:
     try:
         clock = getter()
     except Exception as exc:
-        return f"broker market clock unavailable ({exc}); refusing to open exposure"
+        return f"broker market clock unavailable ({sanitize_for_log(str(exc))}); refusing to open exposure"
     is_open = getattr(clock, "is_open", None)
     if is_open is None and isinstance(clock, dict):
         is_open = clock.get("is_open")
@@ -48,7 +50,7 @@ def _market_clock_closed(self, broker: Any) -> Optional[str]:
             label="broker clock",
         )
     except (BrokerAuthorityError, TypeError, ValueError) as exc:
-        return f"broker market clock unavailable ({exc}); refusing to open exposure"
+        return f"broker market clock unavailable ({sanitize_for_log(str(exc))}); refusing to open exposure"
     return None
 
 
@@ -181,7 +183,7 @@ def _validate_opening_dispatch(
         )
         validate_quote(quote, symbol)
     except BrokerAuthorityError as exc:
-        return f"dispatch revalidation failed: {exc}"
+        return f"dispatch revalidation failed: {sanitize_for_log(str(exc))}"
     if spec.get("notional") is not None:
         amount = float(spec["notional"])
     elif spec.get("quantity") is not None:
@@ -248,7 +250,7 @@ def _submit_one(
             "status": "UNKNOWN",
             "client_order_id": client_oid,
             "broker_calls": 0,
-            "error": f"broker factory failed (ambiguous): {exc}",
+            "error": f"broker factory failed (ambiguous): {sanitize_for_log(str(exc))}",
         }
     # NOTE: broker instantiation itself is not a POST; count POSTs only.
     try:
@@ -350,7 +352,7 @@ def _submit_one(
                         "status": "UNKNOWN",
                         "client_order_id": client_oid,
                         "broker_calls": 1,
-                        "error": f"ambiguous submit outcome: {exc}",
+                        "error": f"ambiguous submit outcome: {sanitize_for_log(str(exc))}",
                     }
                 # An explicit structured 4xx validation/rejection is
                 # terminal. Do not turn it into a second,
@@ -383,7 +385,7 @@ def _submit_one(
                         "status": "UNKNOWN",
                         "client_order_id": client_oid,
                         "broker_calls": 1,
-                        "error": f"ambiguous submit outcome: {exc}",
+                        "error": f"ambiguous submit outcome: {sanitize_for_log(str(exc))}",
                     }
                 self._store.transition_order(order_id, "REJECTED")
                 return {
@@ -399,12 +401,6 @@ def _submit_one(
                 if spec.get("stop_loss_price") and spec.get("take_profit_price")
                 else "oto"
             )
-        broker_oid = getattr(resp, "id", None) or (
-            resp.get("order_id") if isinstance(resp, dict) else None
-        )
-        status_raw = getattr(resp, "status", None) or (
-            resp.get("status") if isinstance(resp, dict) else "accepted"
-        )
         if isinstance(resp, dict) and resp.get("success") is False:
             self._store.transition_order(order_id, "REJECTED")
             return {
@@ -414,23 +410,25 @@ def _submit_one(
                 "broker_calls": broker_calls,
                 "error": str(resp.get("error", "broker rejected order")),
             }
-        if not broker_oid:
-            self._store.transition_order(order_id, "UNKNOWN")
-            return {"ok": False, "status": "UNKNOWN", "broker_calls": broker_calls,
-                    "client_order_id": client_oid, "error": "Submit response has no broker order identity"}
+        from .requests import submit_response_identity
+        broker_oid, status_raw = submit_response_identity(resp)
         local = broker_status_to_local(status_raw)
-        self._store.transition_order(
+        applied, stored = self._store.transition_order(
             order_id, local, broker_order_id=str(broker_oid) if broker_oid else None
         )
+        if not applied:
+            raise ValueError("Submit response could not be committed to the durable order")
         # Child roles (protect-stop/protect-target) remain available via
         # client_order_id_for() when A2 needs standalone children.
         submitted: dict[str, Any] = {
-            "ok": True,
+            "ok": local not in {"REJECTED", "CANCELED", "EXPIRED"},
             "status": local,
             "client_order_id": client_oid,
             "broker_order_id": broker_oid,
             "broker_calls": broker_calls,
         }
+        if not submitted["ok"]:
+            submitted["error"] = f"Broker returned terminal order status {local}"
         if order_class is not None:
             submitted["order_class"] = order_class
             if protective_request is not None:
@@ -468,7 +466,7 @@ def _submit_one(
             "status": "UNKNOWN",
             "client_order_id": client_oid,
             "broker_calls": broker_calls,
-            "error": f"ambiguous submit outcome: {exc}",
+            "error": f"ambiguous submit outcome: {sanitize_for_log(str(exc))}",
         }
 
 
@@ -482,7 +480,7 @@ def _get_execution_config() -> dict:
 
         return get_config() or {}
     except Exception as exc:
-        raise ExecutionConfigUnavailable(f"execution configuration unavailable: {exc}") from exc
+        raise ExecutionConfigUnavailable(f"execution configuration unavailable: {sanitize_for_log(str(exc))}") from exc
 
 
 
@@ -495,7 +493,7 @@ def _submit_authority_error(
             if not can_submit():
                 return "stop/window authority revoked before the final submit"
         except Exception as exc:
-            return f"stop/window authority unavailable before the final submit: {exc}"
+            return f"stop/window authority unavailable before the final submit: {sanitize_for_log(str(exc))}"
     # Fail closed: an unavailable safety guard must never widen the final
     # submit boundary (N08 sibling _execute_core already refuses on the same
     # condition). Recovery resubmits reach this helper without that earlier
@@ -505,7 +503,7 @@ def _submit_authority_error(
 
         guard = get_safety_guard()
     except Exception as exc:
-        return f"safety guard unavailable before the final submit: {exc}"
+        return f"safety guard unavailable before the final submit: {sanitize_for_log(str(exc))}"
     if (
         callable(getattr(guard, "kill_switch_active", None))
         and guard.kill_switch_active() is True

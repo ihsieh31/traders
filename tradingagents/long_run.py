@@ -824,6 +824,7 @@ def _normalize_intent(intent: Any) -> Optional[Dict[str, Any]]:
 
 def _recover_intent_from_run_log(
     symbol: str, session_date: str, *, observation_id: str, results_dir: str,
+    expected_evidence_sha256: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recover a crashed analysis intent, bound to THIS observation only.
 
@@ -838,6 +839,7 @@ def _recover_intent_from_run_log(
         observation_id=observation_id,
         results_dir=results_dir,
         _normalize_intent=_normalize_intent,
+        expected_evidence_sha256=expected_evidence_sha256,
     )
 
 
@@ -982,7 +984,7 @@ def _finish_prepared_daily_round(
     try:
         post_snapshot = capture_account_snapshot(prepared.broker_factory())
     except Exception as exc:
-        raise LongRunStop("SNAPSHOT_UNAVAILABLE", f"post-round snapshot failed: {exc}")
+        raise LongRunStop("SNAPSHOT_UNAVAILABLE", f"post-round snapshot failed: {sanitize_for_log(str(exc))}")
     append_jsonl(
         run_dir(run_id) / "account_snapshots.jsonl",
         {"phase": "post_round", "session": session_date, **post_snapshot},
@@ -1005,7 +1007,7 @@ def _finish_prepared_daily_round(
     except LongRunStop:
         raise
     except Exception as exc:
-        journal["daily_report_error"] = f"{type(exc).__name__}: {exc}"[:200]
+        journal["daily_report_error"] = f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:200]
 
     journal["status"] = "COMPLETED"
     journal["finished_at"] = utc_now_iso()
@@ -1179,9 +1181,9 @@ def run_daily_round(
         _record_maintenance("recovery", {
             "broker_calls": 0, "submit_calls": 0, "cancel_calls": 0,
             "submitted_symbols": [], "has_unknown": False, "paused": True,
-            "error": f"{type(exc).__name__}: {exc}"[:300],
+            "error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:300],
         })
-        raise LongRunStop("RECOVERY_FAILED", f"startup_recover raised: {exc}")
+        raise LongRunStop("RECOVERY_FAILED", f"startup_recover raised: {sanitize_for_log(str(exc))}")
     _record_maintenance(
         "recovery", recovery.get("recovery_maintenance") or _empty_maintenance_summary()
     )
@@ -1203,7 +1205,7 @@ def run_daily_round(
     try:
         pre_snapshot = capture_account_snapshot(broker_factory())
     except Exception as exc:
-        raise LongRunStop("SNAPSHOT_UNAVAILABLE", f"pre-round snapshot failed: {exc}")
+        raise LongRunStop("SNAPSHOT_UNAVAILABLE", f"pre-round snapshot failed: {sanitize_for_log(str(exc))}")
     append_jsonl(run_dir(run_id) / "account_snapshots.jsonl",
                  {"phase": "pre_round", "session": session_date, **pre_snapshot})
 
@@ -1258,7 +1260,7 @@ def run_daily_round(
             raise
         except Exception as exc:
             raise LongRunStop(
-                "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {exc}"
+                "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {sanitize_for_log(str(exc))}"
             )
         plan = _screening_with_audit_scope(
             screening_fn, runtime, run_id, session_date
@@ -1583,7 +1585,7 @@ def run_ab_daily_round(
         except LongRunStop:
             raise
         except Exception as exc:
-            raise LongRunStop("LLM_BUDGET_EXHAUSTED", f"shared screening budget check unavailable: {exc}")
+            raise LongRunStop("LLM_BUDGET_EXHAUSTED", f"shared screening budget check unavailable: {sanitize_for_log(str(exc))}")
 
         screening_fn = deps.screening_fn or _default_screening
         shared_plan = _screening_with_audit_scope(
@@ -2241,7 +2243,7 @@ def run_observation_loop(
                 except Exception as exc:
                     stop = LongRunStop(
                         "CALENDAR_UNAVAILABLE",
-                        f"continuous window extension failed: {exc}",
+                        f"continuous window extension failed: {sanitize_for_log(str(exc))}",
                     )
                     return finalize_observation(
                         state, long_cfg, runtime, deps,
@@ -2293,7 +2295,7 @@ def run_observation_loop(
                                         stop_code=exc.code, stop_detail=exc.detail)
         except Exception as exc:
             stop = LongRunStop("CALENDAR_UNAVAILABLE",
-                               f"scheduling/session proof failed: {exc}")
+                               f"scheduling/session proof failed: {sanitize_for_log(str(exc))}")
             return finalize_observation(state, long_cfg, runtime, deps,
                                         final_status="STOPPED",
                                         stop_code=stop.code, stop_detail=stop.detail)
@@ -2317,7 +2319,7 @@ def run_observation_loop(
                 except Exception as exc:
                     stop = LongRunStop(
                         "CALENDAR_UNAVAILABLE",
-                        f"continuous window extension failed: {exc}",
+                        f"continuous window extension failed: {sanitize_for_log(str(exc))}",
                     )
                     return finalize_observation(
                         state, long_cfg, runtime, deps,
@@ -2410,7 +2412,7 @@ def run_observation_loop(
             # report written) instead of escaping and leaving the window
             # RUNNING with no report. BaseException (KeyboardInterrupt,
             # SystemExit) deliberately propagates.
-            detail = f"{type(exc).__name__}: {exc}"[:300]
+            detail = f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:300]
             journal = load_round_journal(run_id, target["session_date"])
             if journal is not None and journal.get("status") != "COMPLETED":
                 journal["status"] = "STOPPED"
@@ -2895,9 +2897,9 @@ def finalize_observation(
             except Exception as exc:
                 log_event(run_id, "ab_final_snapshot_unavailable", {
                     "backend": backend,
-                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                    "error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:300],
                 })
-                print(f"[Phase-D A/B {backend}] Final snapshot unavailable: {exc}")
+                print(f"[Phase-D A/B {backend}] Final snapshot unavailable: {sanitize_for_log(str(exc))}")
         report = aggregate_ab_final_report(state, long_cfg, runtime)
         md_path, json_path = write_ab_final_report(report)
     else:
@@ -2912,9 +2914,9 @@ def finalize_observation(
             log_event(
                 run_id,
                 "final_snapshot_unavailable",
-                {"error": f"{type(exc).__name__}: {exc}"[:300]},
+                {"error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:300]},
             )
-            print(f"[Phase-D] Final snapshot unavailable: {exc}")
+            print(f"[Phase-D] Final snapshot unavailable: {sanitize_for_log(str(exc))}")
         report = aggregate_final_report(state, long_cfg, runtime)
         md_path, json_path = write_final_report(report)
     log_event(run_id, "observation_finalized",

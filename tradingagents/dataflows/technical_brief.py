@@ -9,6 +9,8 @@ Timeframes: 1h, 4h, 1d (fixed set).
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import warnings
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -1111,7 +1113,7 @@ def _evaluate_frame_quality(
             as_of = cleaned["timestamp"].iloc[-1].isoformat()
         return None, TimeframeDataQuality(
             timeframe=timeframe_key, status="unavailable", as_of=as_of,
-            reason=f"authoritative calendar unavailable ({type(exc).__name__}: {exc})",
+            reason=f"authoritative calendar unavailable ({type(exc).__name__}: {sanitize_for_log(str(exc))})",
         )
 
 

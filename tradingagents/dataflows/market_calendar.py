@@ -12,6 +12,8 @@ cannot prove the required range — they never fall back to the static tables.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -160,11 +162,11 @@ def fetch_trading_calendar(start: date, end: date, client: Any = None) -> List[A
     except CalendarError:
         raise
     except Exception as exc:
-        raise CalendarError(f"Alpaca trading calendar unavailable [{start}..{end}]: {exc}") from exc
+        raise CalendarError(f"Alpaca trading calendar unavailable [{start}..{end}]: {sanitize_for_log(str(exc))}") from exc
     try:
         rows = list(raw) if raw is not None else []
     except TypeError as exc:
-        raise CalendarError(f"Alpaca calendar returned non-iterable: {exc}") from exc
+        raise CalendarError(f"Alpaca calendar returned non-iterable: {sanitize_for_log(str(exc))}") from exc
     # Cache successful fetches only (even empty ranges are cached: an empty
     # range that was successfully proven is a valid fact, e.g. a holiday week
     # with no sessions — callers validate sufficiency themselves).

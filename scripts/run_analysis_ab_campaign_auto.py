@@ -14,6 +14,8 @@ starts a second Paper campaign engine.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import argparse
 import sys
 import time
@@ -302,10 +304,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
     except GlobalRunnerLockBusy as exc:
-        print(f"[AB campaign auto] ERROR: {exc}", file=sys.stderr)
+        print(f"[AB campaign auto] ERROR: {sanitize_for_log(str(exc))}", file=sys.stderr)
         return 2
-    print(f"[AB campaign auto] {result['outcome']}")
-    return 0 if result["outcome"] == "completed" else 1
 
 
 if __name__ == "__main__":

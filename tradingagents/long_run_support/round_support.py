@@ -6,6 +6,8 @@ patchable boundaries authoritative without importing the orchestration module.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import json
 import math
 from pathlib import Path
@@ -39,6 +41,7 @@ def _recover_intent_from_run_log(
     observation_id: str,
     results_dir: str,
     _normalize_intent: Callable[[Any], Optional[Dict[str, Any]]],
+    expected_evidence_sha256: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recover a crashed analysis intent, bound to THIS observation only.
 
@@ -66,6 +69,15 @@ def _recover_intent_from_run_log(
         return None
     if not isinstance(final_state, dict):
         return None
+    if expected_evidence_sha256:
+        from tradingagents.experiments.evidence_snapshot import (
+            EvidenceIntegrityError, validate_evidence_packet,
+        )
+        try:
+            validate_evidence_packet(final_state.get("analysis_evidence"), symbol=symbol,
+                                     trade_date=session_date, expected_sha256=expected_evidence_sha256)
+        except EvidenceIntegrityError:
+            return None
     return _normalize_intent(final_state.get("final_trade_intent"))
 
 
@@ -146,7 +158,7 @@ def _screening_with_audit_scope(
         scope_started = True
     except Exception as exc:
         # The audit scope must never block the actual screening work.
-        print(f"[RUN_LOG] Screening audit scope unavailable: {exc}")
+        print(f"[RUN_LOG] Screening audit scope unavailable: {sanitize_for_log(str(exc))}")
 
     try:
         plan = screening_fn(runtime, False)

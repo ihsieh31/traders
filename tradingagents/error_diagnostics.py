@@ -4,6 +4,7 @@ Provides detailed error information and resolution steps for common issues.
 """
 
 from typing import Dict, List, Optional
+from tradingagents.redaction import sanitize_for_log
 from tradingagents.app_identity import env_name, get_env
 
 
@@ -167,6 +168,8 @@ class ErrorDiagnostics:
         Returns:
             Formatted error report string
         """
+        error_message = sanitize_for_log(error_message)
+        context = sanitize_for_log(context)
         diagnosis = cls.diagnose_error(error_message, error_type)
         
         report = []

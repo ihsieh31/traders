@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 from typing import Optional
 import datetime
 import typer
@@ -578,7 +580,7 @@ def get_user_selections():
         try:
             resolve_screening_config(probe)
         except ValueError as exc:
-            raise typer.BadParameter(f"Invalid screening configuration: {exc}")
+            raise typer.BadParameter(f"Invalid screening configuration: {sanitize_for_log(str(exc))}")
 
     checkpoint_enabled = select_checkpoint_enabled()
     output_language = get_output_language()
@@ -1277,7 +1279,7 @@ def _run_cli_analysis_for_ticker(selections, config, ticker):
                     error_message=str(e),
                 )
                 run_started = False
-            console.print(f"[bold red]Run stopped — provider failure:[/bold red] {e}")
+            console.print(f"[bold red]Run stopped — provider failure:[/bold red] {sanitize_for_log(str(e))}")
             raise
         except Exception as e:
             if run_started:
@@ -1552,7 +1554,7 @@ def collect_long_run_config(
                 cfg["run_time_et"] = raw
                 break
             except ValueError as exc:
-                console.print(f"[red]{exc}[/red]")
+                console.print(f"[red]{sanitize_for_log(str(exc))}[/red]")
 
     if not cfg.get("analysts"):
         console.print("[bold]Analyst team[/bold] (default: all five)")
@@ -1735,7 +1737,7 @@ def long_run(
             with lr.global_runner_lock():
                 _long_run_ab_locked(overrides, resume=resume)
         except lr.GlobalRunnerLockBusy as exc:
-            console.print(f"[bold red]ERROR: {exc}[/bold red]")
+            console.print(f"[bold red]ERROR: {sanitize_for_log(str(exc))}[/bold red]")
             raise typer.Exit(code=2)
         return
     if resume is not None or results_root is not None or symbol is not None             or start_date is not None or execute or paper_notional_usd is not None:
@@ -1761,7 +1763,7 @@ def long_run(
         with lr.global_runner_lock():
             _long_run_single_locked(overrides)
     except lr.GlobalRunnerLockBusy as exc:
-        console.print(f"[bold red]ERROR: {exc}[/bold red]")
+        console.print(f"[bold red]ERROR: {sanitize_for_log(str(exc))}[/bold red]")
         raise typer.Exit(code=2)
 
 
@@ -1986,7 +1988,7 @@ def _long_run_single_locked(overrides: dict) -> None:
                     if d < end_day
                 ]
             except Exception as exc:
-                console.print(f"[bold red]Cannot prove observation sessions: {exc}[/bold red]")
+                console.print(f"[bold red]Cannot prove observation sessions: {sanitize_for_log(str(exc))}[/bold red]")
                 raise typer.Exit(code=1)
             state = lr.new_observation_state(cfg, expected_sessions=expected)
             manifest = {
@@ -2089,7 +2091,7 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
                             get_alpaca_trading_client(account=account, read_only=True)
                         )
                     except Exception as exc:
-                        console.print(f"[bold red]Cannot verify Paper account {account} on resume: {exc}[/bold red]")
+                        console.print(f"[bold red]Cannot verify Paper account {account} on resume: {sanitize_for_log(str(exc))}[/bold red]")
                         raise typer.Exit(code=1)
                     resolved_refs[backend] = snapshot.get("account_ref")
                     if snapshot.get("account_ref") != (stored_arms.get(backend) or {}).get("account_ref"):
@@ -2176,7 +2178,7 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
             } for order in broker_snapshot.orders):
                 raise lr.LongRunStop("AB_BASELINE_INVALID", f"{backend} has live broker orders")
     except Exception as exc:
-        console.print(f"[bold red]A/B startup accounts are not comparable: {exc}[/bold red]")
+        console.print(f"[bold red]A/B startup accounts are not comparable: {sanitize_for_log(str(exc))}[/bold red]")
         raise typer.Exit(code=1)
 
     console.print("\n[bold]Full-market A/B Paper observation[/bold]")
@@ -2238,7 +2240,7 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
                     ) if d < end_day
                 ]
             except Exception as exc:
-                console.print(f"[bold red]Cannot prove A/B observation sessions: {exc}[/bold red]")
+                console.print(f"[bold red]Cannot prove A/B observation sessions: {sanitize_for_log(str(exc))}[/bold red]")
                 raise typer.Exit(code=1)
             state = candidate
             state["expected_sessions"] = expected

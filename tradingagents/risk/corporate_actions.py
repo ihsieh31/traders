@@ -20,6 +20,8 @@ unparseable effective time quarantines immediately.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import fcntl
 import json
 import os
@@ -92,7 +94,7 @@ class QuarantineStore:
                         symbol = str(event.get("symbol") or "")
                     raise QuarantineStateError(
                         f"configured corporate_action_events[{index}] is malformed"
-                        f"{' for symbol ' + symbol if symbol else ''}: {exc}"
+                        f"{' for symbol ' + symbol if symbol else ''}: {sanitize_for_log(str(exc))}"
                     ) from exc
 
     # -- persistence ------------------------------------------------------
@@ -112,11 +114,11 @@ class QuarantineStore:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except OSError as exc:
             raise QuarantineStateError(
-                f"quarantine state at {self.path} is unreadable: {exc}"
+                f"quarantine state at {self.path} is unreadable: {sanitize_for_log(str(exc))}"
             ) from exc
         except ValueError as exc:
             raise QuarantineStateError(
-                f"quarantine state at {self.path} is not valid JSON: {exc}"
+                f"quarantine state at {self.path} is not valid JSON: {sanitize_for_log(str(exc))}"
             ) from exc
         if not isinstance(raw, dict):
             raise QuarantineStateError(

@@ -22,6 +22,8 @@ and combined penalties are floored so trades cannot silently vanish.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from dataclasses import dataclass, field
 from math import isfinite
 from typing import Callable, Dict, List, Optional, Tuple
@@ -285,7 +287,7 @@ def adjust_new_position_notional(
             )
         return verdict.adjusted_notional
     except Exception as exc:
-        print(f"[PORTFOLIO] Sizing skipped for {symbol}: {exc}")
+        print(f"[PORTFOLIO] Sizing skipped for {symbol}: {sanitize_for_log(str(exc))}")
         return requested_notional
 
 

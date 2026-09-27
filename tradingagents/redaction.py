@@ -41,27 +41,24 @@ _SECRET_VALUE_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}"),
 )
 
-# One-time snapshot of the exact secret VALUES the process was configured
-# with (os.environ includes the loaded .env). Exact-value replacement is
-# precise — no false positives — and covers whatever key shapes the
-# operator actually uses, e.g. FRED's unprefixed alphanumeric keys.
+# Retain old credentials too: delayed failures may contain a rotated key.
 _CONFIGURED_SECRET_VALUES: Optional[tuple[str, ...]] = None
 
 
-def _configured_secret_values() -> tuple[str, ...]:
+def register_secret_values(config: dict) -> None:
     global _CONFIGURED_SECRET_VALUES
-    if _CONFIGURED_SECRET_VALUES is None:
-        values = []
-        for key, value in os.environ.items():
-            if not value:
-                continue
-            upper = key.upper()
-            if any(marker in upper for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD")):
-                cleaned = value.strip()
-                if len(cleaned) >= 16 and not cleaned.startswith("$"):
-                    values.append(cleaned)
-        _CONFIGURED_SECRET_VALUES = tuple(values)
-    return _CONFIGURED_SECRET_VALUES
+    values = set(_CONFIGURED_SECRET_VALUES or ())
+    for key, value in config.items():
+        if isinstance(value, str) and is_sensitive_key(key):
+            cleaned = value.strip()
+            if len(cleaned) >= 16 and not cleaned.startswith("$"):
+                values.add(cleaned)
+    _CONFIGURED_SECRET_VALUES = tuple(sorted(values, key=lambda value: (-len(value), value)))
+
+
+def _configured_secret_values() -> tuple[str, ...]:
+    register_secret_values(dict(os.environ))
+    return _CONFIGURED_SECRET_VALUES or ()
 
 
 def _scrub_secret_values(text: str, *, redacted: str = "***") -> str:
@@ -139,7 +136,7 @@ def sanitize_for_log(obj: Any, *, redacted: str = "***") -> Any:
             if is_sensitive_key(key):
                 out[key] = redacted
             elif normalized.endswith("_url") or normalized in {"backend_url", "endpoint"}:
-                out[key] = sanitize_url(value)
+                out[key] = _scrub_secret_values(sanitize_url(value), redacted=redacted)
             else:
                 out[key] = sanitize_for_log(value, redacted=redacted)
         return out

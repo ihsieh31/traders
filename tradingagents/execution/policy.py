@@ -5,6 +5,8 @@ fill. Stop risk is a planned loss bound; gaps/slippage can exceed it.
 """
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 import math
@@ -146,4 +148,4 @@ def entry_check(intent: dict, *, now=None, price=None, equity=None, requested=No
             amount = min(amount, cap)
         return math.floor(amount * 100) / 100, None
     except (TypeError, ValueError, OverflowError) as exc:
-        return None, f"Execution policy: {exc}"
+        return None, f"Execution policy: {sanitize_for_log(str(exc))}"

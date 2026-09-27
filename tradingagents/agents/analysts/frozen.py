@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from tradingagents.experiments.evidence_snapshot import (
     EvidenceIntegrityError,
     load_evidence_packet,
+    validate_evidence_packet,
 )
 from tradingagents.prompt_capture import capture_agent_prompt
 
@@ -45,6 +46,11 @@ def create_frozen_analyst(llm: Any, toolkit: Any, analyst: str, report_key: str)
                 path,
                 symbol=symbol,
                 trade_date=trade_date,
+                expected_sha256=toolkit.config.get("evidence_packet_sha256"),
+            )
+        else:
+            packet = validate_evidence_packet(
+                packet, symbol=symbol, trade_date=trade_date,
                 expected_sha256=toolkit.config.get("evidence_packet_sha256"),
             )
 

@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 from tradingagents.agents.utils.tool_call_messages import (
     result_tool_calls as _result_tool_calls, assistant_tool_message,
 )
@@ -98,7 +100,7 @@ def create_social_media_analyst(llm, toolkit):
             
             capture_agent_prompt("sentiment_report", complete_prompt, ticker)
         except Exception as e:
-            print(f"[SOCIAL] Warning: Could not capture complete prompt: {e}")
+            print(f"[SOCIAL] Warning: Could not capture complete prompt: {sanitize_for_log(str(e))}")
             # Fallback to system message only
             capture_agent_prompt("sentiment_report", system_message, ticker)
 
@@ -162,7 +164,7 @@ def create_social_media_analyst(llm, toolkit):
                                 tool_result = tool_fn.run(**tool_args)
                             tool_result_cache[call_signature] = str(tool_result)
                         except Exception as tool_err:
-                            tool_result = f"Error running tool '{tool_name}': {str(tool_err)}"
+                            tool_result = f"Error running tool '{tool_name}': {sanitize_for_log(str(tool_err))}"
 
                 # Append the assistant tool call and tool result messages so the LLM can continue the conversation
                 tool_call_id = tool_call.get("id") or tool_call.get("tool_call_id")

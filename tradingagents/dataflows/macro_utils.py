@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import requests
 import json
 from datetime import datetime, timedelta
@@ -56,7 +58,7 @@ def get_fred_data(series_id: str, start_date: str, end_date: str) -> Dict:
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        return {"error": f"Failed to fetch FRED data for {series_id}: {str(e)}"}
+        return {"error": f"Failed to fetch FRED data for {series_id}: {sanitize_for_log(str(e))}"}
 
 
 def get_treasury_yield_curve(curr_date: str) -> str:

@@ -6,12 +6,18 @@ reporting remains independent of orchestration and its patchable boundaries.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import json
 import hashlib
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from tradingagents.long_run import LongRunDeps
 
 from tradingagents.app_identity import (
     DEFAULT_RESULTS_DIR,
@@ -27,16 +33,28 @@ def _load_snapshots(
     rows = []
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            for line in handle:
+            for line_number, line in enumerate(handle, 1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    rows.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        pass
+                    row = json.loads(line)
+                    if not isinstance(row, dict):
+                        raise ValueError("snapshot must be an object")
+                    for field in ("equity", "cash"):
+                        if field == "cash" and row.get(field) is None:
+                            continue
+                        value = row.get(field)
+                        if isinstance(value, bool) or not math.isfinite(float(value)):
+                            raise ValueError(f"invalid snapshot {field}")
+                        row[field] = float(value)
+                    rows.append(row)
+                except (ValueError, TypeError, OverflowError):
+                    rows.append({"_snapshot_error": f"invalid snapshot at line {line_number}"})
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        rows.append({"_snapshot_error": f"snapshot file unreadable: {type(exc).__name__}"})
     return rows
 
 
@@ -64,17 +82,17 @@ def _sum_unrealized(positions: Any) -> Optional[float]:
     if not positions:
         return None
     total = 0.0
-    seen = False
     for row in positions:
-        value = (row or {}).get("unrealized_pl")
-        if value is None:
-            continue
+        if not isinstance(row, dict):
+            return None
+        value = row.get("unrealized_pl")
         try:
+            if isinstance(value, bool) or not math.isfinite(float(value)):
+                return None
             total += float(value)
-            seen = True
-        except (TypeError, ValueError):
-            continue
-    return total if seen else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return total if math.isfinite(total) else None
 
 
 def compute_drawdown(equities: List[float]) -> Dict[str, Any]:
@@ -112,7 +130,7 @@ def aggregate_llm_operations(run_id: str, runtime: Dict[str, Any]) -> Dict[str, 
                 "per_day": totals.get("per_day", {}),
                 "unpriced_tokens": totals.get("totals", {}).get("unpriced_tokens", 0)}
     except Exception as exc:
-        return {"available": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+        return {"available": False, "error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:200]}
 
 
 def aggregate_final_report(
@@ -131,6 +149,8 @@ def aggregate_final_report(
     """Deterministic Markdown+JSON inputs from persisted evidence only."""
     run_id = state["run_id"]
     snapshots = _load_snapshots(run_id)
+    snapshot_errors = [row["_snapshot_error"] for row in snapshots if "_snapshot_error" in row]
+    snapshots = [row for row in snapshots if "_snapshot_error" not in row]
     rounds, unreadable_journals = _load_rounds(run_id)
     expected = list(state.get("expected_sessions") or [])
     completed = [r["session_date"] for r in rounds if r.get("status") == "COMPLETED"]
@@ -138,7 +158,7 @@ def aggregate_final_report(
     stopped = [r["session_date"] for r in rounds if r.get("status") == "STOPPED"]
 
     equities = [float(s.get("equity") or 0) for s in snapshots]
-    start_equity = equities[0] if equities else None
+    start_equity = equities[0] if equities and not snapshot_errors else None
     # F14: ending values come ONLY from a fresh phase="final" snapshot taken
     # at observation end. The last post_round snapshot can be days stale; a
     # missing/failed final capture is reported as unknown, never labeled
@@ -156,7 +176,7 @@ def aggregate_final_report(
         (end_equity - start_equity) / start_equity
         if start_equity not in (None, 0) and end_equity is not None else None
     )
-    drawdown = compute_drawdown(equities)
+    drawdown = compute_drawdown(equities if not snapshot_errors else [])
     starting_positions = next(
         (s.get("positions") for s in snapshots if s.get("phase") == "pre_round"), None,
     )
@@ -296,7 +316,7 @@ def aggregate_final_report(
         exec_db = {"available": True, "orders_total": len(orders), "by_status": by_status}
     except Exception as exc:
         exec_db = {**exec_db, "available": False,
-                   "error": f"{type(exc).__name__}: {exc}"[:200]}
+                   "error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:200]}
 
     # Safety: final guard status (best-effort) + deterministic gate tallies.
     safety: Dict[str, Any] = {
@@ -410,6 +430,7 @@ def aggregate_final_report(
             ],
         },
         "evidence": {
+            **({"snapshot_errors": snapshot_errors} if snapshot_errors else {}),
             "manifest": str(run_dir(run_id) / "manifest.json"),
             "events": str(run_dir(run_id) / "events.jsonl"),
             "snapshots": str(run_dir(run_id) / "account_snapshots.jsonl"),
@@ -482,6 +503,8 @@ def render_final_markdown(
         "## Portfolio / account result (broker snapshots)",
     ]
     acct = report["account"]
+    for error in report.get("evidence", {}).get("snapshot_errors", []):
+        lines.append(f"- snapshot evidence incomplete: {error}; return and drawdown unavailable")
     lines += [
         f"- starting equity: {_fmt_usd(acct['starting_equity'])}",
         f"- ending equity: {_fmt_usd(acct['ending_equity'])}",

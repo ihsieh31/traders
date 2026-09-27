@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 # defillama_utils.py
 
 import requests
@@ -125,7 +127,7 @@ def _get_chain_fundamentals(symbol: str, lookback_days: int = 30) -> str:
         return "\n".join(lines)
         
     except Exception as exc:
-        return f"Error fetching chain fundamentals for {chain_name}: {exc}"
+        return f"Error fetching chain fundamentals for {chain_name}: {sanitize_for_log(str(exc))}"
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ def get_fundamentals(symbol: str, lookback_days: int = 30, curr_date: Optional[s
         proto_json = _fetch_json(f"/protocol/{slug}")
         tvl_series = sorted(proto_json.get("tvl", []), key=lambda d: d["date"])
     except Exception as exc:
-        return f"Error fetching TVL data: {exc}"
+        return f"Error fetching TVL data: {sanitize_for_log(str(exc))}"
 
     if not tvl_series:
         return f"No TVL data available for '{symbol}'."

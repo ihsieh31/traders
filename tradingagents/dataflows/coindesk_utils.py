@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import requests
 import re
 import datetime
@@ -67,6 +69,6 @@ def get_news(symbol: str, n: int = 5, curr_date: str = None):
         return "".join(formatted_news)
 
     except requests.exceptions.RequestException as e:
-        return f"Error fetching news from CryptoCompare: {e}"
+        return f"Error fetching news from CryptoCompare: {sanitize_for_log(str(e))}"
     except Exception as e:
-        return f"An error occurred: {e}"
+        return f"An error occurred: {sanitize_for_log(str(e))}"

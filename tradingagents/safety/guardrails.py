@@ -16,11 +16,11 @@ guard accumulates them per day and can refuse to start new analyses.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import fcntl
 import json
 import math
-import os
-import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -130,6 +130,7 @@ class SafetyVerdict:
 # observation (vs. refusing only the current order).
 KILL_SWITCH = "KILL_SWITCH"
 MAX_TRADE_NOTIONAL = "MAX_TRADE_NOTIONAL"
+INVALID_ORDER_NOTIONAL = "INVALID_ORDER_NOTIONAL"
 MAX_SYMBOL_CONCENTRATION = "MAX_SYMBOL_CONCENTRATION"
 DAILY_LOSS_HALT = "DAILY_LOSS_HALT"
 MAX_DRAWDOWN_HALT = "MAX_DRAWDOWN_HALT"
@@ -144,7 +145,11 @@ OBSERVATION_HALT_CODES = frozenset({
 
 
 def _today(when: Optional[str] = None) -> str:
-    return when or date.today().isoformat()
+    if when is None:
+        return date.today().isoformat()
+    if not isinstance(when, str) or date.fromisoformat(when).isoformat() != when:
+        raise ValueError("Safety accounting date must be YYYY-MM-DD")
+    return when
 
 
 def _finite_float(value) -> Optional[float]:
@@ -158,7 +163,7 @@ def _finite_float(value) -> Optional[float]:
     """
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return parsed if math.isfinite(parsed) else None
 
@@ -181,6 +186,23 @@ class SafetyGuard:
         for key in merged:
             if config and config.get(key) is not None:
                 merged[key] = config[key]
+        enabled = merged["safety_enabled"]
+        if isinstance(enabled, str) and enabled.strip().lower() in {"true", "false"}:
+            enabled = enabled.strip().lower() == "true"
+        if not isinstance(enabled, bool):
+            raise ValueError("safety_enabled must be a boolean")
+        merged["safety_enabled"] = enabled
+        for key in DEFAULT_SAFETY_CONFIG.keys() - {"safety_enabled"}:
+            value = merged[key]
+            number = _finite_float(value)
+            if isinstance(value, bool) or number is None or number < 0:
+                raise ValueError(f"{key} must be finite and non-negative")
+            if key in {"max_consecutive_rejections", "daily_llm_token_budget"}:
+                if not number.is_integer():
+                    raise ValueError(f"{key} must be an integer")
+                merged[key] = int(number)
+            else:
+                merged[key] = number
         self.config = merged
         self.state_path = Path(state_path or (_SAFETY_HOME / "state.json"))
         self.kill_switch_path = Path(
@@ -244,31 +266,15 @@ class SafetyGuard:
             )
         except ValueError as exc:
             raise SafetyStateError(
-                f"safety state {self.state_path} is not valid JSON: {exc}"
+                f"safety state {self.state_path} is not valid JSON: {sanitize_for_log(str(exc))}"
             )
         return _validated_state(raw, self.state_path)
 
     def _save_state(self) -> None:
-        # Atomic durable write: temp file in the same directory, fsync, then
-        # rename over the real state file so a crash can never truncate it.
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_fd, tmp_name = tempfile.mkstemp(
-            dir=str(self.state_path.parent),
-            prefix=self.state_path.name + ".",
-            suffix=".tmp",
-        )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
-                json.dump(self._state, handle, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_name, self.state_path)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        # The shared stdlib-only writer fsyncs file AND directory metadata.
+        from tradingagents.long_run_support.state import atomic_write_json
+
+        atomic_write_json(self.state_path, self._state)
 
     # ----- kill switch --------------------------------------------------------
 
@@ -327,9 +333,11 @@ class SafetyGuard:
     # ----- LLM token budget ----------------------------------------------------
 
     def record_llm_tokens(self, tokens: int, when: Optional[str] = None) -> None:
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+            raise ValueError("tokens must be a non-negative integer")
+        day = _today(when)
         if not tokens:
             return
-        day = _today(when)
         with self._state_file_lock():
             self._reload_state_locked()
             counts = self._state.setdefault("llm_tokens", {})
@@ -439,7 +447,12 @@ class SafetyGuard:
             )
 
         # Pre-trade: per-order notional cap.
-        notional_value = _finite_float(notional) or 0.0
+        notional_value = _finite_float(notional)
+        if isinstance(notional, bool) or notional_value is None or notional_value < 0:
+            reasons.append("Order notional must be finite and non-negative.")
+            codes.append(INVALID_ORDER_NOTIONAL)
+            checks["trade_notional"] = {"status": "fail", "detail": "invalid notional"}
+            return SafetyVerdict(False, reasons, checks, codes)
         cap = float(self.config.get("max_trade_notional_usd", 0) or 0)
         if cap > 0 and notional_value > cap:
             reasons.append(

@@ -62,7 +62,12 @@ def get_checkpointer(data_dir: str | Path, ticker: str) -> Generator[Any, None, 
     conn = sqlite3.connect(str(_db_path(data_dir, ticker)), check_same_thread=False)
     try:
         SqliteSaver = _sqlite_saver_cls()
-        saver = SqliteSaver(conn)
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        # Pin strict reconstruction explicitly; library defaults may remain
+        # permissive for backwards compatibility even in patched versions.
+        saver = SqliteSaver(conn, serde=JsonPlusSerializer(
+            allowed_msgpack_modules=None, pickle_fallback=False))
         saver.setup()
         yield saver
     finally:

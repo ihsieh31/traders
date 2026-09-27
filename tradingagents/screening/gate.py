@@ -24,6 +24,8 @@ Fail-closed rules when the gate is active:
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -86,7 +88,7 @@ def check_entry_allowed(
     except Exception as exc:
         return (
             "auto screening: US equity trading calendar unavailable; "
-            f"new entries are blocked fail-closed ({exc})"
+            f"new entries are blocked fail-closed ({sanitize_for_log(str(exc))})"
         )
     if not trading_day:
         return (

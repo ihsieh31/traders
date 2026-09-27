@@ -205,104 +205,59 @@ class AdapterFamilyTransportTests(unittest.TestCase):
         self.assertEqual(ctx.exception.category, "permanent")
 
     def test_anthropic_family_counts_sdk_requests(self):
-        import anthropic
+        import httpx
+        from tradingagents.llm_clients.anthropic_client import AnthropicClient
 
         calls = []
 
-        class FakeResponse(SimpleNamespace):
-            def model_dump(self):
-                return {
-                    "id": "msg_1",
-                    "type": "message",
-                    "role": "assistant",
-                    "model": "claude-sonnet-4-6",
-                    "content": [{"type": "text", "text": "ok"}],
-                    "stop_reason": "end_turn",
-                    "usage": {"input_tokens": 1, "output_tokens": 1},
-                }
+        def fake_send(self, request, **kwargs):
+            calls.append(1)
+            if len(calls) < 4:
+                return httpx.Response(503, request=request, json={
+                    "type": "error", "error": {"type": "overloaded_error", "message": "busy"}})
+            return httpx.Response(200, request=request, json={
+                "id": "msg_1", "type": "message", "role": "assistant",
+                "model": "claude-sonnet-4-6", "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1}})
 
-        class FakeMessages:
-            def create(self, **kwargs):
-                calls.append(1)
-                if len(calls) < 4:
-                    raise anthropic.APIConnectionError(
-                        "connection error", httpx_request=None
-                    )
-                return FakeResponse(
-                    content=[SimpleNamespace(type="text", text="ok")],
-                    role="assistant",
-                    stop_reason="end_turn",
-                    usage=SimpleNamespace(input_tokens=1, output_tokens=1),
-                )
-
-        class FakeAnthropicClient:
-            def __init__(self, **kwargs):
-                self.messages = FakeMessages()
-
-        from tradingagents.llm_clients.anthropic_client import AnthropicClient
-
-        # langchain-anthropic builds anthropic.Client(**params); patching the
-        # client constructor keeps the whole path offline.
-        with patch("anthropic.Client", side_effect=lambda **kw: FakeAnthropicClient(**kw)):
+        with patch.object(httpx.Client, "send", fake_send):
             client = AnthropicClient("claude-sonnet-4-6", api_key="test-key")
             llm = _retrying(role="analysis", provider="anthropic", model="claude-sonnet-4-6")
             llm._controller.sleep = SLEEP_NONE
             llm._inner = client.get_llm()
+            self.assertEqual(llm._inner._client.max_retries, 0)
             result = llm.invoke("hello")
         self.assertIn("ok", str(result.content))
         self.assertEqual(len(calls), 4)
 
-        # Constructed adapter must pin the SDK retry layer to 0. _client is
-        # a lazy cached_property, so touch it to force construction.
-        with patch("anthropic.Client", side_effect=lambda **kw: FakeAnthropicClient(**kw)) as anthropic_cls:
-            inner = AnthropicClient("claude-sonnet-4-6", api_key="test-key").get_llm()
-            _ = inner._client
-            self.assertEqual(anthropic_cls.call_args.kwargs.get("max_retries"), 0)
-
     def test_google_family_counts_sdk_requests(self):
-        from google.api_core.exceptions import ServiceUnavailable
+        import httpx
 
         calls = []
 
-        def fake_generate_content(self, *args, **kwargs):
+        def fake_send(self, request, **kwargs):
             calls.append(1)
             if len(calls) < 4:
-                raise ServiceUnavailable("backend error")
-            from google.ai.generativelanguage_v1beta.types import (
-                Candidate, Content, GenerateContentResponse, Part,
-            )
+                return httpx.Response(503, request=request, json={
+                    "error": {"code": 503, "message": "backend error", "status": "UNAVAILABLE"}})
+            return httpx.Response(200, request=request, json={"candidates": [{
+                "content": {"role": "model", "parts": [{"text": "ok"}]},
+                "finishReason": "STOP"}]})
 
-            return GenerateContentResponse(
-                candidates=[
-                    Candidate(
-                        content=Content(role="model", parts=[Part(text="ok")]),
-                        finish_reason=1,
-                    )
-                ]
-            )
-
-        from google.ai.generativelanguage_v1beta.services.generative_service.client import (
-            GenerativeServiceClient,
-        )
         from tradingagents.llm_clients.google_client import GoogleClient
 
-        with patch.object(
-            GenerativeServiceClient, "generate_content", fake_generate_content
-        ):
+        with patch.object(httpx.Client, "send", fake_send):
             client = GoogleClient("gemini-2.5-flash", api_key="test-key", max_retries=0)
             llm = _retrying(role="analysis", provider="google", model="gemini-2.5-flash")
             llm._controller.sleep = SLEEP_NONE
             llm._inner = client.get_llm()
             result = llm.invoke("hello")
         self.assertIn("ok", str(result.content))
-        # Exactly 4 SDK calls: tenacity's stop_after_attempt(0) adds none.
+        # Exactly 4 HTTP requests: google-genai maps attempts=0 to one request.
         self.assertEqual(len(calls), 4)
 
-        # Constructed adapter must pin langchain's tenacity layer to 0
-        # (its max_retries semantics are total-attempts and it retries
-        # permanent GoogleAPIError subclasses).
-        from tradingagents.llm_clients.google_client import NormalizedChatGoogleGenerativeAI
-
+        # The SDK retry layer remains disabled; RetryingLLM owns retries.
         with patch(
             "tradingagents.llm_clients.google_client.NormalizedChatGoogleGenerativeAI"
         ) as chat_cls:

@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 from typing import Annotated, Dict, List, Tuple
 from .reddit_utils import (
     fetch_top_from_category,
@@ -960,7 +962,7 @@ def get_stockstats_indicator(
         )
         return f"## {indicator} for {symbol} on {curr_date}: {value}"
     except Exception as e:
-        return f"Error getting {indicator} for {symbol}: {str(e)}"
+        return f"Error getting {indicator} for {symbol}: {sanitize_for_log(str(e))}"
 
 
 _INDICATOR_ALIAS_MAP = {
@@ -1070,7 +1072,7 @@ def get_stockstats_indicator_history(
     try:
         from .technical_brief import compute_indicators
     except Exception as exc:
-        return f"Error loading technical indicator engine: {exc}"
+        return f"Error loading technical indicator engine: {sanitize_for_log(str(exc))}"
 
     df = compute_indicators(symbol, curr_date, timeframe_key)
     if df is None or df.empty:
@@ -1276,7 +1278,7 @@ def get_stock_news_openai(ticker, curr_date):
             curr_date=curr_date,
         )
         return (
-            f"OpenAI stock-news call failed for {display_ticker}: {str(e)}\n\n"
+            f"OpenAI stock-news call failed for {display_ticker}: {sanitize_for_log(str(e))}\n\n"
             f"{fallback}"
         )
 
@@ -1411,7 +1413,7 @@ def get_global_news_openai(curr_date, ticker_context=None):
             curr_date=curr_date,
             ticker_context=ticker_context,
         )
-        return f"OpenAI global-news call failed: {str(e)}\n\n{fallback}"
+        return f"OpenAI global-news call failed: {sanitize_for_log(str(e))}\n\n{fallback}"
 
 
 def get_fundamentals_openai(ticker, curr_date):
@@ -1526,7 +1528,7 @@ def get_fundamentals_openai(ticker, curr_date):
             ticker=ticker,
             curr_date=curr_date,
         )
-        return f"OpenAI fundamentals call failed for {ticker}: {str(e)}\n\n{fallback}"
+        return f"OpenAI fundamentals call failed for {ticker}: {sanitize_for_log(str(e))}\n\n{fallback}"
 
 
 def get_defillama_fundamentals(
@@ -1558,7 +1560,7 @@ def get_defillama_fundamentals(
     try:
         return get_defillama_fundamentals_util(clean_ticker, lookback_days)
     except Exception as e:
-        return f"Error fetching DeFi Llama data for {clean_ticker}: {str(e)}"
+        return f"Error fetching DeFi Llama data for {clean_ticker}: {sanitize_for_log(str(e))}"
 
 
 def get_alpaca_data_window(
@@ -1638,11 +1640,11 @@ def get_alpaca_data_window(
                     result += f"Ask: {latest_quote['ask_price']} ({latest_quote['ask_size']}), "
                     result += f"Time: {latest_quote['timestamp']}"
             except Exception as quote_error:
-                result += f"\n\nCould not fetch latest quote: {str(quote_error)}"
+                result += f"\n\nCould not fetch latest quote: {sanitize_for_log(str(quote_error))}"
 
         return result
     except Exception as e:
-        return f"Error getting stock data for {symbol}: {str(e)}"
+        return f"Error getting stock data for {symbol}: {sanitize_for_log(str(e))}"
 
 def get_alpaca_data(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -1757,11 +1759,11 @@ def get_alpaca_data(
                     result += f"After-Hours Move: ${after_hours_change:+.2f} ({after_hours_pct:+.2f}%)\n"
                     
         except Exception as quote_error:
-            result += f"\n\nNote: Real-time quote unavailable: {str(quote_error)}"
+            result += f"\n\nNote: Real-time quote unavailable: {sanitize_for_log(str(quote_error))}"
         
         return result
     except Exception as e:
-        return f"Error getting stock data for {symbol}: {str(e)}"
+        return f"Error getting stock data for {symbol}: {sanitize_for_log(str(e))}"
 
 
 def get_technical_brief(
@@ -1790,7 +1792,7 @@ def get_technical_brief(
     except Exception as e:
         import json as _json
         return _json.dumps({
-            "error": f"Failed to build technical brief for {symbol}: {str(e)}",
+            "error": f"Failed to build technical brief for {symbol}: {sanitize_for_log(str(e))}",
             "symbol": symbol,
             "generated_at": curr_date,
         })
@@ -1954,7 +1956,7 @@ def get_sec_ir_primary_source(
             SourceRecord(
                 kind="ir_page", symbol=ticker, source="Company IR", url="",
                 published_at=None, retrieved_at="",
-                error=f"IR page check failed: {exc}",
+                error=f"IR page check failed: {sanitize_for_log(str(exc))}",
             )
         )
     if mapping_error and not records:

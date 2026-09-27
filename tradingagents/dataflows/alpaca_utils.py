@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import re
 # alpaca_utils.py
 
@@ -119,12 +121,19 @@ def _normalize_asset_symbol(symbol: str, asset_class: str) -> str:
     return raw
 
 
+def asset_field(asset: Any, name: str, default: Any = None) -> Any:
+    """Read current API dictionaries and older SDK asset objects uniformly."""
+    if isinstance(asset, dict):
+        return asset.get(name, asset.get("class", default) if name == "asset_class" else default)
+    return getattr(asset, name, default)
+
+
 def _asset_to_search_result(asset) -> Dict[str, Any]:
-    asset_class = _enum_value(getattr(asset, "asset_class", "")) or "unknown"
-    symbol = _normalize_asset_symbol(getattr(asset, "symbol", ""), asset_class)
-    name = getattr(asset, "name", "") or ticker_to_company_fallback.get(symbol, symbol)
-    exchange = _enum_value(getattr(asset, "exchange", "")) or ""
-    tradable = bool(getattr(asset, "tradable", False))
+    asset_class = _enum_value(asset_field(asset, "asset_class", "")) or "unknown"
+    symbol = _normalize_asset_symbol(asset_field(asset, "symbol", ""), asset_class)
+    name = asset_field(asset, "name", "") or ticker_to_company_fallback.get(symbol, symbol)
+    exchange = _enum_value(asset_field(asset, "exchange", "")) or ""
+    tradable = asset_field(asset, "tradable", False) is True
     asset_type = "Crypto" if asset_class == AssetClass.CRYPTO.value else "Equity"
     return {
         "symbol": symbol,
@@ -222,7 +231,7 @@ def is_transient_fetch_error(exc: BaseException) -> bool:
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     if isinstance(status, int) and not isinstance(status, bool):
         return status >= 500 or status in _TRANSIENT_FETCH_STATUS
-    text = f"{type(exc).__name__}: {exc}".lower()
+    text = f"{type(exc).__name__}: {sanitize_for_log(str(exc))}".lower()
     return any(marker in text for marker in _TRANSIENT_FETCH_TEXT_MARKERS)
 
 
@@ -257,7 +266,7 @@ def get_alpaca_stock_client() -> StockHistoricalDataClient:
     try:
         client = StockHistoricalDataClient(api_key, api_secret)
     except Exception as e:
-        print(f"Error creating Alpaca stock client: {e}")
+        print(f"Error creating Alpaca stock client: {sanitize_for_log(str(e))}")
         raise
     if not _apply_read_timeout(client):
         # A historical client without an enforceable timeout can stall the
@@ -312,11 +321,11 @@ class ReadOnlyTradingClient:
 
 
 class ExecutionTradingClient:
-    """Preserve raw Alpaca asset fields needed by the final short gate.
+    """Preserve current asset JSON across all paper-client read paths.
 
-    alpaca-py 0.44.0's Asset model does not include borrow_status and drops
-    unknown fields. Execution therefore uses the same authenticated SDK GET
-    transport while returning the asset response before that model is applied.
+    alpaca-py's Asset requires the removed easy_to_borrow field and drops
+    borrow_status. Use its authenticated transport without that stale model.
+    Account/order parsing and mutation transport still belong to the SDK.
     """
 
     def __init__(self, client: Any):
@@ -329,7 +338,17 @@ class ExecutionTradingClient:
         from alpaca.common.utils import validate_symbol_or_asset_id
 
         symbol = validate_symbol_or_asset_id(symbol)
+        if isinstance(self._client, ReadOnlyTradingClient):
+            return self._client.get_asset(symbol)
         return self._client.get(f"/assets/{symbol}")
+
+    def get_all_assets(self, filter: Optional[GetAssetsRequest] = None):
+        if isinstance(self._client, ReadOnlyTradingClient):
+            return self._client.get_all_assets(filter)
+        response = self._client.get("/assets", filter.to_request_fields() if filter else {})
+        if not isinstance(response, list) or not all(isinstance(item, dict) for item in response):
+            raise ValueError("Alpaca assets response must be a complete JSON array")
+        return response
 
 
 def alpaca_read_only_enabled() -> bool:
@@ -470,6 +489,7 @@ def get_alpaca_trading_client(
     client._retry = 0
     session.request = partial(request, timeout=(3.05, 10.0))
     effective_read_only = alpaca_read_only_enabled() if read_only is None else bool(read_only)
+    client = ExecutionTradingClient(client)
     if effective_read_only:
         return ReadOnlyTradingClient(client)
     return client
@@ -592,7 +612,7 @@ def _yfinance_fallback_data(
             threads=False,
         )
     except Exception as exc:
-        print(f"YFinance fallback failed for {symbol}: {exc}")
+        print(f"YFinance fallback failed for {symbol}: {sanitize_for_log(str(exc))}")
         return pd.DataFrame()
 
     if data is None or data.empty:
@@ -647,7 +667,7 @@ class AlpacaUtils:
             _ASSET_SEARCH_CACHE["expires_at"] = now + cache_seconds
             return searchable_assets
         except Exception as e:
-            print(f"Error loading Alpaca assets for search: {e}")
+            print(f"Error loading Alpaca assets for search: {sanitize_for_log(str(e))}")
             fallback = _fallback_asset_results()
             _ASSET_SEARCH_CACHE["assets"] = fallback
             _ASSET_SEARCH_CACHE["expires_at"] = now + 60
@@ -789,7 +809,7 @@ class AlpacaUtils:
                     if save_path:
                         fallback_df.to_csv(save_path, index=False, encoding="utf-8")
                     return fallback_df
-            print(f"Error fetching data for {symbol}: {e}")
+            print(f"Error fetching data for {symbol}: {sanitize_for_log(str(e))}")
             return pd.DataFrame()
 
     @staticmethod
@@ -812,7 +832,7 @@ class AlpacaUtils:
                 "timestamp": quote.timestamp
             }
         except Exception as e:
-            print(f"Error fetching latest quote for {symbol}: {e}")
+            print(f"Error fetching latest quote for {symbol}: {sanitize_for_log(str(e))}")
             return {}
 
     
@@ -869,15 +889,15 @@ class AlpacaUtils:
             client = get_alpaca_trading_client()
             asset = client.get_asset(symbol)
             
-            if asset and hasattr(asset, 'name') and asset.name:
-                return asset.name
+            if asset and asset_field(asset, "name"):
+                return asset_field(asset, "name")
             else:
                 # Use fallback if name is not available
                 print(f"No company name found for {symbol} via API, using fallback.")
                 return ticker_to_company_fallback.get(symbol, symbol)
                 
         except Exception as e:
-            print(f"Error fetching company name for {symbol}: {e}")
+            print(f"Error fetching company name for {symbol}: {sanitize_for_log(str(e))}")
             print("This might be due to invalid API keys or insufficient permissions.")
             print("If you recently reset your paper trading account, you may need to generate new API keys.")
             return ticker_to_company_fallback.get(symbol, symbol) 
@@ -1092,7 +1112,7 @@ class AlpacaUtils:
                 # existing holding and a SELL into a skipped exit.
                 raise
             # Log and default to neutral so agent prompts still work.
-            print(f"Error determining current position for {symbol}: {e}")
+            print(f"Error determining current position for {symbol}: {sanitize_for_log(str(e))}")
             return "NEUTRAL"
 
     # NOTE (Phase A.1 remediation): direct broker-mutation helpers
@@ -1212,7 +1232,7 @@ class AlpacaUtils:
                 else TradeIntent.model_validate(trade_intent)
             )
         except Exception as e:
-            return {"success": False, "error": f"Invalid trade intent: {e}"}
+            return {"success": False, "error": f"Invalid trade intent: {sanitize_for_log(str(e))}"}
 
         requested_symbol = (intent.symbol or "").upper().replace("/", "")
         actual_symbol = (symbol or "").upper().replace("/", "")

@@ -1,5 +1,6 @@
 # -------------------------------- config.py -----------------------
 from typing import Dict, Optional
+from tradingagents.redaction import register_secret_values
 from tradingagents.app_identity import (
     get_env,
     load_namespaced_dotenv,
@@ -33,6 +34,7 @@ def set_config(config: Dict):
     if _config is None:
         _config = validate_config_paths(default_config.DEFAULT_CONFIG)
     _config.update(validate_config_paths(config))
+    register_secret_values(config)
     DATA_DIR = _config["data_dir"]
 
 
@@ -49,6 +51,7 @@ def replace_config(config: Dict):
     if "data_dir" not in normalized:
         raise ValueError("replacement config must contain data_dir")
     _config = normalized
+    register_secret_values(normalized)
     DATA_DIR = _config["data_dir"]
 
 
@@ -66,6 +69,7 @@ def set_runtime_api_keys(api_keys: Dict[str, str]):
     """
     global _runtime_api_keys
     _runtime_api_keys.update(api_keys)
+    register_secret_values(api_keys)
 
 
 def get_runtime_api_keys() -> Dict[str, str]:

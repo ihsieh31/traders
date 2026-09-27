@@ -24,6 +24,8 @@ per-collection size cap by evicting the lowest-scoring entries first.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import math
 from dataclasses import dataclass
 from datetime import date
@@ -200,5 +202,5 @@ def maintain_all_memories(memories: Dict[str, object], config: Optional[dict] = 
         try:
             results[name] = maintain_memory(memory, maintenance_config)
         except Exception as exc:
-            print(f"[MEMORY] Maintenance skipped for {name}: {exc}")
+            print(f"[MEMORY] Maintenance skipped for {name}: {sanitize_for_log(str(exc))}")
     return results

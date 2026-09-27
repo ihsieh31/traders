@@ -6,6 +6,8 @@ returns the observed stop reason. It creates at most one analysis graph.
 """
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Dict, Optional
 
 from tradingagents.app_identity import DEFAULT_RESULTS_DIR, validate_app_path
@@ -173,7 +175,7 @@ def run_symbol_work(
                 entry["execution_finished_at"] = utc_now_iso()
                 save_round_journal(run_id, journal)
             raise LongRunStop("EXECUTION_AMBIGUOUS",
-                              f"{symbol}: execution failed: {exc}")
+                              f"{symbol}: execution failed: {sanitize_for_log(str(exc))}")
         if record_timing:
             entry["execution_finished_at"] = utc_now_iso()
         _record_execution(journal, run_id, symbol, result)
@@ -200,6 +202,21 @@ def run_symbol_work(
         if control:
             stop_reason = control
             break
+
+        # Resuming skips graph construction; recheck the persisted packet here
+        # before a recovered decision or outbox can reach execution.
+        frozen = runtime.get("analysis_backend") == "berkshire" or runtime.get("shared_evidence_dir")
+        pinned = entry.get("evidence_packet_sha256")
+        if status in (SYMBOL_ANALYZING, SYMBOL_ANALYZED, SYMBOL_EXECUTING):
+            if pinned or (frozen and status != SYMBOL_ANALYZING):
+                from tradingagents.experiments.evidence_snapshot import load_evidence_packet
+                try:
+                    if not pinned or not entry.get("evidence_packet_path"):
+                        raise ValueError("frozen decision has no pinned evidence identity")
+                    load_evidence_packet(entry["evidence_packet_path"], symbol=symbol,
+                                         trade_date=session_date, expected_sha256=pinned)
+                except Exception as exc:
+                    raise LongRunStop("STATE_CORRUPT", f"{symbol}: pinned evidence invalid: {sanitize_for_log(str(exc))}") from exc
 
         # Case D (resume): re-enter execution with the identical decision
         # identity; the durable outbox dedupes without a second broker POST.
@@ -238,7 +255,7 @@ def run_symbol_work(
                     entry["execution_finished_at"] = utc_now_iso()
                     save_round_journal(run_id, journal)
                 raise LongRunStop("EXECUTION_AMBIGUOUS",
-                                  f"{symbol}: re-entry failed: {exc}")
+                                  f"{symbol}: re-entry failed: {sanitize_for_log(str(exc))}")
             if record_timing:
                 entry["execution_finished_at"] = utc_now_iso()
             _record_execution(journal, run_id, symbol, result)
@@ -274,13 +291,14 @@ def run_symbol_work(
         # provably completed run — of THIS observation only (F12) — or safely
         # re-run the analysis.
         if status == SYMBOL_ANALYZING:
-            recovered = _recover_intent_from_run_log(
+            recovered = None if frozen and not pinned else _recover_intent_from_run_log(
                 symbol, session_date,
                 observation_id=run_id,
                 results_dir=str(validate_app_path(
                     runtime.get("results_dir") or DEFAULT_RESULTS_DIR,
                     field="results_dir",
                 )),
+                **({"expected_evidence_sha256": pinned} if pinned else {}),
             )
             if recovered and record_timing:
                 # A completed graph log can precede the journal's validation
@@ -335,7 +353,7 @@ def run_symbol_work(
             raise
         except Exception as exc:
             raise LongRunStop(
-                "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {exc}"
+                "LLM_BUDGET_EXHAUSTED", f"budget check unavailable: {sanitize_for_log(str(exc))}"
             )
         entry["status"] = SYMBOL_ANALYZING
         symbol_started = utc_now_iso()
@@ -431,7 +449,7 @@ def run_symbol_work(
             if record_timing:
                 entry["analysis_finished_at"] = utc_now_iso()
             save_round_journal(run_id, journal)
-            raise LongRunStop("PROVIDER_FAILURE", f"{symbol}: {exc}")
+            raise LongRunStop("PROVIDER_FAILURE", f"{symbol}: {sanitize_for_log(str(exc))}")
         except LongRunStop:
             raise
         except Exception as exc:
@@ -439,7 +457,7 @@ def run_symbol_work(
             if record_timing:
                 entry["analysis_finished_at"] = utc_now_iso()
             entry["execution_result_summary"] = {
-                "error": f"{type(exc).__name__}: {exc}"[:300]
+                "error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:300]
             }
             save_round_journal(run_id, journal)
             log_event(run_id, "symbol_failed",

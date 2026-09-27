@@ -11,6 +11,8 @@ evaluation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
+import math
 from typing import Callable, Dict, List, Optional
 
 import backtrader as bt
@@ -20,8 +22,9 @@ from .metrics import (
     CRYPTO_DAYS_PER_YEAR,
     TRADING_DAYS_PER_YEAR,
     summarize_performance,
+    validate_periods_per_year,
 )
-from .signals import load_recorded_signals
+from .signals import load_recorded_signals, normalize_action
 from tradingagents.app_identity import default_results_dir, validate_app_path
 
 
@@ -259,6 +262,26 @@ def run_backtest(
       expensive across wide bars.
     - ``"none"``: frictionless fills (not recommended outside tests).
     """
+    validate_periods_per_year(periods_per_year)
+    values = {"initial_cash": initial_cash, "commission": commission,
+              "position_pct": position_pct, "slippage_bps": slippage_bps,
+              "slippage_vol_fraction": slippage_vol_fraction,
+              "slippage_min_bps": slippage_min_bps, "slippage_max_bps": slippage_max_bps}
+    for name, value in values.items():
+        if isinstance(value, bool) or not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be finite and non-negative")
+    if initial_cash <= 0 or position_pct > 1:
+        raise ValueError("initial_cash must be positive and position_pct must be between 0 and 1")
+    if slippage_min_bps > slippage_max_bps or max(slippage_bps, slippage_max_bps) >= 10_000:
+        raise ValueError("Slippage bounds must be ordered and below 10000 bps")
+    normalized_signals = {}
+    for day, action in (signals or {}).items():
+        if not isinstance(day, str) or date.fromisoformat(day).isoformat() != day:
+            raise ValueError("Signal dates must be YYYY-MM-DD")
+        normalized = normalize_action(action)
+        if normalized is None:
+            raise ValueError(f"Unknown signal action: {action!r}")
+        normalized_signals[day] = normalized
     frame = normalize_price_frame(prices)
 
     cerebro = bt.Cerebro()
@@ -294,7 +317,7 @@ def run_backtest(
     cerebro.broker.setcommission(commission=float(commission))
     cerebro.addstrategy(
         _SignalReplayStrategy,
-        signals=dict(signals or {}),
+        signals=normalized_signals,
         allow_shorts=allow_shorts,
         position_pct=position_pct,
     )

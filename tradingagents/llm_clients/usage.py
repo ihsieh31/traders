@@ -34,9 +34,11 @@ _START_TIMES_LOCK = threading.Lock()
 
 
 def _positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
     return number if number > 0 else 0
 
@@ -152,6 +154,11 @@ class UsageAccountingCallback(BaseCallbackHandler):
                 _START_TIMES[run_id] = time.monotonic()
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        run_id = str(kwargs.get("run_id") or "")
+        started: Optional[float] = None
+        if run_id:
+            with _START_TIMES_LOCK:
+                started = _START_TIMES.pop(run_id, None)
         # F15: Responses-adapter results are accounted by the adapter itself
         # (its custom invoke bypasses the callback manager); never count a
         # call twice.
@@ -161,11 +168,6 @@ class UsageAccountingCallback(BaseCallbackHandler):
                 getattr(message, "additional_kwargs", None), "get", lambda *_: None
             )("usage_accounted_by_adapter"):
                 return
-        run_id = str(kwargs.get("run_id") or "")
-        started: Optional[float] = None
-        if run_id:
-            with _START_TIMES_LOCK:
-                started = _START_TIMES.pop(run_id, None)
         try:
             usage, model_name = extract_langchain_usage(response)
             payload: Dict[str, Any] = {

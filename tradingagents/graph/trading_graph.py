@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 # TradingAgents/graph/trading_graph.py
 
 import os
@@ -19,7 +21,7 @@ from tradingagents.llm_clients.retry import (
 from tradingagents.llm_clients.roles import describe_roles, resolve_role_config
 from tradingagents.analysis_profiles import resolve_analysis_profile
 from tradingagents.analysis_backends import resolve_analysis_backend
-from tradingagents.experiments.evidence_snapshot import load_evidence_packet
+from tradingagents.experiments.evidence_snapshot import load_evidence_packet, validate_evidence_packet
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.agents.utils.memory import FinancialSituationMemory, TradingMemoryLog
@@ -143,7 +145,7 @@ class TradingAgentsGraph:
                 self.config.get("llm_max_retries", 3)
             )
         except ValueError as exc:
-            raise ValueError(f"Invalid LLM retry configuration: {exc}") from exc
+            raise ValueError(f"Invalid LLM retry configuration: {sanitize_for_log(str(exc))}") from exc
         self.llm_request_timeout_seconds = float(
             self.config.get("llm_request_timeout_seconds", 120.0)
         )
@@ -560,7 +562,7 @@ class TradingAgentsGraph:
 
                 maintain_all_memories(memories, self.config)
         except Exception as exc:
-            print(f"[REFLECTION] Outcome reflection skipped for {ticker} {trade_date}: {exc}")
+            print(f"[REFLECTION] Outcome reflection skipped for {ticker} {trade_date}: {sanitize_for_log(str(exc))}")
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
         """Create tool nodes for different data sources."""
@@ -692,6 +694,14 @@ class TradingAgentsGraph:
         )
 
         try:
+            if resume_checkpoint and self.config.get("analysis_input_mode") == "frozen_evidence":
+                checkpoint = graph.get_state(args["config"])
+                checkpoint_values = getattr(checkpoint, "values", {}) or {}
+                validate_evidence_packet(
+                    checkpoint_values.get("analysis_evidence"),
+                    symbol=company_name, trade_date=str(trade_date),
+                    expected_sha256=init_agent_state["analysis_evidence"]["sha256"],
+                )
             if self.debug:
                 # Debug mode with tracing
                 trace = []
@@ -729,7 +739,7 @@ class TradingAgentsGraph:
                 status="stopped",
                 error_message=str(exc),
             )
-            print(f"[RUN STOPPED] {company_name}: {exc}")
+            print(f"[RUN STOPPED] {company_name}: {sanitize_for_log(str(exc))}")
             raise
         except Exception as e:
             run_logger.finish_run(

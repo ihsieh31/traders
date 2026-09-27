@@ -6,6 +6,8 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import json
 import math
 from typing import Any, Callable, Optional
@@ -14,6 +16,7 @@ from tradingagents.execution.authority import BrokerSnapshot
 
 
 def _lookup_for_recovery(self, broker: Any, client_order_id: str, *, BrokerAuthorityError) -> Any:
+    from .requests import _exception_http_status
     getters = [
         getattr(broker, name, None)
         for name in ("get_order_by_client_order_id", "get_order_by_client_id")
@@ -32,18 +35,12 @@ def _lookup_for_recovery(self, broker: Any, client_order_id: str, *, BrokerAutho
             explicit_not_found += 1
         except Exception as exc:
             last = exc
-            text = f"{type(exc).__name__} {exc}".lower()
-            status_code = getattr(exc, "status_code", None)
-            # R07: message text never proves an HTTP status. Only structured
-            # 404 evidence (status_code, or its literal in a stringified
-            # error when no structured code exists) may classify a lookup as
-            # an explicit not-found; prose like "not found" on a 5xx must
-            # stay uncertain and fail closed after the bounded retries.
-            if status_code == 404 or (status_code is None and "404" in text):
+            # Only structured HTTP evidence can authorize a later resubmit.
+            if _exception_http_status(exc) == 404:
                 explicit_not_found += 1
             elif attempt == 2:
                 raise BrokerAuthorityError(
-                    f"order lookup remains uncertain: {exc}"
+                    f"order lookup remains uncertain: {sanitize_for_log(str(exc))}"
                 ) from exc
         if attempt < 2:
             import time
@@ -271,7 +268,7 @@ def _resubmit_recovered(
             raise
         except Exception as exc:
             raise BrokerAuthorityError(
-                f"recovery exposure cap evaluation failed: {exc}"
+                f"recovery exposure cap evaluation failed: {sanitize_for_log(str(exc))}"
             ) from exc
         if not cap_result.approved:
             self._store.transition_order(local["order_id"], "CANCELED")
@@ -319,35 +316,10 @@ def _resubmit_recovered(
             risk_reducing=risk_reducing,
         )
     except Exception as exc:
-        raise BrokerAuthorityError(f"recovery safety policy unavailable: {exc}") from exc
+        raise BrokerAuthorityError(f"recovery safety policy unavailable: {sanitize_for_log(str(exc))}") from exc
     if verdict is not None and not verdict.allowed:
         self._store.transition_order(local["order_id"], "CANCELED")
         return
-    # R05: recovery resubmits share the same final-POST boundary proof as
-    # initial submits — one helper, one semantics. Every potentially
-    # blocking broker GET (including the market-clock GET inside
-    # dispatch revalidation) runs BEFORE the stop/window and kill-switch
-    # final checks below, so control cannot revoke authority while a
-    # GET is in flight and still let the POST through (N03/N04). The row
-    # is still pre-transition and provably POST-free here, so CANCELED
-    # is the safe terminal state for gate failures.
-    if not risk_reducing:
-        blocked = self._validate_opening_dispatch(
-            intent_dict=payload,
-            symbol=local["symbol"],
-            spec={
-                "role": "open",
-                "side": side,
-                "notional": effective_notional,
-                "quantity": effective_quantity,
-            },
-            quote=quote,
-            snapshot=snapshot,
-            broker=broker,
-        )
-        if blocked:
-            self._store.transition_order(local["order_id"], "CANCELED")
-            raise BrokerAuthorityError(blocked)
     # R02 Layer 2 / N03: the submit-boundary authority check, run AFTER
     # every blocking GET and immediately before the PENDING/UNKNOWN ->
     # SUBMITTING transition. Refusal is NOT a rejection and NOT a CLEAN
@@ -387,6 +359,35 @@ def _resubmit_recovered(
         raise BrokerAuthorityError(
             f"recovery order has no valid size: {local['client_order_id']}"
         )
+    # Revalidate after durable SUBMITTING and request construction. The row
+    # is still provably POST-free, so failed final gates may cancel it safely.
+    # The helper includes a blocking clock GET; authority is checked again
+    # immediately afterward.
+    if not risk_reducing:
+        blocked = self._validate_opening_dispatch(
+            intent_dict=payload,
+            symbol=local["symbol"],
+            spec={
+                "role": "open",
+                "side": side,
+                "notional": effective_notional,
+                "quantity": effective_quantity,
+            },
+            quote=quote,
+            snapshot=snapshot,
+            broker=broker,
+        )
+        if blocked:
+            self._store.transition_order(local["order_id"], "CANCELED")
+            raise BrokerAuthorityError(blocked)
+    # Request construction and the durable transition can block. Re-check
+    # stop/kill authority after them and the last GET, at the actual POST.
+    authority_error = _submit_authority_error(
+        risk_reducing=risk_reducing, can_submit=can_submit
+    )
+    if authority_error:
+        self._store.transition_order(current["order_id"], "CANCELED")
+        raise BrokerAuthorityError(f"recovery resubmit blocked before POST: {authority_error}")
     # N15: count the mutation exactly once at the broker POST boundary.
     # Adopting an existing broker order (upstream) is never a mutation.
     if maintenance is not None:
@@ -412,7 +413,7 @@ def _resubmit_recovered(
         )
         raise BrokerAuthorityError(
             f"recovery submit {'rejected' if terminal else 'outcome is uncertain'}: "
-            f"{local['client_order_id']}: {exc}"
+            f"{local['client_order_id']}: {sanitize_for_log(str(exc))}"
         ) from exc
     self._adopt_recovery_order(current, response)
 
@@ -510,7 +511,7 @@ def _recover_locked(
         self._store.ensure_account_binding(snapshot.account_id)
     except Exception as exc:
         raise BrokerAuthorityError(
-            f"execution DB account binding check failed: {exc}"
+            f"execution DB account binding check failed: {sanitize_for_log(str(exc))}"
         ) from exc
     # Read-only adoption can explain an apparent position mismatch caused
     # by a fill outside the listing window. Prove those facts before the
@@ -652,7 +653,7 @@ def _recover_locked(
         except Exception as exc:
             raise BrokerAuthorityError(
                 f"broker snapshot refresh failed during recovery; "
-                f"stopping before further mutations: {exc}"
+                f"stopping before further mutations: {sanitize_for_log(str(exc))}"
             ) from exc
         # F04: once fresh broker facts are not CLEAN after a recovery
         # mutation, no further recovery mutation may run this round —
@@ -1025,7 +1026,7 @@ def _evaluate_opening_caps(
         except Exception as exc:
             raise BrokerAuthorityError(
                 f"cannot obtain a validated quote for outstanding-order "
-                f"symbol {required}: {exc}; refusing to add exposure"
+                f"symbol {required}: {sanitize_for_log(str(exc))}; refusing to add exposure"
             ) from exc
 
     cap_result = evaluate_opening_exposure(

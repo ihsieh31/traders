@@ -6,6 +6,8 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
@@ -114,18 +116,10 @@ def _cancel_protection_with_race_check(
     # (the caller's verified-exit check then refuses the close, fail
     # closed). This closes only the pre-check race window; a DELETE that
     # already entered the network cannot be recalled.
-    try:
-        from tradingagents.safety import get_safety_guard
-        _guard = get_safety_guard()
-    except Exception:
-        _guard = None
-    if (
-        _guard is not None
-        and getattr(_guard, "enabled", True)
-        and callable(getattr(_guard, "kill_switch_active", None))
-        and _guard.kill_switch_active() is True
-    ):
-        return fresh, 0
+    from .dispatch import _submit_authority_error
+    authority_error = _submit_authority_error(risk_reducing=True)
+    if authority_error:
+        raise BrokerAuthorityError(f"Protection cancellation blocked: {authority_error}")
     # An equity DAY market close submitted after hours queues for the next
     # session. Keep the existing stop live unless the broker proves this
     # session is open immediately before the protection DELETE.
@@ -136,13 +130,9 @@ def _cancel_protection_with_race_check(
         )
     # The clock GET above can block while the kill switch changes. Read it
     # again at the final boundary before removing a live protective order.
-    if (
-        _guard is not None
-        and getattr(_guard, "enabled", True)
-        and callable(getattr(_guard, "kill_switch_active", None))
-        and _guard.kill_switch_active() is True
-    ):
-        return fresh, 0
+    authority_error = _submit_authority_error(risk_reducing=True)
+    if authority_error:
+        raise BrokerAuthorityError(f"Protection cancellation blocked: {authority_error}")
     try:
         broker.cancel_order_by_id(order.broker_order_id)
     except Exception:
@@ -404,7 +394,7 @@ def _protection_coverage_gaps(self, snapshot: BrokerSnapshot, *, json) -> list[s
             if (parent := self._store.protective_parent(row["order_id"]))
         }
     except Exception as exc:
-        return [f"PROTECTION_GAP: durable protection ledger is unreadable: {exc}"]
+        return [f"PROTECTION_GAP: durable protection ledger is unreadable: {sanitize_for_log(str(exc))}"]
     gaps: list[str] = []
     for position in snapshot.positions:
         if abs(position.qty) <= 1e-9:
@@ -426,7 +416,7 @@ def _protection_coverage_gaps(self, snapshot: BrokerSnapshot, *, json) -> list[s
                 if protected:
                     required += abs(float(lot["qty"]))
         except Exception as exc:
-            gaps.append(f"PROTECTION_GAP: {symbol} protection intent is unreadable: {exc}")
+            gaps.append(f"PROTECTION_GAP: {symbol} protection intent is unreadable: {sanitize_for_log(str(exc))}")
             continue
         required = min(required, abs(position.qty))
         if required <= 1e-9:

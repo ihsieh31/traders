@@ -47,6 +47,9 @@ def lock_path(*, base_dir: Callable[[], Path]) -> Path:
 
 
 def run_dir(run_id: str, *, base_dir: Callable[[], Path]) -> Path:
+    if (not isinstance(run_id, str) or run_id in {"", ".", ".."}
+            or Path(run_id).name != run_id or "\\" in run_id or "\x00" in run_id):
+        raise ValueError("run_id must be a single path component")
     return base_dir() / "runs" / run_id
 
 
@@ -372,7 +375,9 @@ def new_round_journal(session_date: str, symbols: List[str], *, scheduled_at: st
 
 
 def save_round_journal(run_id: str, journal: Dict[str, Any], *, atomic_write_json: Callable[[Path, Any], None], round_path: Callable[[str, str], Path]) -> None:
-    atomic_write_json(round_path(run_id, journal["session_date"]), journal)
+    from tradingagents.redaction import sanitize_for_log
+
+    atomic_write_json(round_path(run_id, journal["session_date"]), sanitize_for_log(journal))
 
 
 def load_round_journal(run_id: str, session_date: str, *, read_json: Callable[[Path], Optional[Any]], round_path: Callable[[str, str], Path]) -> Optional[Dict[str, Any]]:

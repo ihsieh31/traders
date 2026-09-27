@@ -22,6 +22,8 @@ Scope and honesty boundaries:
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import json
 import time
 import urllib.error
@@ -188,7 +190,7 @@ class SecIrClient:
         except urllib.error.HTTPError as exc:
             raise SecIrError(f"HTTP {exc.code} fetching {url.split('?')[0]}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise SecIrError(f"fetch failed for {url.split('?')[0]}: {exc}") from exc
+            raise SecIrError(f"fetch failed for {url.split('?')[0]}: {sanitize_for_log(str(exc))}") from exc
         if len(data) > MAX_RESPONSE_BYTES:
             raise SecIrError(
                 f"response from {url.split('?')[0]} exceeds the "
@@ -218,7 +220,7 @@ class SecIrClient:
                 cache_path.write_text(json.dumps(mapping), encoding="utf-8")
             except (SecIrError, ValueError) as exc:
                 raise SecIrError(
-                    f"official SEC ticker mapping unavailable for {normalized}: {exc}"
+                    f"official SEC ticker mapping unavailable for {normalized}: {sanitize_for_log(str(exc))}"
                 ) from exc
         for entry in mapping.values():
             if str(entry.get("ticker", "")).upper() == normalized:

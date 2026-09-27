@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from tradingagents.run_logger import get_run_audit_logger
 
 
@@ -17,7 +19,7 @@ def capture_agent_prompt(
             metadata={"source": "core_prompt_capture"},
         )
     except Exception as exc:
-        print(f"[PROMPT_CAPTURE] Prompt audit skipped for {report_type}: {exc}")
+        print(f"[PROMPT_CAPTURE] Prompt audit skipped for {report_type}: {sanitize_for_log(str(exc))}")
 
 
 __all__ = ["capture_agent_prompt"]

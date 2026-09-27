@@ -1,5 +1,7 @@
 """Custom LangChain wrapper for OpenAI reasoning models using Responses API."""
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Dict, List, Optional
 from pydantic import ConfigDict
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -52,7 +54,7 @@ def _to_responses_function_tool(tool: Any, *, strict: Optional[bool] = None) -> 
             parameters = tool.model_json_schema()
         except Exception as exc:
             raise ToolBindingError(
-                f"cannot build a Responses function schema from {name}: {exc}"
+                f"cannot build a Responses function schema from {name}: {sanitize_for_log(str(exc))}"
             ) from exc
         description = (tool.__doc__ or "").strip()
         if not description:
@@ -93,7 +95,7 @@ def _to_responses_function_tool(tool: Any, *, strict: Optional[bool] = None) -> 
             parameters = args_schema.schema()
         except Exception as exc:
             raise ToolBindingError(
-                f"cannot build parameters for bound tool {tool_name}: {exc}"
+                f"cannot build parameters for bound tool {tool_name}: {sanitize_for_log(str(exc))}"
             ) from exc
     schema = {
         "type": "function",
@@ -625,7 +627,7 @@ class GPT5ChatModel(BaseChatModel):
             # Phase B: provider failures must propagate so the single retry
             # owner can classify them and the run stops instead of turning a
             # transport error into normal-looking message content.
-            error_message = f"Error calling GPT-5 API: {str(e)}"
+            error_message = f"Error calling GPT-5 API: {sanitize_for_log(str(e))}"
             print(f"[GPT5] {error_message}")
             latency_seconds = 0.0
             try:

@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import json
 import requests
 from bs4 import BeautifulSoup
@@ -87,7 +89,7 @@ def _getNewsDataRSS(query, start_date, end_date, max_results=20):
     try:
         feed = feedparser.parse(rss_url)
     except Exception as exc:
-        print(f"[GOOGLE-NEWS] RSS parse error: {exc}")
+        print(f"[GOOGLE-NEWS] RSS parse error: {sanitize_for_log(str(exc))}")
         return []
 
     news_results = []
@@ -202,7 +204,7 @@ def _getNewsDataScrape(query, start_date, end_date, max_pages=3):
                         }
                     )
                 except Exception as e:
-                    print(f"Error processing result: {e}")
+                    print(f"Error processing result: {sanitize_for_log(str(e))}")
                     continue
 
             next_link = soup.find("a", id="pnnext")
@@ -212,7 +214,7 @@ def _getNewsDataScrape(query, start_date, end_date, max_pages=3):
             page += 1
 
         except Exception as e:
-            print(f"Failed after multiple retries: {e}")
+            print(f"Failed after multiple retries: {sanitize_for_log(str(e))}")
             break
 
     return news_results

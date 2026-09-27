@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from typing import Any, Mapping
 
 from langchain_core.messages import AIMessage
 
-from tradingagents.experiments.evidence_snapshot import load_evidence_packet
+from tradingagents.experiments.evidence_snapshot import load_evidence_packet, validate_evidence_packet
 
 from .calculations import cross_validate, verify_market_cap, verify_valuation
 from .roles import ROLE_NAMES, run_role, team_lead_messages
@@ -77,8 +79,12 @@ def _calculations(evidence: Mapping[str, Any]) -> dict[str, Any]:
 
 def _packet_from_state(state: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     packet = state.get("analysis_evidence")
-    if isinstance(packet, Mapping) and packet.get("sha256"):
-        return dict(packet)
+    if packet is not None:
+        return validate_evidence_packet(
+            packet, symbol=str(state.get("company_of_interest", "")),
+            trade_date=str(state.get("trade_date", "")),
+            expected_sha256=config.get("evidence_packet_sha256"),
+        )
     path = config.get("evidence_packet_path")
     if not path:
         raise BerkshireAnalysisError("Berkshire backend requires a frozen evidence packet")
@@ -111,7 +117,7 @@ def _run_team(llm: Any, state: Mapping[str, Any], config: Mapping[str, Any]) -> 
                 role_reports[role] = future.result()
             except Exception as exc:
                 failure_exceptions.append(exc)
-                failures.append(f"{role}: {type(exc).__name__}: {exc}")
+                failures.append(f"{role}: {type(exc).__name__}: {sanitize_for_log(str(exc))}")
     if failures or set(role_reports) != set(ROLE_NAMES):
         from tradingagents.llm_clients.retry import ProviderFailure
         provider_failure = next((exc for exc in failure_exceptions if isinstance(exc, ProviderFailure)), None)
@@ -132,7 +138,7 @@ def _run_team(llm: Any, state: Mapping[str, Any], config: Mapping[str, Any]) -> 
         if isinstance(exc, ProviderFailure):
             raise
         raise BerkshireAnalysisError(
-            f"team_lead synthesis failed: {exc}",
+            f"team_lead synthesis failed: {sanitize_for_log(str(exc))}",
             retryable=_is_retryable_failure(exc),
         ) from exc
 

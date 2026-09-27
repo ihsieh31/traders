@@ -10,6 +10,8 @@ No facade/adapter/repository, scheduler, retry, or lease framework.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import json
 import os
 import re
@@ -261,7 +263,7 @@ class ExecutionService:
             gate = self.quarantine_gate()
         except Exception as exc:
             return {
-                "error": f"corporate-action quarantine state unavailable ({exc}); "
+                "error": f"corporate-action quarantine state unavailable ({sanitize_for_log(str(exc))}); "
                 "refusing to add exposure",
             }
         if gate is None:
@@ -619,9 +621,9 @@ class ExecutionService:
             return {"success": False, "paused": True, "fail_closed": True,
                     "deadline_exits": results,
                     "broker_calls": cancellation_calls + sum(r.get("broker_calls", 0) for r in results),
-                    "error": f"Deadline enforcement paused: {exc}",
+                    "error": f"Deadline enforcement paused: {sanitize_for_log(str(exc))}",
                     "deadline_maintenance": _deadline_maintenance(
-                        paused=True, error=f"Deadline enforcement paused: {exc}")}
+                        paused=True, error=f"Deadline enforcement paused: {sanitize_for_log(str(exc))}")}
 
     # -- main entry ------------------------------------------------------
 
@@ -931,7 +933,7 @@ class ExecutionService:
                     self._store.save_account_state(
                         account_id=snapshot.account_id,
                         state="PAUSED",
-                        reasons=(f"post-order reconciliation failed: {exc}",),
+                        reasons=(f"post-order reconciliation failed: {sanitize_for_log(str(exc))}",),
                         snapshot_version=snapshot.version,
                         baseline_positions={p.symbol: p.qty for p in snapshot.positions},
                     )
@@ -971,7 +973,7 @@ class ExecutionService:
                 "success": False, "paused": True, "fail_closed": True,
                 "broker_attempted": bool(getattr(exc, "broker_calls", 0)),
                 "broker_calls": getattr(exc, "broker_calls", 0),
-                "error": f"broker authority unavailable: {exc}",
+                "error": f"broker authority unavailable: {sanitize_for_log(str(exc))}",
             }
 
     def _execute_core(
@@ -1380,7 +1382,7 @@ class ExecutionService:
                         )
                     except Exception as exc:
                         return self._paused_result(
-                            snapshot, [f"liquidation safety policy unavailable: {exc}"]
+                            snapshot, [f"liquidation safety policy unavailable: {sanitize_for_log(str(exc))}"]
                         )
                     if verdict is not None and not verdict.allowed:
                         result = self._paused_result(
@@ -1499,7 +1501,7 @@ class ExecutionService:
                 "success": False, "paused": True, "fail_closed": True,
                 "broker_attempted": bool(getattr(exc, "broker_calls", 0)),
                 "broker_calls": getattr(exc, "broker_calls", 0),
-                "error": f"broker authority unavailable: {exc}",
+                "error": f"broker authority unavailable: {sanitize_for_log(str(exc))}",
             }
 
     def _prepare_liquidation_outbox(
@@ -1568,7 +1570,7 @@ class ExecutionService:
         try:
             broker = self._broker_factory()
         except Exception as exc:
-            return {"found": False, "error": f"broker unavailable: {exc}"}
+            return {"found": False, "error": f"broker unavailable: {sanitize_for_log(str(exc))}"}
         try:
             identity = capture_broker_snapshot(broker)
             with AccountExecutionLock(self.db_path, identity.account_id):
@@ -1584,7 +1586,7 @@ class ExecutionService:
                     self._store.ensure_account_binding(snapshot.account_id)
                 except Exception as exc:
                     raise BrokerAuthorityError(
-                        f"execution DB account binding check failed: {exc}"
+                        f"execution DB account binding check failed: {sanitize_for_log(str(exc))}"
                     ) from exc
                 broker_order = self._lookup_for_recovery(broker, client_order_id)
                 if broker_order is None:

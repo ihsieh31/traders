@@ -3,9 +3,7 @@
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.14.3
-    # via
-    #   kubernetes
-    #   langchain-community
+    # via kubernetes
 aiosignal==1.4.0
     # via aiohttp
 aiosqlite==0.22.1
@@ -25,6 +23,7 @@ anthropic==0.125.0
 anyio==4.15.1
     # via
     #   anthropic
+    #   google-genai
     #   httpx
     #   httpx2
     #   langsmith
@@ -56,6 +55,7 @@ certifi==2026.7.22
     #   httpcore
     #   httpx
     #   kubernetes
+    #   langchain-openai
     #   requests
 cffi==2.1.1
     # via
@@ -87,8 +87,6 @@ curl-cffi==0.16.3
     #   yfinance
 cycler==0.12.1
     # via matplotlib
-dataclasses-json==0.6.7
-    # via langchain-community
 decorator==5.3.1
     # via akshare
 defusedxml==0.7.1
@@ -96,6 +94,7 @@ defusedxml==0.7.1
 distro==1.9.0
     # via
     #   anthropic
+    #   google-genai
     #   langsmith
     #   openai
 docstring-parser==0.18.0
@@ -126,30 +125,16 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.7.0
     # via huggingface-hub
-google-ai-generativelanguage==0.12.0
-    # via langchain-google-genai
-google-api-core==2.36.0
-    # via google-ai-generativelanguage
 google-auth==2.57.1
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
+    # via google-genai
+google-genai==2.25.0
+    # via langchain-google-genai
 googleapis-common-protos==1.75.3
-    # via
-    #   google-api-core
-    #   grpcio-status
-    #   opentelemetry-exporter-otlp-proto-grpc
-greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
-    # via sqlalchemy
+    # via opentelemetry-exporter-otlp-proto-grpc
 grpcio==1.83.1
     # via
     #   chromadb
-    #   google-ai-generativelanguage
-    #   google-api-core
-    #   grpcio-status
     #   opentelemetry-exporter-otlp-proto-grpc
-grpcio-status==1.83.1
-    # via google-api-core
 h11==0.16.0
     # via
     #   httpcore
@@ -169,11 +154,11 @@ httpx==0.28.1
     # via
     #   anthropic
     #   chromadb
+    #   google-genai
     #   huggingface-hub
+    #   langchain-core
     #   langgraph-sdk
     #   openai
-httpx-sse==0.4.3
-    # via langchain-community
 httpx2==2.12.0
     # via langsmith
 httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscripten'
@@ -211,53 +196,42 @@ kiwisolver==1.5.1
     # via matplotlib
 kubernetes==36.0.3
     # via chromadb
-langchain==0.3.30
-    # via
-    #   -r requirements.txt
-    #   langchain-community
-langchain-anthropic==0.3.22
+langchain-anthropic==1.7.4
     # via -r requirements.txt
-langchain-community==0.3.31
-    # via langchain-experimental
-langchain-core==0.3.86
+langchain-core==1.6.5
     # via
     #   -r requirements.txt
-    #   langchain
     #   langchain-anthropic
-    #   langchain-community
-    #   langchain-experimental
     #   langchain-google-genai
     #   langchain-openai
-    #   langchain-text-splitters
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
-langchain-experimental==0.3.4
+    #   langgraph-sdk
+langchain-google-genai==4.4.0
     # via -r requirements.txt
-langchain-google-genai==2.1.12
+langchain-openai==1.6.6
     # via -r requirements.txt
-langchain-openai==0.3.35
-    # via -r requirements.txt
-langchain-text-splitters==0.3.11
-    # via langchain
-langgraph==0.6.11
-    # via -r requirements.txt
-langgraph-checkpoint==2.1.2
+langchain-protocol==0.0.19
     # via
+    #   langchain-core
+    #   langgraph-sdk
+langgraph==1.2.12
+    # via -r requirements.txt
+langgraph-checkpoint==4.2.0
+    # via
+    #   -r requirements.txt
     #   langgraph
     #   langgraph-checkpoint-sqlite
     #   langgraph-prebuilt
-langgraph-checkpoint-sqlite==2.0.11
+langgraph-checkpoint-sqlite==3.1.1
     # via -r requirements.txt
-langgraph-prebuilt==0.6.5
+langgraph-prebuilt==1.1.0
     # via langgraph
-langgraph-sdk==0.2.15
+langgraph-sdk==0.4.5
     # via langgraph
 langsmith==0.12.2
-    # via
-    #   langchain
-    #   langchain-community
-    #   langchain-core
+    # via langchain-core
 lxml==6.1.3
     # via
     #   akshare
@@ -266,8 +240,6 @@ lxml==6.1.3
     #   yfinance
 markdown-it-py==4.2.0
     # via rich
-marshmallow==3.26.2
-    # via dataclasses-json
 matplotlib==3.11.1
     # via eodhd
 mdurl==0.1.2
@@ -284,15 +256,12 @@ multidict==6.7.1
     #   yarl
 multitasking==0.0.13
     # via yfinance
-mypy-extensions==1.1.0
-    # via typing-inspect
 numpy==2.4.6 ; python_full_version < '3.12'
     # via
     #   -r requirements.txt
     #   chromadb
     #   contourpy
     #   eodhd
-    #   langchain-community
     #   matplotlib
     #   onnxruntime
     #   pandas
@@ -304,7 +273,6 @@ numpy==2.5.3 ; python_full_version >= '3.12'
     #   chromadb
     #   contourpy
     #   eodhd
-    #   langchain-community
     #   matplotlib
     #   onnxruntime
     #   pandas
@@ -323,7 +291,6 @@ openpyxl==3.1.5
 opentelemetry-api==1.44.0
     # via
     #   chromadb
-    #   google-api-core
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
@@ -356,7 +323,6 @@ packaging==25.0
     #   huggingface-hub
     #   langchain-core
     #   langsmith
-    #   marshmallow
     #   matplotlib
     #   onnxruntime
     #   parsel
@@ -390,19 +356,11 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
-proto-plus==1.28.4
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
 protobuf==7.36.1
     # via
-    #   google-ai-generativelanguage
-    #   google-api-core
     #   googleapis-common-protos
-    #   grpcio-status
     #   onnxruntime
     #   opentelemetry-proto
-    #   proto-plus
     #   yfinance
 py-mini-racer==0.6.0 ; sys_platform == 'linux'
     # via akshare
@@ -419,7 +377,7 @@ pydantic==2.13.5
     #   alpaca-py
     #   anthropic
     #   chromadb
-    #   langchain
+    #   google-genai
     #   langchain-anthropic
     #   langchain-core
     #   langchain-google-genai
@@ -430,9 +388,7 @@ pydantic==2.13.5
 pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.15.0
-    # via
-    #   chromadb
-    #   langchain-community
+    # via chromadb
 pygments==2.21.0
     # via
     #   pytest
@@ -465,8 +421,6 @@ pyyaml==6.0.3
     #   chromadb
     #   huggingface-hub
     #   kubernetes
-    #   langchain
-    #   langchain-community
     #   langchain-core
     #   uvicorn
 questionary==2.1.1
@@ -486,10 +440,9 @@ requests==2.34.2
     #   alpaca-py
     #   eodhd
     #   finnhub-python
-    #   google-api-core
+    #   google-auth
+    #   google-genai
     #   kubernetes
-    #   langchain
-    #   langchain-community
     #   langsmith
     #   prawcore
     #   requests-oauthlib
@@ -525,14 +478,11 @@ six==1.17.0
 sniffio==1.3.1
     # via
     #   anthropic
+    #   google-genai
     #   langsmith
     #   openai
 soupsieve==2.9.2
     # via beautifulsoup4
-sqlalchemy==2.0.52
-    # via
-    #   langchain
-    #   langchain-community
 sqlite-vec==0.1.9
     # via langgraph-checkpoint-sqlite
 sseclient-py==1.9.0
@@ -544,7 +494,7 @@ tabulate==0.10.0
 tenacity==9.1.4
     # via
     #   chromadb
-    #   langchain-community
+    #   google-genai
     #   langchain-core
 tiktoken==0.14.0
     # via langchain-openai
@@ -577,10 +527,12 @@ typing-extensions==4.16.0
     #   anyio
     #   beautifulsoup4
     #   chromadb
+    #   google-genai
     #   grpcio
     #   httpx2
     #   huggingface-hub
     #   langchain-core
+    #   langchain-protocol
     #   langsmith
     #   openai
     #   opentelemetry-api
@@ -590,11 +542,7 @@ typing-extensions==4.16.0
     #   pydantic
     #   pydantic-core
     #   referencing
-    #   sqlalchemy
-    #   typing-inspect
     #   typing-inspection
-typing-inspect==0.9.0
-    # via dataclasses-json
 typing-inspection==0.4.4
     # via
     #   pydantic
@@ -630,10 +578,12 @@ websocket-client==1.9.2
     #   kubernetes
     #   praw
     #   tushare
-websockets==17.1
+websockets==16.1.1
     # via
     #   alpaca-py
     #   eodhd
+    #   google-genai
+    #   langgraph-sdk
     #   langsmith
     #   uvicorn
     #   yfinance

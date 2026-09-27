@@ -1,7 +1,7 @@
 # Traders
 
 [![CI](https://github.com/ihsieh31/traders/actions/workflows/tests.yml/badge.svg)](https://github.com/ihsieh31/traders/actions/workflows/tests.yml)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 > **Paper-only 的多代理交易研究、風險控制與執行韌性框架。**
@@ -9,6 +9,8 @@
 > Traders 將市場資料、研究分析師、辯論流程、結構化交易意圖、風險/安全規則、持久化執行、券商對帳與稽核記錄串成可恢復、可重播的 Python 系統。
 >
 > 本專案**不是投資建議、不支援實盤交易、不保證盈利，也不宣稱已證明具有持續 alpha**。所有券商寫入都必須通過 Paper-only hard lock 與 `ExecutionService` 的安全邊界。
+
+2026-09-27 深度審查：修復 19 類問題，新增 107 項反例／回歸案例；乾淨 Python 3.11／3.12 環境各通過 1,919 項測試與 335 個子測試。依賴已升級並重新鎖定；Chroma 尚無修補版的公告與 Docker 建置的網路限制，詳見[完整審查與修復報告](docs/DEEP_AUDIT_20260926.md)。
 
 ---
 
@@ -61,7 +63,7 @@ Traders 的用途是**研究、驗證與記錄一套交易決策流程**，而�
 
 | 項目 | 狀態 | 說明 |
 | --- | --- | --- |
-| Python 執行環境 | ✅ | Python 3.10+；CI 驗證 Python 3.11 與 3.12 |
+| Python 執行環境 | ✅ | Python 3.11+；CI 驗證 Python 3.11 與 3.12 |
 | Paper-only 安全邊界 | ✅ | 不接受 live endpoint 或無法證明為 Paper 的設定 |
 | 多代理研究與辯論 | ✅ | 角色化 LLM、typed intent、prompt/audit 記錄 |
 | 全市場 screening | ✅ | 61-session 資料完整性、Top40/Top20、cache seal、entry gate |
@@ -193,7 +195,8 @@ flowchart TD
 
 ### 系統需求
 
-- Python 3.10 或以上；建議使用 Python 3.11/3.12。
+- Python 3.11 或以上；建議使用 Python 3.11/3.12。鎖定依賴中的 pandas 等套件不再支援 3.10。
+- macOS 或 Linux；長跑、執行與安全帳本使用 POSIX `fcntl` 檔案鎖，Windows 請使用 WSL2 或 Linux 容器。
 - `git`。
 - 若要進行 Paper 或 A/B 執行，需要可用的 Alpaca Paper 帳戶。
 - 若要使用雲端 LLM 或外部資料，需要相應 API key；也可用 OpenAI-compatible local endpoint。
@@ -211,12 +214,6 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install --no-deps -r requirements.lock
 pip check
-```
-
-Windows PowerShell 啟用虛擬環境：
-
-```powershell
-.venv\Scripts\Activate.ps1
 ```
 
 `requirements.lock` 是 CI 與 Docker 使用的完整 pinned closure，**不應手動修改**。需要更新依賴時，應先修改 `requirements.txt` 或 `requirements-dev.txt`，再重新產生 lock。

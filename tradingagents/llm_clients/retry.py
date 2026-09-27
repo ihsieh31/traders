@@ -32,6 +32,8 @@ changing the bounded total request count. They are additive:
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import math
 import os
 import time
@@ -177,7 +179,7 @@ def classify_provider_error(exc: BaseException) -> str:
     An explicit permanent match wins over a transient match; unknown shapes
     are treated as permanent (fail fast, fail closed) rather than retried.
     """
-    text = f"{type(exc).__name__} {exc}".lower()
+    text = f"{type(exc).__name__} {sanitize_for_log(str(exc))}".lower()
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     if isinstance(status, int) and not isinstance(status, bool):
         if status in _RETRYABLE_STATUS_CODES:
@@ -245,7 +247,7 @@ class _RetryController:
                         model=self.model,
                         attempts=attempt,
                         category=category,
-                        detail=f"{type(exc).__name__}: {exc}",
+                        detail=f"{type(exc).__name__}: {sanitize_for_log(str(exc))}",
                     ) from exc
                 backoff = min(self.backoff_cap, 0.5 * (2 ** (attempt - 1)))
                 if not math.isnan(backoff) and backoff > 0:
@@ -449,7 +451,7 @@ class _FailoverRetryController:
                         model=model,
                         attempts=attempt,
                         category=category,
-                        detail=f"{type(exc).__name__}: {exc}",
+                        detail=f"{type(exc).__name__}: {sanitize_for_log(str(exc))}",
                     ) from exc
                 next_use_fallback = not use_fallback
                 self._emit_switch(

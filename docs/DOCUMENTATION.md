@@ -1,10 +1,12 @@
 # Traders 專案文件總覽
 
-> 這是本專案 `docs/` 的唯一人工可讀文件。它整合原始審查、驗收、投資方法評估、A/B 設計、Paper recovery 驗收程序與 execution/long-run 重構記錄。
+> 本文件整合原始審查、驗收、投資方法評估、A/B 設計、Paper recovery 驗收程序與 execution/long-run 重構記錄。
 >
 > **文件基準**：2026-09-25 前的文件整理基準；程式目前以 Git `main` 的實作為準。
 > **狀態聲明**：本專案是 Paper-only 的交易研究與工程驗證系統，不是投資建議，也不宣稱策略已證明具有持續超額報酬。
 > **原始證據**：已刪除的原始 Markdown、JSON、Python 腳本、日誌、回傳碼與快取的 SHA-256 索引見本文末尾；完整原始內容不再作為現行操作指令。
+>
+> **2026-09-27 更新**：[最新深度審查](DEEP_AUDIT_20260926.md)記錄本次 19 類修復、新增 107 項案例、Python 3.11／3.12 各 1919 passed／335 subtests，以及 Chroma 公告與 Docker 建置限制。下列較早日期的測試數字屬歷史基準。
 
 ## 1. 當前狀態
 
@@ -134,7 +136,7 @@ A/B 的控制變數是 `analysis_backend`：Traders 使用原生五 analyst；Be
 | Paper account | 券商 API、Paper 時鐘、訂單與 reconciliation | 真實資金、完整市場衝擊與所有 provider 路徑 |
 | 30 日 observation | 有限前瞻流程覆蓋與 journal/recovery | 長期 alpha、統計顯著性、所有市場狀態 |
 
-目前沒有聲稱 Python 3.11、長時間真實 provider、完整市場滑點、真實資金或所有可能輸入都已驗證。依賴警告（websockets legacy、LangGraph `allowed_objects`）是既有警告，不應被當成測試失敗或隱藏。
+Python 3.11.15／3.12.13 已於 2026-09-27 完成乾淨安裝與完整本地回歸；長時間真實 provider、完整市場滑點、真實資金或所有可能輸入仍未獲驗證。最終仍有 websockets legacy 棄用警告；原 LangGraph `allowed_objects` 警告已隨依賴升級消失。
 
 ## 8. 歷史時間線
 

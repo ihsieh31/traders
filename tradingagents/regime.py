@@ -26,6 +26,8 @@ Two integration points, both failure-isolated and config-gated:
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import math
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
@@ -316,7 +318,7 @@ def regime_report_block(
             return ""
         return assessment.to_markdown()
     except Exception as exc:
-        print(f"[REGIME] Report block skipped for {symbol}: {exc}")
+        print(f"[REGIME] Report block skipped for {symbol}: {sanitize_for_log(str(exc))}")
         return ""
 
 
@@ -339,5 +341,5 @@ def regime_risk_multiplier(
             )
         return assessment.risk_multiplier
     except Exception as exc:
-        print(f"[REGIME] Sizing skipped for {symbol}: {exc}")
+        print(f"[REGIME] Sizing skipped for {symbol}: {sanitize_for_log(str(exc))}")
         return 1.0

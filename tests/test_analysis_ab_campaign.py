@@ -417,7 +417,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
                        side_effect=RuntimeError("Alpaca Paper market is closed")):
                 result = self._run(
                     Path(tmp) / "campaign", execute_paper=True, paper_notional_usd=500.0,
-                    pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(**kwargs),
+                    pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(**_kwargs),
                 )
             self.assertEqual(result["outcome"], "market_closed")
             self.assertIsNone(result["state"]["starting_equity"])
@@ -432,7 +432,7 @@ class AnalysisABCampaignTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "must start flat"):
                     self._run(
                         root, execute_paper=True, paper_notional_usd=500.0,
-                        pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(**kwargs),
+                        pair_runner=lambda **_kwargs: calls.append("pair") or _completed_pair(**_kwargs),
                     )
             state = json.loads((root / "campaign_state.json").read_text())
             self.assertIsNone(state["starting_equity"])

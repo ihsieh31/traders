@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 from tradingagents.agents.utils.tool_call_messages import (
     result_tool_calls as _result_tool_calls, assistant_tool_message,
 )
@@ -124,7 +126,7 @@ def create_macro_analyst(llm, toolkit):
                 
                 capture_agent_prompt("macro_report", complete_prompt, ticker)
             except Exception as e:
-                print(f"[MACRO] Warning: Could not capture complete prompt: {e}")
+                print(f"[MACRO] Warning: Could not capture complete prompt: {sanitize_for_log(str(e))}")
                 # Fallback to system message only
                 capture_agent_prompt("macro_report", system_message, ticker)
 
@@ -217,7 +219,7 @@ def create_macro_analyst(llm, toolkit):
                                     print(f"[MACRO] ✅ Tool '{tool_name}' completed successfully")
 
                             except Exception as tool_err:
-                                tool_result = f"Error running tool '{tool_name}': {str(tool_err)}"
+                                tool_result = f"Error running tool '{tool_name}': {sanitize_for_log(str(tool_err))}"
                                 tool_failures.append(tool_name)
 
                     tool_call_id = tool_call.get("id") or tool_call.get("tool_call_id")
@@ -232,7 +234,7 @@ def create_macro_analyst(llm, toolkit):
                     # eaten as a generic iteration error.
                     raise
                 except Exception as e:
-                    print(f"[MACRO] ❌ Error in LLM chain iteration {iteration_count}: {e}")
+                    print(f"[MACRO] ❌ Error in LLM chain iteration {iteration_count}: {sanitize_for_log(str(e))}")
                     break
 
             tool_loop_exhausted = bool(
@@ -268,7 +270,7 @@ def create_macro_analyst(llm, toolkit):
                     # A fabricated filler report must never masquerade as a
                     # completed analysis: an empty report keeps the analyst
                     # "failed" for the coverage gate, same as everywhere else.
-                    print(f"[MACRO] ❌ Error in fallback analysis: {e}")
+                    print(f"[MACRO] ❌ Error in fallback analysis: {sanitize_for_log(str(e))}")
                     result = AIMessage(content="")
 
             # The analyst report is exactly what the tool loop produced. No
@@ -314,7 +316,7 @@ def create_macro_analyst(llm, toolkit):
 
         except Exception as e:
             elapsed_time = time.time() - start_time
-            error_msg = f"Error in macro analysis for {current_date}: {str(e)}"
+            error_msg = f"Error in macro analysis for {current_date}: {sanitize_for_log(str(e))}"
             print(f"[MACRO] ❌ {error_msg}")
             print(f"[MACRO] ❌ Failed after {elapsed_time:.2f} seconds")
             # Sanitized error record, then re-raise: a broad exception must

@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -319,6 +320,7 @@ class F10FillEconomicsTests(unittest.TestCase):
         order = _order("AAPL", "buy", qty=cum_qty, status="filled",
                        client_id=coid, filled_qty=cum_qty,
                        filled_avg_price=cum_avg)
+        order = replace(order, broker_order_id=broker_id)
         fills = ()
         if cum_qty > 0:
             fills = (

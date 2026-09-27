@@ -41,11 +41,8 @@ class GoogleClient(BaseLLMClient):
         for key in ("timeout", "callbacks", "http_client", "http_async_client"):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
-        # Phase B: langchain-google-genai's max_retries means *total
-        # attempts* (tenacity stop_after_attempt) and also retries permanent
-        # GoogleAPIError subclasses, so it cannot own our policy. Pin it to
-        # 0 (verified: exactly one attempt) and let the single owner
-        # tradingagents.llm_clients.retry.RetryingLLM bound everything.
+        # google-genai maps attempts=0 to one HTTP attempt. The surrounding
+        # RetryingLLM owns the complete retry budget (verified at transport).
         llm_kwargs["max_retries"] = 0
         return NormalizedChatGoogleGenerativeAI(**llm_kwargs)
 

@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 # TradingAgents/graph/setup.py
 
 import concurrent.futures
@@ -289,7 +291,7 @@ class GraphSetup:
                     # round. Re-raise so the coordinator aborts remaining
                     # analysts and no downstream node is dispatched; the
                     # legacy empty-report fallback must not swallow it.
-                    print(f"[PARALLEL] {analyst_type} analyst provider failure: {e}")
+                    print(f"[PARALLEL] {analyst_type} analyst provider failure: {sanitize_for_log(str(e))}")
                     self._publish_ui_update(
                         state, f"{analyst_type.capitalize()} Analyst", "pending"
                     )
@@ -300,7 +302,7 @@ class GraphSetup:
                     # Analysts node: no partial reports may be merged and no
                     # downstream decision node may run. Mark the analyst as
                     # not-completed in the UI and re-raise.
-                    print(f"[PARALLEL] Error in {analyst_type} analyst: {e}")
+                    print(f"[PARALLEL] Error in {analyst_type} analyst: {sanitize_for_log(str(e))}")
                     self._publish_ui_update(
                         state, f"{analyst_type.capitalize()} Analyst", "pending"
                     )
@@ -338,7 +340,7 @@ class GraphSetup:
                         raise
                     except Exception as e:
                         # Any selected-analyst exception fails the whole node.
-                        print(f"[PARALLEL] {analyst_type} analyst failed: {e}")
+                        print(f"[PARALLEL] {analyst_type} analyst failed: {sanitize_for_log(str(e))}")
                         for pending in future_to_analyst:
                             pending.cancel()
                         raise
@@ -428,14 +430,14 @@ class GraphSetup:
                     self._publish_ui_update(state, analyst_name, "completed")
                     return analyst_name, result_state
                 except ProviderFailure as e:
-                    print(f"[RISK_PARALLEL] {analyst_name} provider failure: {e}")
+                    print(f"[RISK_PARALLEL] {analyst_name} provider failure: {sanitize_for_log(str(e))}")
                     raise
                 except Exception as e:
                     # Same policy as the parallel analysts coordinator: a
                     # failed risk analyst must never be merged back as
                     # "completed" work. The UI vocabulary has no distinct
                     # failed value, so reset to pending and re-raise.
-                    print(f"[RISK_PARALLEL] Error in {analyst_name}: {e}")
+                    print(f"[RISK_PARALLEL] Error in {analyst_name}: {sanitize_for_log(str(e))}")
                     self._publish_ui_update(state, analyst_name, "pending")
                     raise
 
@@ -475,7 +477,7 @@ class GraphSetup:
                         # stops futures that have not started; statements from
                         # already-started siblings may still finish, but they
                         # are discarded below because the exception propagates.
-                        print(f"[RISK_PARALLEL] {analyst_name} failed: {e}")
+                        print(f"[RISK_PARALLEL] {analyst_name} failed: {sanitize_for_log(str(e))}")
                         for pending in futures:
                             pending.cancel()
                         raise

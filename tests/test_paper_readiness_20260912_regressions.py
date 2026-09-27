@@ -206,7 +206,11 @@ def test_N03_stop_or_window_during_final_get_blocks_the_post(isolated, monkeypat
     from tradingagents.screening.selection_store import SelectionStore
 
     e = isolated
-    stamp = now()
+    # Pin the injected scheduler clock inside the submission window. Using
+    # wall time can stop recovery at the session gate before final_clock runs.
+    hour, minute = map(int, lr.DEFAULT_RUN_TIME_ET.split(":"))
+    stamp = now().astimezone(ZoneInfo("America/New_York")).replace(
+        hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)
     clock_time = [stamp]
     day = stamp.astimezone(ZoneInfo("America/New_York")).date().isoformat()
     runtime = {**e.config, "auto_screening_enabled": True,

@@ -47,7 +47,7 @@ def test_L02_actual_market_loop_preserves_native_tool_history(monkeypatch):
     node({'messages': [], 'company_of_interest':'AAPL', 'trade_date':'2026-09-17'})
     ai = next(m for m in histories[-1] if isinstance(m, AIMessage))
     tool = next(m for m in histories[-1] if isinstance(m, ToolMessage))
-    _, wire = _format_messages([ai, tool])
+    _, wire = _format_messages([ai, tool], model="claude-sonnet-4-6")
     blocks = [b for m in wire for b in m['content'] if isinstance(b, dict)]
     assert any(b.get('type') == 'tool_use' and b.get('id') == 'call-native' for b in blocks), f'Native request lacks tool_use: {wire}; AI.tool_calls={ai.tool_calls}; invalid={ai.invalid_tool_calls}'
 
@@ -128,12 +128,13 @@ def test_all_analysts_preserve_one_assistant_turn_with_multiple_calls(monkeypatc
     assert [type(m) for m in history] == [AIMessage, ToolMessage, ToolMessage]
     assert [c['id'] for c in history[0].tool_calls] == ['call-a','call-b']
     assert history[0].additional_kwargs['provider_marker'] == 'preserve-me'
-    _, wire = _format_messages(history)
+    _, wire = _format_messages(history, model="claude-sonnet-4-6")
     uses = [b['id'] for m in wire for b in m['content'] if isinstance(b,dict) and b.get('type')=='tool_use']
     assert uses == ['call-a','call-b']
     _, google = _parse_chat_history(history)
-    assert len(google[0].parts) == 2
-    assert all(part.function_call.name == tool_name for part in google[0].parts)
+    assert len([part for part in google[0].parts if part.function_call]) == 2
+    assert any(part.text == 'Using two evidence sources' for part in google[0].parts)
+    assert all(part.function_call.name == tool_name for part in google[0].parts if part.function_call)
 
 
 @pytest.mark.parametrize('analyst,tool_name,report_key', [

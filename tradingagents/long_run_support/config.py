@@ -6,6 +6,8 @@ paths are not cached, and optional runtime dependencies remain lazy imports.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import json
 import math
 import subprocess
@@ -259,7 +261,7 @@ def validate_long_run_config(
 
             validate_llm_max_retries(runtime.get("llm_max_retries", 3))
         except Exception as exc:
-            errors.append(f"llm_max_retries invalid: {exc}")
+            errors.append(f"llm_max_retries invalid: {sanitize_for_log(str(exc))}")
         try:
             from tradingagents.llm_clients.roles import resolve_role_config
 
@@ -267,7 +269,7 @@ def validate_long_run_config(
             if resolved.get("mode") != "roles":
                 errors.append("role resolution did not enter roles mode")
         except Exception as exc:
-            errors.append(f"role config invalid: {exc}")
+            errors.append(f"role config invalid: {sanitize_for_log(str(exc))}")
         try:
             from tradingagents.screening.llm import resolve_screening_config
 
@@ -275,7 +277,7 @@ def validate_long_run_config(
             if not resolved.get("enabled"):
                 errors.append("screening role did not resolve to enabled")
         except Exception as exc:
-            errors.append(f"screening config invalid: {exc}")
+            errors.append(f"screening config invalid: {sanitize_for_log(str(exc))}")
         try:
             from tradingagents.dataflows.config import get_alpaca_use_paper
             from tradingagents.dataflows.alpaca_utils import alpaca_read_only_enabled
@@ -289,7 +291,7 @@ def validate_long_run_config(
                     "ALPACA_READ_ONLY must be False for an authorized trading observation"
                 )
         except Exception as exc:
-            errors.append(f"paper flag unreadable: {exc}")
+            errors.append(f"paper flag unreadable: {sanitize_for_log(str(exc))}")
     return errors
 
 
@@ -513,7 +515,7 @@ def _apply_runtime_config(
     except Exception as exc:
         raise LongRunStop(
             "CONFIG_APPLY_FAILED",
-            f"could not apply runtime config before recovery: {exc}",
+            f"could not apply runtime config before recovery: {sanitize_for_log(str(exc))}",
         )
 
 
@@ -537,7 +539,7 @@ def _validate_long_run_execution_config(
         from tradingagents.dataflows.config import get_config
     except Exception as exc:
         raise LongRunStop(
-            "CONFIG_APPLY_FAILED", f"global execution config unreadable: {exc}"
+            "CONFIG_APPLY_FAILED", f"global execution config unreadable: {sanitize_for_log(str(exc))}"
         )
     effective = get_config() or {}
     _validate_unattended_limits(effective, LongRunStop=LongRunStop)
@@ -589,7 +591,7 @@ def _validate_long_run_execution_config(
         except Exception as exc:
             raise LongRunStop(
                 "CONFIG_APPLY_FAILED",
-                f"could not persist normalized LLM token budget: {exc}",
+                f"could not persist normalized LLM token budget: {sanitize_for_log(str(exc))}",
             )
     if not effective.get("auto_screening_enabled"):
         raise LongRunStop(
@@ -622,5 +624,5 @@ def _validate_long_run_execution_config(
         raise
     except Exception as exc:
         raise LongRunStop(
-            "CONFIG_APPLY_FAILED", f"paper flag unreadable after apply: {exc}"
+            "CONFIG_APPLY_FAILED", f"paper flag unreadable after apply: {sanitize_for_log(str(exc))}"
         )

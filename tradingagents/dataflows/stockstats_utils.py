@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import pandas as pd
 from stockstats import wrap
 from typing import Annotated
@@ -73,7 +75,7 @@ class StockstatsUtils:
                     try:
                         data = pd.read_csv(data_file, encoding="utf-8")
                     except Exception as csv_error:
-                        return f"N/A: Malformed cached indicator data for {symbol}: {csv_error}"
+                        return f"N/A: Malformed cached indicator data for {symbol}: {sanitize_for_log(str(csv_error))}"
                     required_raw_cols = {"Date", "Open", "High", "Low", "Close", "Volume"}
                     if not required_raw_cols.intersection(data.columns):
                         return f"N/A: Malformed cached indicator data for {symbol}: missing OHLCV columns"
@@ -152,7 +154,7 @@ class StockstatsUtils:
 
 
             except Exception as e:
-                return f"N/A: Error processing data for {symbol}: {str(e)}"
+                return f"N/A: Error processing data for {symbol}: {sanitize_for_log(str(e))}"
 
         try:
             data = data.rename(columns={"timestamp": "Date", "date": "Date"})
@@ -194,7 +196,7 @@ class StockstatsUtils:
                     df['obv'] = obv_values
                     indicator_series = df['obv']
                 except Exception as manual_error:
-                    return f"N/A: Error calculating OBV manually: {str(manual_error)}"
+                    return f"N/A: Error calculating OBV manually: {sanitize_for_log(str(manual_error))}"
             elif indicator == 'atr_14':
                 try:
                     # Calculate ATR manually
@@ -224,7 +226,7 @@ class StockstatsUtils:
                     df['atr_14'] = atr_values
                     indicator_series = df['atr_14']
                 except Exception as manual_error:
-                    return f"N/A: Error calculating ATR manually: {str(manual_error)}"
+                    return f"N/A: Error calculating ATR manually: {sanitize_for_log(str(manual_error))}"
             elif indicator.endswith('_ema'):
                 try:
                     # Parse EMA indicator (e.g., 'close_8_ema')
@@ -248,7 +250,7 @@ class StockstatsUtils:
                     df[indicator] = ema_values
                     indicator_series = df[indicator]
                 except Exception as manual_error:
-                    return f"N/A: Error calculating EMA manually: {str(manual_error)}"
+                    return f"N/A: Error calculating EMA manually: {sanitize_for_log(str(manual_error))}"
             elif indicator.endswith('_sma'):
                 try:
                     # Parse SMA indicator (e.g., 'close_50_sma')
@@ -271,7 +273,7 @@ class StockstatsUtils:
                     df[indicator] = sma_values
                     indicator_series = df[indicator]
                 except Exception as manual_error:
-                    return f"N/A: Error calculating SMA manually: {str(manual_error)}"
+                    return f"N/A: Error calculating SMA manually: {sanitize_for_log(str(manual_error))}"
             else:
                 # Try stockstats for other indicators
                 try:
@@ -279,7 +281,7 @@ class StockstatsUtils:
                 except KeyError:
                     return f"N/A: Invalid indicator '{indicator}'"
                 except Exception as e:
-                    return f"N/A: Error calculating {indicator}: {str(e)}"
+                    return f"N/A: Error calculating {indicator}: {sanitize_for_log(str(e))}"
 
             # Convert date column to string for matching
             df["date_str"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
@@ -309,4 +311,4 @@ class StockstatsUtils:
                     return f"N/A: No trading data available on or before {curr_date_str}"
 
         except Exception as e:
-            return f"N/A: Error processing data for {symbol}: {e}"
+            return f"N/A: Error processing data for {symbol}: {sanitize_for_log(str(e))}"

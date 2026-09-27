@@ -9,6 +9,8 @@ Paper campaign.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import argparse
 from contextlib import contextmanager
 from copy import deepcopy
@@ -449,7 +451,7 @@ def _completed_pair_checkpoint(
         )
         validate_evidence_completeness(evidence)
     except EvidenceIntegrityError as exc:
-        raise RuntimeError(f"frozen evidence does not verify for {trade_date}: {exc}") from exc
+        raise RuntimeError(f"frozen evidence does not verify for {trade_date}: {sanitize_for_log(str(exc))}") from exc
 
     try:
         _validate_pair_state(
@@ -459,7 +461,7 @@ def _completed_pair_checkpoint(
             evidence_sha256=evidence["sha256"],
         )
     except RuntimeError as exc:
-        raise RuntimeError(f"pair state does not verify for {trade_date}: {exc}") from exc
+        raise RuntimeError(f"pair state does not verify for {trade_date}: {sanitize_for_log(str(exc))}") from exc
     if pair_state.get("symbol") != symbol or pair_state.get("trade_date") != trade_date:
         raise RuntimeError(f"pair state identity does not match {symbol} on {trade_date}")
     if pair_state.get("paper_notional_usd") != state.get("paper_notional_usd"):
@@ -835,7 +837,7 @@ def _complete_campaign(
         try:
             recovery = refresh(root, state)
         except Exception as exc:
-            recovery = {"error": f"{type(exc).__name__}: {exc}"}
+            recovery = {"error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"}
         clean = isinstance(recovery, Mapping) and all(
             isinstance(recovery.get(backend), Mapping)
             and recovery[backend].get("success") is True
@@ -1250,13 +1252,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
     except GlobalRunnerLockBusy as exc:
-        print(f"[AB campaign] ERROR: {exc}", file=sys.stderr)
+        print(f"[AB campaign] ERROR: {sanitize_for_log(str(exc))}", file=sys.stderr)
         return 2
     except (RuntimeError, ValueError) as exc:
-        print(f"[AB campaign] ERROR: {exc}", file=sys.stderr)
+        print(f"[AB campaign] ERROR: {sanitize_for_log(str(exc))}", file=sys.stderr)
         return 2
-    print(f"[AB campaign] {result['outcome']}")
-    return 0 if result.get("outcome") == "completed" else 1
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
@@ -167,7 +169,7 @@ def _execute_core(
                 "fail_closed": True,
                 "broker_attempted": False,
                 "broker_calls": 0,
-                "error": f"durable commit failed: {exc}",
+                "error": f"durable commit failed: {sanitize_for_log(str(exc))}",
                 "trade_intent": intent_dict,
             }
         for o in order_rows:
@@ -230,7 +232,7 @@ def _execute_core(
             )
         except Exception as exc:
             return {"success": False, "fail_closed": True, "broker_attempted": False,
-                    "broker_calls": 0, "error": f"Risk sizing unavailable: {exc}"}
+                    "broker_calls": 0, "error": f"Risk sizing unavailable: {sanitize_for_log(str(exc))}"}
         else:
             if not sizing.approved:
                 return {
@@ -447,7 +449,7 @@ def _execute_core(
             "fail_closed": True,
             "broker_attempted": False,
             "broker_calls": 0,
-            "error": f"durable commit failed: {exc}",
+            "error": f"durable commit failed: {sanitize_for_log(str(exc))}",
             "trade_intent": intent_dict,
         }
     # Idempotent replay: a re-execution of the same decision_id must never

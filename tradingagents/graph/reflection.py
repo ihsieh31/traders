@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 # TradingAgents/graph/reflection.py
 
 from typing import Dict, Any
@@ -125,7 +127,7 @@ class Reflector:
                 reflect(state, returns_losses, memory)
                 results[name] = True
             except Exception as exc:
-                print(f"[REFLECTION] Skipped {name} reflection: {exc}")
+                print(f"[REFLECTION] Skipped {name} reflection: {sanitize_for_log(str(exc))}")
                 results[name] = False
         return results
 

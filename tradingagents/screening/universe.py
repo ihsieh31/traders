@@ -11,6 +11,8 @@ and fails loudly so a partial universe can never look like a scan.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import fcntl
 import json
 import logging
@@ -26,6 +28,7 @@ from tradingagents.app_identity import app_home
 from tradingagents.dataflows.alpaca_utils import (
     fetch_with_bounded_retry,
     get_alpaca_trading_client,
+    asset_field,
 )
 
 
@@ -67,22 +70,28 @@ def _consume_pages(client: Any, request: Any) -> List[Any]:
     raw = fetch_with_bounded_retry(lambda: client.get_all_assets(request))
     if raw is None:
         return []
+    if isinstance(raw, (dict, str, bytes)):
+        raise UniverseError("Unsupported asset-list response; completeness cannot be proven")
 
     # Generator/iterator (paged SDK): consume fully.
-    if not isinstance(raw, (list, tuple)) and hasattr(raw, "__iter__"):
-        items = list(raw)
-        return items if items else []
-
     items: List[Any] = list(raw)
+    seen_tokens = set()
     # Defensive page-token following for future SDK shapes.
     while items and hasattr(items[-1], "next_page_token"):
-        last = items.pop()
+        last = items[-1]
+        if not asset_field(last, "symbol"):
+            items.pop()  # metadata sentinel; never discard an actual asset
         token = getattr(last, "next_page_token", None)
         if not token:
             break
+        if token in seen_tokens:
+            raise UniverseError("Asset pagination repeated a token; completeness cannot be proven")
+        seen_tokens.add(token)
         page = fetch_with_bounded_retry(
             lambda: client.get_all_assets(request, page_token=token)
-        ) if _accepts_page_token(client) else []
+        ) if _accepts_page_token(client) else None
+        if page is None:
+            raise UniverseError("Asset pagination cannot be completed; refusing a partial universe")
         items.extend(list(page or []))
     return items
 
@@ -272,26 +281,26 @@ def fetch_us_equity_universe(broker: Optional[Any] = None) -> List[dict]:
     except UniverseError:
         raise
     except Exception as exc:
-        raise UniverseError(f"Alpaca ACTIVE US_EQUITY asset list unavailable: {exc}") from exc
+        raise UniverseError(f"Alpaca ACTIVE US_EQUITY asset list unavailable: {sanitize_for_log(str(exc))}") from exc
 
     universe: List[dict] = []
     seen = set()
     for asset in assets:
-        symbol = normalize_symbol(getattr(asset, "symbol", ""))
-        status = enum_value(getattr(asset, "status", ""))
-        asset_class = enum_value(getattr(asset, "asset_class", ""))
+        symbol = normalize_symbol(asset_field(asset, "symbol", ""))
+        status = enum_value(asset_field(asset, "status", ""))
+        asset_class = enum_value(asset_field(asset, "asset_class", ""))
         if not symbol or symbol in seen:
             continue
         if status != "active" or asset_class != AssetClass.US_EQUITY.value:
             continue
-        if not bool(getattr(asset, "tradable", False)):
+        if asset_field(asset, "tradable", False) is not True:
             continue
         seen.add(symbol)
         universe.append(
             {
                 "symbol": symbol,
-                "name": getattr(asset, "name", "") or symbol,
-                "exchange": str(getattr(asset, "exchange", "") or ""),
+                "name": asset_field(asset, "name", "") or symbol,
+                "exchange": enum_value(asset_field(asset, "exchange", "")),
             }
         )
     if not universe:

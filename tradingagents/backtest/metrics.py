@@ -18,6 +18,15 @@ TRADING_DAYS_PER_YEAR = 252
 CRYPTO_DAYS_PER_YEAR = 365
 
 
+def validate_periods_per_year(value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("periods_per_year must be a positive integer")
+
+
+def _finite_result(value: float) -> Optional[float]:
+    return value if math.isfinite(value) else None
+
+
 def _as_series(equity_curve) -> pd.Series:
     curve = (equity_curve.astype(float) if isinstance(equity_curve, pd.Series)
              else pd.Series(list(equity_curve), dtype=float))
@@ -31,11 +40,12 @@ def cumulative_return(equity_curve) -> Optional[float]:
     curve = _as_series(equity_curve)
     if len(curve) < 2 or curve.iloc[0] <= 0:
         return None
-    return float(curve.iloc[-1] / curve.iloc[0] - 1.0)
+    return _finite_result(float(curve.iloc[-1]) / float(curve.iloc[0]) - 1.0)
 
 
 def annualized_return(equity_curve, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> Optional[float]:
     """Geometric annualized return assuming one curve point per period."""
+    validate_periods_per_year(periods_per_year)
     curve = _as_series(equity_curve)
     total = cumulative_return(curve)
     if total is None:
@@ -44,7 +54,10 @@ def annualized_return(equity_curve, periods_per_year: int = TRADING_DAYS_PER_YEA
     growth = 1.0 + total
     if growth <= 0:
         return -1.0
-    return float(growth ** (periods_per_year / periods) - 1.0)
+    try:
+        return _finite_result(float(growth ** (periods_per_year / periods) - 1.0))
+    except OverflowError:
+        return None
 
 
 def sharpe_ratio(
@@ -58,6 +71,9 @@ def sharpe_ratio(
     Returns None when the curve is too short or volatility is zero,
     rather than fabricating a number.
     """
+    validate_periods_per_year(periods_per_year)
+    if isinstance(risk_free_rate, bool) or not math.isfinite(risk_free_rate) or risk_free_rate <= -1:
+        raise ValueError("risk_free_rate must be finite and greater than -1")
     curve = _as_series(equity_curve)
     if len(curve) < 3:
         return None
@@ -69,7 +85,7 @@ def sharpe_ratio(
     std = float(excess.std(ddof=1))
     if not math.isfinite(std) or std == 0.0:
         return None
-    return float(excess.mean() / std * math.sqrt(periods_per_year))
+    return _finite_result(float(excess.mean() / std * math.sqrt(periods_per_year)))
 
 
 def max_drawdown(equity_curve) -> Optional[float]:
@@ -79,7 +95,7 @@ def max_drawdown(equity_curve) -> Optional[float]:
         return None
     running_peak = curve.cummax()
     drawdowns = 1.0 - curve / running_peak
-    return float(drawdowns.max())
+    return _finite_result(float(drawdowns.max()))
 
 
 def win_rate(trade_pnls: Sequence[float]) -> Optional[float]:
@@ -100,6 +116,7 @@ def summarize_performance(
 ) -> dict:
     """All headline metrics in one dict (values may be None when undefined)."""
     curve = _as_series(equity_curve)
+    trade_pnls = list(trade_pnls)
     return {
         "cumulative_return": cumulative_return(curve),
         "annualized_return": annualized_return(curve, periods_per_year),

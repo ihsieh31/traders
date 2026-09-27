@@ -6,6 +6,8 @@ immutable snapshot, one reconciler, and one crash-safe OS file lock.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import fcntl
 import hashlib
 import json
@@ -55,6 +57,8 @@ def _utc(value: Any, *, field: str) -> datetime:
 
 
 def _number(value: Any, *, field: str, minimum: Optional[float] = None) -> float:
+    if isinstance(value, bool):
+        raise BrokerAuthorityError(f"invalid {field}: boolean is not a number")
     try:
         result = float(value)
     except (TypeError, ValueError) as exc:
@@ -188,6 +192,12 @@ def validate_quote(quote: Any, symbol: str) -> BrokerQuote:
         raise BrokerAuthorityError("execution quote must be a typed BrokerQuote")
     if quote.symbol != _symbol(symbol):
         raise BrokerAuthorityError("quote symbol does not match execution symbol")
+    for label, price in (("bid", quote.bid_price), ("ask", quote.ask_price)):
+        if price is not None:
+            _number(price, field=f"quote {label}", minimum=0)
+    if (quote.bid_price is not None and quote.ask_price is not None
+            and quote.ask_price > 0 and quote.bid_price > quote.ask_price):
+        raise BrokerAuthorityError("quote bid exceeds ask")
     validate_freshness(
         quote.observed_at,
         ttl_seconds=float(get_env("QUOTE_TTL_SECONDS", QUOTE_TTL_SECONDS)),
@@ -230,7 +240,7 @@ def _recent_all_orders_request() -> Any:
         # filled orders would become invisible and local terminal states
         # could never reconcile. Fail closed instead.
         raise BrokerAuthorityError(
-            f"cannot build broker ALL-orders request: {exc}"
+            f"cannot build broker ALL-orders request: {sanitize_for_log(str(exc))}"
         ) from exc
 
 
@@ -245,7 +255,7 @@ def _open_orders_request() -> Any:
         )
     except Exception as exc:
         raise BrokerAuthorityError(
-            f"cannot build broker OPEN-orders request: {exc}"
+            f"cannot build broker OPEN-orders request: {sanitize_for_log(str(exc))}"
         ) from exc
 
 
@@ -267,7 +277,7 @@ def _merge_raw_orders(raw_recent: Any, raw_open: Any) -> list[Any]:
     def _add(raw: Any, *, require_live: bool) -> None:
         broker_id = str(_value(raw, "id", "broker_order_id") or "").strip()
         if not broker_id:
-            return
+            raise BrokerAuthorityError("broker order identity is incomplete: missing broker ID")
         existing = merged.get(broker_id)
         if existing is None:
             merged[broker_id] = raw
@@ -346,10 +356,14 @@ def capture_broker_snapshot(
     if raw_positions is None:
         raise BrokerAuthorityError("broker positions are unavailable")
     positions: list[BrokerPosition] = []
+    position_symbols: set[str] = set()
     for raw in raw_positions:
         symbol = _symbol(_value(raw, "symbol"))
         if not symbol:
             raise BrokerAuthorityError("broker position has no symbol")
+        if symbol in position_symbols:
+            raise BrokerAuthorityError(f"duplicate broker position: {symbol}")
+        position_symbols.add(symbol)
         qty = _number(_value(raw, "qty"), field=f"{symbol} position qty")
         market_value = _number(
             _value(raw, "market_value"), field=f"{symbol} market value"
@@ -381,7 +395,8 @@ def capture_broker_snapshot(
     )
     if raw_open is None:
         raise BrokerAuthorityError("broker OPEN orders are unavailable")
-    if len(list(raw_open)) >= API_ORDER_LIMIT:
+    raw_open = list(raw_open)
+    if len(raw_open) >= API_ORDER_LIMIT:
         raise BrokerAuthorityError(
             "open order list reached API limit; completeness cannot be proven"
         )
@@ -401,12 +416,16 @@ def capture_broker_snapshot(
         status = str(_value(raw, "status") or "").lower()
         if not all((broker_id, client_id, symbol, side, status)):
             raise BrokerAuthorityError("broker order identity is incomplete")
+        if side not in {"buy", "sell"}:
+            raise BrokerAuthorityError(f"invalid broker order side: {side!r}")
         qty = _number(_value(raw, "qty", default=0), field=f"{client_id} order qty", minimum=0)
         filled_qty = _number(
             _value(raw, "filled_qty", default=0),
             field=f"{client_id} filled qty",
             minimum=0,
         )
+        if qty > 0 and filled_qty > qty + 1e-9:
+            raise BrokerAuthorityError(f"{client_id} filled quantity exceeds order quantity")
         stamp_value = _value(raw, "updated_at", "filled_at", "submitted_at", "created_at")
         stamp = _utc(stamp_value, field=f"{client_id} order timestamp")
         price_value = _value(raw, "filled_avg_price")
@@ -606,11 +625,41 @@ class Reconciler:
 
         local_orders = self.store.list_all_orders()
         local_by_client = {o["client_order_id"]: o for o in local_orders}
+        invalid_clients = set(duplicate_clients)
+        invalid_clients.update(o.client_order_id for o in snapshot.orders
+                               if o.broker_order_id in duplicate_broker_ids)
+        # Validate identities and cumulative quantities BEFORE any ledger write.
+        # A conflicting order must not sneak back in through the fill/final-sync
+        # loops after being rejected by the first projection loop.
+        for order in snapshot.orders:
+            local = local_by_client.get(order.client_order_id)
+            if local is None:
+                continue
+            conflict = (
+                _symbol(local["symbol"]) != order.symbol
+                or str(local["side"]).lower() != order.side
+                or (local.get("broker_order_id")
+                    and local["broker_order_id"] != order.broker_order_id)
+            )
+            if conflict:
+                invalid_clients.add(order.client_order_id)
+                reasons.append(f"broker identity conflict: {order.client_order_id}")
+            if (not math.isfinite(order.filled_qty)
+                    or order.filled_qty < float(local.get("filled_qty") or 0) - 1e-9
+                    or (local.get("quantity") is not None
+                        and order.filled_qty > float(local["quantity"]) + 1e-9)):
+                invalid_clients.add(order.client_order_id)
+                reasons.append(f"invalid cumulative fill quantity: {order.client_order_id}")
+        for fill in snapshot.fills:
+            if fill.client_order_id not in local_by_client:
+                continue
+            source = by_client.get(fill.client_order_id)
+            if (source is None or source.broker_order_id != fill.broker_order_id
+                    or source.filled_qty != fill.qty or source.filled_avg_price != fill.price):
+                reasons.append(f"fill identity conflict: {fill.client_order_id}")
+                invalid_clients.add(fill.client_order_id)
         for broker_order in snapshot.orders:
-            if (
-                broker_order.client_order_id in duplicate_clients
-                or broker_order.broker_order_id in duplicate_broker_ids
-            ):
+            if broker_order.client_order_id in invalid_clients:
                 continue
             local = local_by_client.get(broker_order.client_order_id)
             if local is None:
@@ -653,7 +702,7 @@ class Reconciler:
 
         for fill in snapshot.fills:
             local = local_by_client.get(fill.client_order_id)
-            if local is None:
+            if local is None or fill.client_order_id in invalid_clients:
                 continue
             current = self.store.get_order(local["order_id"])
             already = float(current.get("filled_qty") or 0) if current else 0.0
@@ -688,10 +737,7 @@ class Reconciler:
         # Apply the final cumulative broker quantities after individual fill
         # deltas have been persisted idempotently.
         for broker_order in snapshot.orders:
-            if (
-                broker_order.client_order_id in duplicate_clients
-                or broker_order.broker_order_id in duplicate_broker_ids
-            ):
+            if broker_order.client_order_id in invalid_clients:
                 continue
             local = local_by_client.get(broker_order.client_order_id)
             if local is not None:

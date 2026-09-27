@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from tradingagents.agents.utils.agent_utils import Toolkit
 from tradingagents.long_run_support.state import atomic_write_json
+from tradingagents.redaction import sanitize_for_log
 
 
 class EvidenceIntegrityError(RuntimeError):
@@ -64,15 +65,18 @@ def classify_source_value(value: Any) -> str:
         return "empty"
     if isinstance(value, str):
         lowered = value.strip().lower()
-        if lowered.startswith("{"):
+        if not lowered:
+            return "empty"
+        if lowered.startswith(("{", "[")) or lowered == "null":
             try:
                 decoded = json.loads(value)
             except json.JSONDecodeError:
-                decoded = None
-            if isinstance(decoded, Mapping):
+                pass
+            else:
                 return classify_source_value(decoded)
         if lowered.startswith(("no indicator data available", "historical data unavailable",
-                               "unavailable:", "no historical data available")):
+                               "unavailable:", "no historical data available",
+                               "unavailable_for_historical_as_of:")):
             return "unavailable"
         if lowered.startswith(("error:", "error getting", "exception:", "timeout:",
                                "**error**")):
@@ -314,6 +318,9 @@ def _capture_packet(toolkit: Any, symbol: str, trade_date: str) -> dict[str, Any
         "sources": sources,
         "errors": errors,
     }
+    # Errors and source responses can echo provider credentials. Redact before
+    # sealing so persisted bytes and the evidence used by both arms agree.
+    packet = sanitize_for_log(packet)
     packet["sha256"] = evidence_packet_sha256(packet)
     return packet
 
@@ -378,6 +385,16 @@ def load_evidence_packet(
         packet = json.loads(packet_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise EvidenceIntegrityError(f"cannot read evidence packet {packet_path}") from exc
+    return validate_evidence_packet(
+        packet, symbol=symbol, trade_date=trade_date, expected_sha256=expected_sha256
+    )
+
+
+def validate_evidence_packet(
+    packet: Mapping[str, Any], *, symbol: str, trade_date: str,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Same trust boundary for disk, in-memory state and resumed checkpoints."""
     validated = _validate_packet(packet, symbol=symbol, trade_date=trade_date)
     validate_evidence_completeness(validated)
     if expected_sha256 and validated.get("sha256") != expected_sha256:

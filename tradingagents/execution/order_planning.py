@@ -6,6 +6,8 @@ wrappers delegating with named collaborators at call time.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Optional
 
 
@@ -21,7 +23,7 @@ def validate_trade_intent(trade_intent: Any) -> tuple[Optional[dict[str, Any]], 
     try:
         from tradingagents.agents.schemas import TradeIntent as _TI
     except Exception as exc:  # pragma: no cover - import should exist
-        return None, f"TradeIntent schema unavailable: {exc}"
+        return None, f"TradeIntent schema unavailable: {sanitize_for_log(str(exc))}"
     try:
         if isinstance(trade_intent, _TI):
             validated = _TI.model_validate(trade_intent.model_dump(mode="json"))
@@ -29,7 +31,7 @@ def validate_trade_intent(trade_intent: Any) -> tuple[Optional[dict[str, Any]], 
         validated = _TI.model_validate(trade_intent)
         return validated.model_dump(mode="json"), None
     except Exception as exc:
-        return None, f"Invalid trade intent: {exc}"
+        return None, f"Invalid trade intent: {sanitize_for_log(str(exc))}"
 
 
 def _planned_order_specs(intent: dict[str, Any], dollar_amount: Optional[float]):

@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import requests
 import json
 from datetime import datetime, timedelta
@@ -93,7 +95,7 @@ def get_finnhub_earnings_calendar(
         return result
         
     except Exception as e:
-        return f"Error fetching earnings data for {ticker}: {str(e)}"
+        return f"Error fetching earnings data for {ticker}: {sanitize_for_log(str(e))}"
 
 
 def get_crypto_earnings_equivalent(
@@ -244,4 +246,4 @@ def get_earnings_surprises_analysis(
         return result
         
     except Exception as e:
-        return f"Error analyzing earnings surprises for {ticker}: {str(e)}"
+        return f"Error analyzing earnings surprises for {ticker}: {sanitize_for_log(str(e))}"

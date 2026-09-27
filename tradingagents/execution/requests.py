@@ -6,6 +6,8 @@ wrappers so its module attributes stay the patch seams tests resolve.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Callable, Optional
 from .policy import canonical_protective_price
 
@@ -60,7 +62,7 @@ def _is_ambiguous_error(exc: BaseException, *, _exception_http_status, _TIMEOUT_
     status = _exception_http_status(exc)
     if status is not None and (status == 408 or 500 <= status <= 599):
         return True
-    text = f"{type(exc).__name__} {exc}".lower()
+    text = f"{type(exc).__name__} {sanitize_for_log(str(exc))}".lower()
     return any(m in text for m in _TIMEOUT_MARKERS)
 
 
@@ -81,6 +83,16 @@ def _definitive_rejection(exc: BaseException, *, _exception_http_status) -> bool
 class RequestBuildError(ValueError):
     """A locally constructed broker request failed before any POST."""
 
+
+def submit_response_identity(response: Any) -> tuple[str, str]:
+    """A decoded response still needs an explicit broker identity and status."""
+    from .authority import _value
+
+    broker_id = str(_value(response, "id", "order_id") or "").strip()
+    status = str(_value(response, "status") or "").strip().lower()
+    if not broker_id or not status:
+        raise ValueError("Submit response has no broker order identity or status")
+    return broker_id, status
 
 
 
@@ -136,7 +148,7 @@ def _build_protective_request(
         )
     except Exception as exc:
         raise RequestBuildError(
-            f"protective request construction failed for {symbol}: {exc}"
+            f"protective request construction failed for {symbol}: {sanitize_for_log(str(exc))}"
         ) from exc
 
 

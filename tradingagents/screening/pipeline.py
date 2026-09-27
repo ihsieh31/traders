@@ -22,6 +22,8 @@ calls once per round; it is not a standalone helper. Semantics:
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from dataclasses import dataclass, field
 from datetime import date
 import hashlib
@@ -299,7 +301,7 @@ def _run_scan(
         # whole round; no repair request, no cross-provider fallback.
         return _stopped("PROVIDER_FAILURE", str(exc))
     except Exception as exc:
-        return _stopped("SCREENING_STAGE_FAILED", f"{type(exc).__name__}: {exc}")
+        return _stopped("SCREENING_STAGE_FAILED", f"{type(exc).__name__}: {sanitize_for_log(str(exc))}")
 
     spec = resolved.get("spec")
     payload = {
@@ -356,7 +358,7 @@ def _attach_holdings(
     except Exception as exc:
         return _stopped(
             "HOLDINGS_UNAVAILABLE",
-            f"broker positions could not be verified: {exc}",
+            f"broker positions could not be verified: {sanitize_for_log(str(exc))}",
         )
 
     us_holdings = [p for p in positions if "/" not in p["symbol"]]
@@ -387,10 +389,11 @@ def _attach_holdings(
             continue
         try:
             asset = (deps.asset_fn or _default_asset)(symbol)
-            tradable = bool(getattr(asset, "tradable", False))
-            status = enum_value(getattr(asset, "status", ""))
+            from tradingagents.dataflows.alpaca_utils import asset_field
+            tradable = asset_field(asset, "tradable", False) is True
+            status = enum_value(asset_field(asset, "status", ""))
         except Exception as exc:
-            blocked.append({"symbol": symbol, "reason": f"asset status unavailable: {exc}"})
+            blocked.append({"symbol": symbol, "reason": f"asset status unavailable: {sanitize_for_log(str(exc))}"})
             continue
         if not tradable or status != "active":
             blocked.append({

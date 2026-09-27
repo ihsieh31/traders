@@ -631,6 +631,23 @@ def _run_interleaved_ab(
     runtime_switches = []
     crash_state = {"pending": crash_at is not None}
 
+    def evidence_identity(runtime, symbol):
+        # Exercise resume validation with actual sealed bytes, not a fabricated
+        # hash pointing at a nonexistent, shared T00 file for every symbol.
+        from test_ab_frozen_evidence import _valid_packet
+        from tradingagents.experiments.evidence_snapshot import evidence_packet_sha256
+
+        packet = _valid_packet(symbol=symbol, trade_date=SESSION)
+        suffix = "evidence_packet.json"
+        if mismatched_evidence and runtime["analysis_backend"] == "berkshire":
+            packet["market"]["ohlcv"]["value"] = "different source"
+            packet["sha256"] = evidence_packet_sha256(packet)
+            suffix = "different_packet.json"
+        path = root / "shared" / "evidence" / SESSION / symbol / suffix
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(packet))
+        return {"path": str(path), "sha256": packet["sha256"]}
+
     def apply_runtime(runtime):
         applied.clear()
         applied.update(runtime)
@@ -652,9 +669,11 @@ def _run_interleaved_ab(
             }
             for symbol in preanalyzed_traders:
                 if backend == "traders" and symbol in journal["symbols"]:
+                    evidence = evidence_identity(kwargs["runtime"], symbol)
                     journal["symbols"][symbol].update({
                         "status": lr.SYMBOL_ANALYZED,
-                        "evidence_packet_sha256": "e" * 64,
+                        "evidence_packet_sha256": evidence["sha256"],
+                        "evidence_packet_path": evidence["path"],
                         "trade_intent": {"symbol": symbol, "action": "BUY",
                                          "target_position": "LONG"},
                         "signal": "BUY",
@@ -760,8 +779,7 @@ def _run_interleaved_ab(
             "tradingagents.long_run_support.symbols._prepare_symbol_graph_config",
             side_effect=lambda graph_config, runtime, **_kwargs: (
                 dict(graph_config),
-                {"path": str(root / "shared" / "evidence" / SESSION / "T00" / "evidence_packet.json"),
-                 "sha256": ("f" if mismatched_evidence and runtime["analysis_backend"] == "berkshire" else "e") * 64},
+                evidence_identity(runtime, _kwargs["symbol"]),
             ),
         ))
         if crash_at is not None:
@@ -843,7 +861,8 @@ def test_ab_interleaves_each_symbol_and_reapplies_account_runtime(tmp_path):
         assert entry["analysis_finished_at"]
         assert entry["execution_started_at"]
         assert entry["execution_finished_at"]
-        assert entry["evidence_packet_sha256"] == "e" * 64
+        assert entry["evidence_packet_sha256"] == json.loads(
+            Path(entry["evidence_packet_path"]).read_text())["sha256"]
     assert traders["symbols"]["T00"]["evidence_packet_sha256"] == berkshire["symbols"]["T00"]["evidence_packet_sha256"]
 
 

@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage, AIMessage
 from typing import List
 from typing import Annotated
@@ -404,22 +406,22 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                     "inputs": input_summary,
                     "execution_time": f"{elapsed:.2f}s",
                     "error_type": type(e).__name__,
-                    "error_message": str(e),
+                    "error_message": sanitize_for_log(str(e)),
                 }
                 
-                detailed_error = str(e)
+                detailed_error = sanitize_for_log(str(e))
                 if "api key" in str(e).lower():
-                    detailed_error = f"API KEY ERROR: {str(e)}\n💡 SOLUTION: Check your API key configuration in the .env file"
+                    detailed_error = f"API KEY ERROR: {sanitize_for_log(str(e))}\n💡 SOLUTION: Check your API key configuration in the .env file"
                 elif "organization" in str(e).lower() and "verification" in str(e).lower():
-                    detailed_error = f"OPENAI ORG ERROR: {str(e)}\n💡 SOLUTION: Your OpenAI organization may need verification or you may have billing issues"
+                    detailed_error = f"OPENAI ORG ERROR: {sanitize_for_log(str(e))}\n💡 SOLUTION: Your OpenAI organization may need verification or you may have billing issues"
                 elif "timeout" in str(e).lower() or "timed out" in str(e).lower():
-                    detailed_error = f"TIMEOUT ERROR: {str(e)}\n💡 SOLUTION: Network or API service may be slow. Try again in a few minutes"
+                    detailed_error = f"TIMEOUT ERROR: {sanitize_for_log(str(e))}\n💡 SOLUTION: Network or API service may be slow. Try again in a few minutes"
                 elif "rate limit" in str(e).lower():
-                    detailed_error = f"RATE LIMIT ERROR: {str(e)}\n💡 SOLUTION: You've hit API rate limits. Wait before retrying"
+                    detailed_error = f"RATE LIMIT ERROR: {sanitize_for_log(str(e))}\n💡 SOLUTION: You've hit API rate limits. Wait before retrying"
                 elif "connection" in str(e).lower():
-                    detailed_error = f"CONNECTION ERROR: {str(e)}\n💡 SOLUTION: Check your internet connection and API service status"
+                    detailed_error = f"CONNECTION ERROR: {sanitize_for_log(str(e))}\n💡 SOLUTION: Check your internet connection and API service status"
                 elif "insufficient data" in str(e).lower():
-                    detailed_error = f"DATA ERROR: {str(e)}\n💡 SOLUTION: Try a different date range or check if the symbol is correct"
+                    detailed_error = f"DATA ERROR: {sanitize_for_log(str(e))}\n💡 SOLUTION: Try a different date range or check if the symbol is correct"
                 
                 print(f"[{analyst_type}] ❌ Tool '{tool_name}' failed after {elapsed:.2f}s")
                 print(f"[{analyst_type}] 🔍 ERROR DETAILS:")
@@ -441,7 +443,7 @@ def timing_wrapper(analyst_type, timeout_seconds=120, uses_web_search=False):
                         retry_count=0,
                     )
                 except Exception as track_error:
-                    print(f"[TOOL TRACKER] Failed to track failed tool call: {track_error}")
+                    print(f"[TOOL TRACKER] Failed to track failed tool call: {sanitize_for_log(str(track_error))}")
                 raise
 
         return wrapper
@@ -1377,7 +1379,7 @@ class Toolkit:
                         try:
                             indicator_data[indicator] = stock_stats['obv']
                         except Exception as obv_error:
-                            print(f"[INDICATORS] OBV calculation failed, using manual method: {obv_error}")
+                            print(f"[INDICATORS] OBV calculation failed, using manual method: {sanitize_for_log(str(obv_error))}")
                             # Manual OBV calculation
                             obv_values = []
                             obv = 0
@@ -1394,7 +1396,7 @@ class Toolkit:
                     else:
                         indicator_data[indicator] = None
                 except Exception as e:
-                    print(f"[INDICATORS] Warning: Failed to calculate {indicator}: {e}")
+                    print(f"[INDICATORS] Warning: Failed to calculate {indicator}: {sanitize_for_log(str(e))}")
                     indicator_data[indicator] = None
             
             # Convert date strings to datetime for matching
@@ -1445,7 +1447,7 @@ class Toolkit:
                                     else:
                                         row_values.append(f"{float(value):.2f}")
                             except Exception as match_error:
-                                print(f"[INDICATORS] Date matching error for {indicator}: {match_error}")
+                                print(f"[INDICATORS] Date matching error for {indicator}: {sanitize_for_log(str(match_error))}")
                                 row_values.append("N/A")
                         else:
                             row_values.append("N/A")
@@ -1457,7 +1459,7 @@ class Toolkit:
                 results.append(table_row)
                 
         except Exception as e:
-            print(f"[INDICATORS] ERROR: Batch indicator calculation failed: {e}")
+            print(f"[INDICATORS] ERROR: Batch indicator calculation failed: {sanitize_for_log(str(e))}")
             # Fallback to individual calls (original slow method) with timeout
             import time
             timeout_per_call = 2.0  # 2 second timeout per call
@@ -1494,7 +1496,7 @@ class Toolkit:
                         else:
                             row_values.append("N/A")
                     except Exception as ind_e:
-                        print(f"[INDICATORS] Error getting {indicator} for {date}: {ind_e}")
+                        print(f"[INDICATORS] Error getting {indicator} for {date}: {sanitize_for_log(str(ind_e))}")
                         row_values.append("N/A")
                 
                 # Format the table row

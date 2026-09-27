@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import logging
 from typing import Any, Callable, Optional, TypeVar
 
@@ -99,7 +101,7 @@ def invoke_risk_structured_strict(
         raise
     except Exception as exc:
         logger.warning("%s structured invoke failed; emitting NO_TRADE (%s)", agent_name, exc)
-        return None, None, f"structured_invoke_failed: {exc}"
+        return None, None, f"structured_invoke_failed: {sanitize_for_log(str(exc))}"
     try:
         if schema is not None and not isinstance(structured_value, schema):
             # Provider returned a plain dict/string despite the bind: validate
@@ -108,7 +110,7 @@ def invoke_risk_structured_strict(
         rendered = render(structured_value)
     except Exception as exc:
         logger.warning("%s structured validation failed; emitting NO_TRADE (%s)", agent_name, exc)
-        return None, None, f"structured_validation_failed: {exc}"
+        return None, None, f"structured_validation_failed: {sanitize_for_log(str(exc))}"
     if rendered is None or not str(rendered).strip():
         return None, None, "structured_empty_output"
     return str(rendered), structured_value, None

@@ -6,6 +6,8 @@ calls use the original service instance; this module owns no service or lock.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
@@ -98,7 +100,7 @@ def _prepare_liquidation_outbox(
             "fail_closed": True,
             "broker_attempted": False,
             "broker_calls": 0,
-            "error": f"durable commit failed: {exc}",
+            "error": f"durable commit failed: {sanitize_for_log(str(exc))}",
         }
     return {
         "ok": True,
@@ -185,7 +187,7 @@ def _liquidate_core(
             "status": "UNKNOWN",
             "broker_attempted": False,
             "broker_calls": 0,
-            "error": f"broker factory failed (ambiguous): {exc}",
+            "error": f"broker factory failed (ambiguous): {sanitize_for_log(str(exc))}",
             "intent_id": intent_row["intent_id"],
             "decision_id": did,
         }
@@ -210,9 +212,6 @@ def _liquidate_core(
             raise ValueError("verified close quantity is unavailable")
         posted = True
         resp = broker.submit_order(request)
-        broker_oid = getattr(resp, "id", None) or (
-            resp.get("order_id") if isinstance(resp, dict) else None
-        )
         if isinstance(resp, dict) and resp.get("success") is False:
             self._store.transition_order(orow["order_id"], "REJECTED")
             return {
@@ -224,20 +223,19 @@ def _liquidate_core(
                 "intent_id": intent_row["intent_id"],
                 "decision_id": did,
             }
-        status_raw = getattr(resp, "status", None) or (
-            resp.get("status") if isinstance(resp, dict) else "accepted"
-        )
-        if not broker_oid:
-            self._store.transition_order(orow["order_id"], "UNKNOWN")
-            return {"success": False, "status": "UNKNOWN", "broker_attempted": True,
-                    "broker_calls": 1, "error": "Close response has no broker order identity"}
+        from .requests import submit_response_identity
+        broker_oid, status_raw = submit_response_identity(resp)
         local = broker_status_to_local(status_raw)
-        self._store.transition_order(
+        applied, stored = self._store.transition_order(
             orow["order_id"], local,
             broker_order_id=str(broker_oid) if broker_oid else None,
         )
+        if not applied:
+            raise ValueError("Close response could not be committed to the durable order")
+        success = local not in {"REJECTED", "CANCELED", "EXPIRED"}
         return {
-            "success": True,
+            "success": success,
+            **({} if success else {"error": f"Broker returned terminal close status {local}"}),
             "status": local,
             "broker_attempted": True,
             "broker_calls": 1,
@@ -269,7 +267,7 @@ def _liquidate_core(
                 "status": "UNKNOWN",
                 "broker_attempted": True,
                 "broker_calls": 1,
-                "error": f"ambiguous close outcome: {exc}",
+                "error": f"ambiguous close outcome: {sanitize_for_log(str(exc))}",
                 "intent_id": intent_row["intent_id"],
                 "decision_id": did,
             }

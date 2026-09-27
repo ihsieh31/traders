@@ -7,11 +7,16 @@ and probe secrets never cross the redacted boundary.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import hashlib
 import math
 import time
 from datetime import date, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from tradingagents.long_run import LongRunDeps
 
 
 def _default_screening(config: Dict[str, Any], refresh: bool = False) -> Any:
@@ -104,7 +109,7 @@ def _default_llm_probe(
         raise LongRunStop(
             "LLM_PROBE_FAILED",
             f"preflight probe failed for role={role} provider={provider} "
-            f"model={model}: {type(exc).__name__}: {exc}",
+            f"model={model}: {type(exc).__name__}: {sanitize_for_log(str(exc))}",
         )
     return {
         "role": role, "provider": provider, "model": model,
@@ -269,7 +274,7 @@ def run_preflight(
             }])
         except Exception as exc:
             raise LongRunStop(
-                "PREFLIGHT_FAILED", f"analysis fallback lacks required structured/tool binding: {exc}"
+                "PREFLIGHT_FAILED", f"analysis fallback lacks required structured/tool binding: {sanitize_for_log(str(exc))}"
             ) from exc
     max_retries = int(runtime.get("llm_max_retries", 3))
 
@@ -309,9 +314,9 @@ def run_preflight(
             from tradingagents.llm_clients.retry import ProviderFailure
 
             if isinstance(exc, ProviderFailure):
-                raise LongRunStop("PREFLIGHT_FAILED", f"llm_probe:{role_name}: {exc}")
+                raise LongRunStop("PREFLIGHT_FAILED", f"llm_probe:{role_name}: {sanitize_for_log(str(exc))}")
             raise LongRunStop(
-                "PREFLIGHT_FAILED", f"llm_probe:{role_name}: {type(exc).__name__}: {exc}"
+                "PREFLIGHT_FAILED", f"llm_probe:{role_name}: {type(exc).__name__}: {sanitize_for_log(str(exc))}"
             )
 
     # Alpaca read-only preflight: paper client, account, positions, calendar.
@@ -325,14 +330,14 @@ def run_preflight(
         capture_account_snapshot(client)
         checks.append({"name": "alpaca_account", "ok": True, "detail": "read-only ok"})
     except Exception as exc:
-        raise LongRunStop("PREFLIGHT_FAILED", f"alpaca_account: {exc}")
+        raise LongRunStop("PREFLIGHT_FAILED", f"alpaca_account: {sanitize_for_log(str(exc))}")
     try:
         start = date.today() - timedelta(days=7)
         fetch_session_dates(start, date.today() + timedelta(days=7),
                             client=deps.calendar_client)
         checks.append({"name": "alpaca_calendar", "ok": True, "detail": "authoritative ok"})
     except Exception as exc:
-        raise LongRunStop("PREFLIGHT_FAILED", f"alpaca_calendar: {exc}")
+        raise LongRunStop("PREFLIGHT_FAILED", f"alpaca_calendar: {sanitize_for_log(str(exc))}")
 
     # Optional data sources are degraded-source status, never hard dependencies.
     try:
@@ -397,7 +402,7 @@ def run_post_authorization_recovery(
         raise
     except Exception as exc:
         raise LongRunStop(
-            "PREFLIGHT_FAILED", f"post-authorization execution_recovery: {exc}"
+            "PREFLIGHT_FAILED", f"post-authorization execution_recovery: {sanitize_for_log(str(exc))}"
         )
     ok = bool(recovery.get("success"))
     if not ok:
@@ -411,6 +416,6 @@ def run_post_authorization_recovery(
         fresh_snapshot = capture_account_snapshot(broker_factory())
     except Exception as exc:
         raise LongRunStop(
-            "PREFLIGHT_FAILED", f"post-recovery account snapshot: {exc}"
+            "PREFLIGHT_FAILED", f"post-recovery account snapshot: {sanitize_for_log(str(exc))}"
         )
     return {"recovery": recovery, "snapshot": fresh_snapshot}

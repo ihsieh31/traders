@@ -10,6 +10,8 @@ the application keeps some process-global configuration and audit context.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import argparse
 from contextlib import contextmanager
 from copy import deepcopy
@@ -571,7 +573,7 @@ def _run_one(
                 "elapsed_seconds": round(time.monotonic() - started, 4),
                 "run_log": _latest_run_log(config, symbol, exclude=existing_logs),
                 "error_type": type(exc).__name__,
-                "error": f"LLM budget gate unavailable: {exc}",
+                "error": f"LLM budget gate unavailable: {sanitize_for_log(str(exc))}",
                 "decision_valid": False,
             }
         if not budget.allowed:
@@ -1171,11 +1173,11 @@ def run_analysis_ab(
                 config=capture_config,
             )
         except EvidenceIntegrityError as exc:
-            raise RuntimeError(f"frozen evidence unavailable: {exc}") from exc
+            raise RuntimeError(f"frozen evidence unavailable: {sanitize_for_log(str(exc))}") from exc
         try:
             validate_evidence_completeness(evidence)
         except EvidenceIntegrityError as exc:
-            raise RuntimeError(f"frozen evidence unavailable: {exc}") from exc
+            raise RuntimeError(f"frozen evidence unavailable: {sanitize_for_log(str(exc))}") from exc
 
         configs = build_ab_configs(
             base,
@@ -1372,9 +1374,9 @@ def _load_config(path: str | None) -> dict[str, Any]:
     try:
         loaded = json.loads(config_path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ValueError(f"Cannot read config JSON {config_path}: {exc}") from exc
+        raise ValueError(f"Cannot read config JSON {config_path}: {sanitize_for_log(str(exc))}") from exc
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Config JSON is invalid: {exc}") from exc
+        raise ValueError(f"Config JSON is invalid: {sanitize_for_log(str(exc))}") from exc
     if not isinstance(loaded, dict):
         raise ValueError("Config JSON must contain an object")
     config = deepcopy(DEFAULT_CONFIG)
@@ -1420,10 +1422,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 paper_notional_usd=args.paper_notional_usd,
             )
     except GlobalRunnerLockBusy as exc:
-        print(f"[AB] ERROR: {exc}", file=sys.stderr)
+        print(f"[AB] ERROR: {sanitize_for_log(str(exc))}", file=sys.stderr)
         return 2
     except (RuntimeError, ValueError) as exc:
-        print(f"[AB] ERROR: {exc}", file=sys.stderr)
+        print(f"[AB] ERROR: {sanitize_for_log(str(exc))}", file=sys.stderr)
         return 2
 
     if summary.get("status") in {"COMPLETED", "completed"}:

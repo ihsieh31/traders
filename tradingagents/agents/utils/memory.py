@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
@@ -53,7 +55,7 @@ class FinancialSituationMemory:
             self.chroma_client = None
             self.situation_collection = None
             self.embeddings_enabled = False
-            print(f"[MEMORY] Store unavailable; reflection memory disabled. ({exc})")
+            print(f"[MEMORY] Store unavailable; reflection memory disabled. ({sanitize_for_log(str(exc))})")
 
     def get_embedding(self, text):
         """Get OpenAI embedding for a text"""
@@ -80,7 +82,7 @@ class FinancialSituationMemory:
             if not self._warned_embedding_failure:
                 print(
                     "[MEMORY] Embeddings unavailable; reflection memory will be skipped "
-                    f"for this run. ({exc})"
+                    f"for this run. ({sanitize_for_log(str(exc))})"
                 )
                 self._warned_embedding_failure = True
             return None
@@ -215,7 +217,7 @@ if __name__ == "__main__":
             print(f"Recommendation: {rec['recommendation']}")
 
     except Exception as e:
-        print(f"Error during recommendation: {str(e)}")
+        print(f"Error during recommendation: {sanitize_for_log(str(e))}")
 
 
 class TradingMemoryLog:

@@ -10,6 +10,8 @@ file reading, no network, no LLM calls.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 import html as html_lib
 import json
 from datetime import date
@@ -69,7 +71,7 @@ def _safety_section(guard) -> List[str]:
     try:
         status = guard.status()
     except Exception as exc:
-        lines.append(f"Safety status unavailable: {exc}")
+        lines.append(f"Safety status unavailable: {sanitize_for_log(str(exc))}")
         return lines
     if status.get("kill_switch_active"):
         lines.append(
@@ -94,7 +96,7 @@ def _cost_section(day: str, config: dict) -> List[str]:
         )
         day_bucket = aggregate_costs(records)["per_day"].get(day)
     except Exception as exc:
-        lines.append(f"Cost data unavailable: {exc}")
+        lines.append(f"Cost data unavailable: {sanitize_for_log(str(exc))}")
         return lines
     if not day_bucket:
         lines.append("No token usage recorded for this day.")
@@ -121,7 +123,7 @@ def _performance_section(config: dict) -> List[str]:
 
         returns = realized_returns_by_symbol(config)
     except Exception as exc:
-        lines.append(f"Decision-log data unavailable: {exc}")
+        lines.append(f"Decision-log data unavailable: {sanitize_for_log(str(exc))}")
         return lines
     if not returns:
         lines.append("No resolved decisions in the log yet.")

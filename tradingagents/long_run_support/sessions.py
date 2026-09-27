@@ -6,6 +6,8 @@ imports remain lazy, and scheduler retries retain the injected sleep owner.
 
 from __future__ import annotations
 
+from tradingagents.redaction import sanitize_for_log
+
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -435,7 +437,7 @@ def _run_scheduler_operation_with_retry(
                 "label": label,
                 "attempt": attempt,
                 "max_attempts": SCHEDULER_RETRY_ATTEMPTS,
-                "error": f"{type(exc).__name__}: {exc}"[:300],
+                "error": f"{type(exc).__name__}: {sanitize_for_log(str(exc))}"[:300],
             })
             deps.sleep_fn(SCHEDULER_RETRY_DELAY_SECONDS)
     raise LongRunStop(

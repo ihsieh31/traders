@@ -1,3 +1,5 @@
+
+from tradingagents.redaction import sanitize_for_log
 import functools
 import time
 import json
@@ -205,7 +207,7 @@ USER MESSAGE:
             
             capture_agent_prompt("trader_investment_plan", complete_prompt, company_name)
         except Exception as e:
-            print(f"[TRADER] Warning: Could not capture complete prompt: {e}")
+            print(f"[TRADER] Warning: Could not capture complete prompt: {sanitize_for_log(str(e))}")
             # Fallback to system message only
             capture_agent_prompt("trader_investment_plan", messages[0]["content"], company_name)
 
