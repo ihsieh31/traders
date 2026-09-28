@@ -1,0 +1,4 @@
+parameter,value,annualised_net,n_periods,verdict,run_length
+r60_window,60,0.2098665445567495,26,PLATEAU,3
+r60_window,90,0.16394926928149411,26,PLATEAU,3
+r60_window,120,0.14374368673477472,26,PLATEAU,3

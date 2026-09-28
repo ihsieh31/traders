@@ -25,6 +25,11 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# The repo root ignores a bare `*.csv` (raw data dumps). A round's result
+# tables are EVIDENCE, not raw data: plan.md 6.3 requires them in version
+# control so a verdict can be audited against the numbers behind it.
+!out/**/*.csv
+
 # Scratch written by probing / throwaway scripts during a round. Never evidence.
 _scratch/
 src/_*.py

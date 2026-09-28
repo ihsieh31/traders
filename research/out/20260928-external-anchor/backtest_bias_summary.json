@@ -1,0 +1,14 @@
+{
+  "window": [
+    "2016-01-04",
+    "2026-08-31"
+  ],
+  "tiingo_overlapping_live_or_dead": 15646,
+  "stopped_trading_within_or_before_window": 7442,
+  "of_those_we_have": 479,
+  "of_those_we_miss": 6963,
+  "we_have_fraction": 0.064364,
+  "window_restricted_dead_name_ratio": 0.038545,
+  "backtest_bias_library_verdict": "severe: 0/4182 dead, dead_name_ratio=0.000000",
+  "note": "this is the survivorship-bias scan on OUR panel; the reverse scan (how much of the true universe are we missing) is in our_survivorship_gap_by_session.csv"
+}

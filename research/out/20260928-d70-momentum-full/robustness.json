@@ -1,0 +1,63 @@
+{
+  "confidence_interval": {
+    "n": 16,
+    "mean": 0.023364237614236404,
+    "stderr": 0.04004145540686302,
+    "ci_low": -0.06198210431627374,
+    "ci_high": 0.10871057954474656,
+    "width": 0.1706926838610203,
+    "width_over_abs_mean": 7.305724529912033
+  },
+  "block_bootstrap": {
+    "n": 16,
+    "block": 16,
+    "n_resamples": 1000,
+    "mean": 0.023364237614236404,
+    "ci_low": 0.023364237614236404,
+    "ci_high": 0.023364237614236404,
+    "crosses_zero": false,
+    "p_positive": 1.0
+  },
+  "drop_best": {
+    "n": 16,
+    "full_mean": 0.023364237614236404,
+    "by_fraction": {
+      "1%": {
+        "dropped": 1,
+        "mean": 0.006303213774679659,
+        "nw_t": 0.174777975464565,
+        "sign_flipped": false
+      },
+      "3%": {
+        "dropped": 1,
+        "mean": 0.006303213774679659,
+        "nw_t": 0.174777975464565,
+        "sign_flipped": false
+      },
+      "5%": {
+        "dropped": 1,
+        "mean": 0.006303213774679659,
+        "nw_t": 0.174777975464565,
+        "sign_flipped": false
+      }
+    }
+  },
+  "contribution": {
+    "total_gross": 0.3883778018277826,
+    "n_periods": 16,
+    "n_symbols_contributing": 222,
+    "period_share": {
+      "top_1%": 0.7393798444841672,
+      "top_5%": 0.7393798444841672,
+      "top_10%": 1.4610472361026803
+    },
+    "symbol_share": {
+      "top_1%": 0.3657734645876667,
+      "top_5%": 1.5592731288097845,
+      "top_10%": 2.6803624121304983
+    }
+  },
+  "n_periods": 18,
+  "periods_per_year": 3.6,
+  "note": "resampling unit is the PERIOD, never the trade (process.md S-33); block length is the holding period (S-16)"
+}

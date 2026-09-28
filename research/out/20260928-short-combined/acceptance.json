@@ -1,0 +1,86 @@
+{
+  "t_bonf": 2.0642176568424144,
+  "checks": [
+    {
+      "n": 1,
+      "name": "validation |t_NW| >= t_bonf",
+      "passed": null,
+      "detail": "validation NW t = None, t_bonf = 2.064"
+    },
+    {
+      "n": 2,
+      "name": "discovery and validation same sign",
+      "passed": null,
+      "detail": "discovery net annualised 0.16644311390807404, validation None"
+    },
+    {
+      "n": 3,
+      "name": "validation net annualised > 0",
+      "passed": null,
+      "detail": "None"
+    },
+    {
+      "n": 4,
+      "name": "validation net annualised > 0 at 2.0x cost",
+      "passed": null,
+      "detail": "no validation run yet"
+    },
+    {
+      "n": 5,
+      "name": "beats the production baseline",
+      "passed": null,
+      "detail": "no baseline run supplied"
+    },
+    {
+      "n": 6,
+      "name": "holds in both universes",
+      "passed": true,
+      "detail": "wide 0.11213261712665165, production 0.16644311390807404"
+    },
+    {
+      "n": 7,
+      "name": "walk-forward >= 3/4 folds same sign",
+      "passed": true,
+      "detail": "frozen-variant agreement = 4/4 (threshold 3/4; K fixed at 4 before results, process.md S-40)"
+    },
+    {
+      "n": 8,
+      "name": "every parameter +/- 1 cell same sign",
+      "passed": null,
+      "detail": "no parameter sweep run"
+    },
+    {
+      "n": 9,
+      "name": "same sign in >= 2 regimes",
+      "passed": true,
+      "detail": "4 regimes agree, out of 4 with any data: bull_high_vol(n=36), bull_low_vol(n=58), bear_high_vol(n=25), bear_low_vol(n=4)"
+    },
+    {
+      "n": 10,
+      "name": "same sign after dropping best 5% of periods",
+      "passed": true,
+      "detail": "dropped 6 periods, mean 0.0013805765996466656, sign_flipped=False"
+    },
+    {
+      "n": 11,
+      "name": "order size <= 0.1% of ADV20",
+      "passed": true,
+      "detail": "worst-case participation = 0.0250% of ADV20"
+    }
+  ],
+  "disclosures": [
+    {
+      "name": "sample sufficiency (DISCLOSURE, not a pass condition)",
+      "metric": "CI width / |mean period return|",
+      "value": 2.9012790536977677,
+      "n_periods": 119,
+      "reading": "the direction may be right but the magnitude is not trustworthy; do not quote the point estimate",
+      "why_not_a_condition": "The original threshold was CI width < effect. It is mathematically unreachable on this dataset at any holding period -- 404 years of data at 5 days, 30 years at 60. A rule that can only ever say FAIL trains people to ignore the rules, so it was demoted to a mandatory disclosure. See plan.md R16-Q1 and process.md S-45."
+    }
+  ],
+  "n_checks": 11,
+  "n_decided": 5,
+  "n_failed": 0,
+  "verdict": "UNDECIDED",
+  "note": "passed=None means NOT MEASURED, which is not a pass (plan.md R17). Conditions 1-5 require a validation run; without one the verdict is UNDECIDED, never PASSED."
+}

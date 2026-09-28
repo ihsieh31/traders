@@ -1,0 +1,2 @@
+rolling_window_sessions,our_2016_2020_sr,percentile_of_all_5y_windows,all_5y_sr_mean,all_5y_sr_median,all_5y_sr_p10,all_5y_sr_p90,n_windows
+1260,0.2849,0.2949,0.7549,0.7608,-0.1564,1.6019,24957

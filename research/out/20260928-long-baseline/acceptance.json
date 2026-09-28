@@ -1,0 +1,86 @@
+{
+  "t_bonf": 2.478637087023328,
+  "checks": [
+    {
+      "n": 1,
+      "name": "validation |t_NW| >= t_bonf",
+      "passed": null,
+      "detail": "validation NW t = None, t_bonf = 2.479"
+    },
+    {
+      "n": 2,
+      "name": "discovery and validation same sign",
+      "passed": null,
+      "detail": "discovery net annualised 0.11310870435448053, validation None"
+    },
+    {
+      "n": 3,
+      "name": "validation net annualised > 0",
+      "passed": null,
+      "detail": "None"
+    },
+    {
+      "n": 4,
+      "name": "validation net annualised > 0 at 2.0x cost",
+      "passed": null,
+      "detail": "no validation run yet"
+    },
+    {
+      "n": 5,
+      "name": "beats the production baseline",
+      "passed": null,
+      "detail": "no baseline run supplied"
+    },
+    {
+      "n": 6,
+      "name": "holds in both universes",
+      "passed": true,
+      "detail": "wide 0.1621458432071192, production 0.11310870435448053"
+    },
+    {
+      "n": 7,
+      "name": "walk-forward >= 3/4 folds same sign",
+      "passed": null,
+      "detail": "UNDECIDABLE: agreement = 4/4 but a fold holds only 3 non-overlapping periods, below the floor of 8. A 60-day horizon over 5 years leaves too few folds to measure sign agreement (process.md S-6)"
+    },
+    {
+      "n": 8,
+      "name": "every parameter +/- 1 cell same sign",
+      "passed": false,
+      "detail": "swept ['r60_window']; spikes: ['r60_window']"
+    },
+    {
+      "n": 9,
+      "name": "same sign in >= 2 regimes",
+      "passed": true,
+      "detail": "3 regimes agree, out of 3 with any data: bull_high_vol(n=7), bull_low_vol(n=10), bear_high_vol(n=3)"
+    },
+    {
+      "n": 10,
+      "name": "same sign after dropping best 5% of periods",
+      "passed": true,
+      "detail": "dropped 1 periods, mean 0.01728654998608916, sign_flipped=False"
+    },
+    {
+      "n": 11,
+      "name": "order size <= 0.1% of ADV20",
+      "passed": true,
+      "detail": "worst-case participation = 0.0164% of ADV20"
+    }
+  ],
+  "disclosures": [
+    {
+      "name": "sample sufficiency (DISCLOSURE, not a pass condition)",
+      "metric": "CI width / |mean period return|",
+      "value": 2.5611968433012695,
+      "n_periods": 19,
+      "reading": "the direction may be right but the magnitude is not trustworthy; do not quote the point estimate",
+      "why_not_a_condition": "The original threshold was CI width < effect. It is mathematically unreachable on this dataset at any holding period -- 404 years of data at 5 days, 30 years at 60. A rule that can only ever say FAIL trains people to ignore the rules, so it was demoted to a mandatory disclosure. See plan.md R16-Q1 and process.md S-45."
+    }
+  ],
+  "n_checks": 11,
+  "n_decided": 5,
+  "n_failed": 1,
+  "verdict": "REJECTED",
+  "note": "passed=None means NOT MEASURED, which is not a pass (plan.md R17). Conditions 1-5 require a validation run; without one the verdict is UNDECIDED, never PASSED."
+}

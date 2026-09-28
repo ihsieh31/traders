@@ -1,0 +1,4 @@
+parameter,value,annualised_net,n_periods,verdict,run_length
+r60_window,60,0.1548968336855065,18,SPIKE,1
+r60_window,90,0.174191038808425,18,SPIKE,1
+r60_window,120,0.20520632360518223,18,SPIKE,1
