@@ -34,3 +34,8 @@ __pycache__/
 _scratch/
 src/_*.py
 src/probe_*.py
+
+# Per-ticker bar files from the Tiingo pull: tens of thousands of small gz
+# files. The panel parquet built from them IS tracked (it is the evidence);
+# the raw per-ticker shards are an intermediate, regenerable from the fetch.
+out/**/tiingo/bars/

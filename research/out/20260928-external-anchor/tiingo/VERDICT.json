@@ -1,0 +1,47 @@
+{
+  "verdict": "Tiingo EOD serves per-stock prices for delisted US names",
+  "probe_dead_names_with_bars_ending_at_real_death_date": "5/6",
+  "probe_exceptions": {
+    "EMC": "ticker now owned by a different entity (ETF from 2023-05-15)"
+  },
+  "tier1_requested": 45,
+  "tier1_kept": 40,
+  "tier1_rejected_ticker_reuse": 3,
+  "tier1_rejected_list": [
+    "CA",
+    "STR"
+  ],
+  "tier1_absent": 0,
+  "rows": 83699,
+  "names": 40,
+  "period": [
+    "2005-01-03",
+    "2022-12-23"
+  ],
+  "rows_inside_our_window": 14798,
+  "stop_at_own_death_date": "40/40 (delta=+0 days on every one)",
+  "duplicate_ticker_date": 0,
+  "non_positive_close": 0,
+  "cross_validation_vs_independent_source": {
+    "source": "teddykoker/survivorship-free-spy (independent, also carries dead names)",
+    "names_compared": 25,
+    "return_correlation_median": 0.998279,
+    "return_correlation_p10": 0.793864,
+    "return_correlation_min": 0.346921,
+    "names_corr_gt_0p99": 20,
+    "note": "price LEVEL differs 1-5% because Tiingo applies CRSP split+DIVIDEND adjustment and the repo is split-only; the return PATH agrees to ~1bp MAE"
+  },
+  "free_tier_constraint": {
+    "observed": "budget spent after ~52 unique symbols on the free tier",
+    "inferred_daily_cap": "~50 unique symbols/day (Tiingo docs claim 50; page is JS-rendered so UNVERIFIED)",
+    "tier2_names_remaining": 6891,
+    "tier2_days_needed_at_50_per_day": 138,
+    "tier2_days_needed_at_500_per_day": 14
+  },
+  "ticker_reuse_hazard": {
+    "statement": "Tiingo's symbol master is keyed by ticker with one row per ticker, so it cannot represent reuse. /prices resolves to whichever entity owns the ticker NOW. The EMC master row is EMC Corp (1988-12-16..2016-09-15, correct) yet /prices returns a 2023 ETF. 3 of 45 tier-1 tickers affected.",
+    "mitigation": "inline gate in the fetch: a series is accepted only if it stops within 3 days of the master's endDate, else quarantined to rejected_*.csv",
+    "why_it_matters": "silent corruption -- a reused ticker injects a different asset's history into a dead-company slot: wrong prices AND look-ahead"
+  },
+  "blocking_question": "is 40 large-cap deaths enough, or do we buy the full set?"
+}

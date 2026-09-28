@@ -1,0 +1,12 @@
+{
+  "quota_events": [
+    [
+      "10:14:18",
+      0
+    ]
+  ],
+  "kept": 0,
+  "reuse": 0,
+  "absent": 0,
+  "stopped_reason": "time budget"
+}

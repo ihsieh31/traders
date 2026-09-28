@@ -1,0 +1,8 @@
+ticker,n,first,last,expected,why
+ATVI,4728,2005-01-03,2023-10-13,2023-10-13,Microsoft acquired
+CELG,3749,2005-01-03,2019-11-22,2019-11-22,BMS acquired
+ABMD,4527,2005-01-03,2023-01-03,2023-01-03,Allergan/AbbVie
+WFM,3187,2005-01-03,2017-08-29,2017-08-28,WFS delisting
+YHOO,3142,2005-01-03,2017-06-26,2017-06-26,Verizon acquisition
+EMC,845,2023-05-15,2026-09-25,2016-09-15,Dell acquisition
+AAPL,5467,2005-01-03,2026-09-25,,alive control

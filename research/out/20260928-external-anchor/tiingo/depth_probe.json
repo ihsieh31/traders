@@ -1,0 +1,11 @@
+{
+  "ticker": "IBM",
+  "requested_from": "1950-01-01",
+  "bars": 16290,
+  "first_bar": "1962-01-02",
+  "last_bar": "2026-09-25",
+  "span_years": 64.7,
+  "expected_bars": 16311,
+  "completeness": 0.9987,
+  "note": "live name, so this is the HISTORY FLOOR of the free tier, not a delisted-name question"
+}
