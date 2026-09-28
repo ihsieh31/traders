@@ -161,6 +161,7 @@ out/<YYYYMMDD>-<短代號>/
 | **Ken French / CRSP** | Mom/ME/MOM/STRev/LTRev/Factors5，日＋月 | 1926-11 .. 2026-08 | ✅ 100% | ✅ | **效應量級的外部錨點**（唯一有官方存活者修正者） |
 | **Tiingo 符號主檔** | 108,846 列 ticker/exchange/assetType/startDate/endDate | — | ✅ 7,666 檔已停止交易（2015–2025） | ✅ | **存活者缺口的量測基準**（只讀主檔，不需 token） |
 | **HF `paperswithbacktest/Stocks-Daily-Price`** | 25,986,919 列 · 7,764 檔 · OHLCV + 獨立 `adj_close` | **1962-01 .. 2026-08** | 🟡 461 個死亡 S&P 中 114（**24.7%**） | ✅ | 第三方交叉比對用；**非存活者修正** |
+| **`teddykoker/survivorship-free-spy`** | 642 檔 S&P 500 日線 CSV，**無 license 檔** | 凍結於 **2018-02-27** | ✅ 但僅對 2018-02-27 前死亡者有效 | ✅ | 實測**只補 32 檔**（缺口的 0.46%），**不可用** |
 | **baostock** | 滬深 A 股：`query_all_stock(day=)` 每日完整成分清單＋含 `tradeStatus` | 2007- .. | ✅（A 股） | ✅ | 跨市場方法論驗證；與美股主專案無關 |
 
 實測要點（全部有原始輸出，非推測）：
@@ -187,6 +188,25 @@ out/<YYYYMMDD>-<短代號>/
   OpenFIGI（`No identifier found`）、SEC EDGAR（無價格）、AlphaVantage、Quandl、FRED、
   Wayback Machine（WCOM 2000–2007 有快照但密度不足，需約 233,000 筆）、
   HuggingFace / Kaggle / PapersWithCode 掃描、CRSP-Sharadar（付費）、tushare（需積分）。
+- **`teddykoker/survivorship-free-spy` 實測（2026-09-28）**：
+  宣稱「價格跑到下市前最後一個交易日」**為真但僅對凍結日之前者成立**。
+  WFM 結束於 2017-08-28、SIAL 結束於 2015-11-18，**與真實死亡日完全相同**；
+  但 TWX/BRCM/CELG/MYL/ATVI 全部一律結束於 **2018-02-27**（= 資料凍結日），
+  而非各自的死亡日。對照本專案視窗（2016-01-04..2026-08-31）：
+
+  | 量 | 數值 |
+  |---|---:|
+  | 視窗內死亡且我們缺的 | 6,963 |
+  | repo 內有的 | 98（1.41%） |
+  | **repo 內有且死亡於凍結日之前（真正可用）** | **32（0.46%）** |
+  | 可用期間覆蓋 | 2016-01-04..2018-02-27 = **本視窗的前 20%** |
+
+  那 32 檔本身是真實的（YHOO 2017-06、EMC 2016-09、BTU 2017-03、BRCM 2016-02、
+  GMCR 2016-03、BXLT 2016-06、CVC 2016-06、STJ 2017-01…），
+  但 **0.46% 改變不了任何結論**。且該 repo **無 license 檔**。
+  → 結論：**個股層級的免費存活者修正，在本視窗上不存在。**
+  這與 HF 是**同一個失效模式**（資料凍結在來源商切換名單的時間點），
+  見 `process.md` S-50。
 
 ### 4.3 資料來源限制（已實測，非推測）
 
