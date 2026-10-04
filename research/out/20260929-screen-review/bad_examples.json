@@ -1,0 +1,5994 @@
+[
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "GLPI",
+    "adverse_close": -0.6913060897435898,
+    "end_return": -0.616786858974359
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "WEN",
+    "adverse_close": -0.6821276595744681,
+    "end_return": -0.534468085106383
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "SPCE",
+    "adverse_close": -0.675,
+    "end_return": -0.6206081081081081
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "PLNT",
+    "adverse_close": -0.6680327868852458,
+    "end_return": -0.5910077145612342
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "PLNT",
+    "adverse_close": -0.6680327868852458,
+    "end_return": -0.5910077145612342
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "CHDN",
+    "adverse_close": -0.6114787477729702,
+    "end_return": -0.5371595825909901
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "VICI",
+    "adverse_close": -0.5972671700827041,
+    "end_return": -0.5573534699748292
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "Z",
+    "adverse_close": -0.5906040268456376,
+    "end_return": -0.554918972008512
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "GDXJ",
+    "adverse_close": -0.5689655172413792,
+    "end_return": -0.46853448275862064
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "ENPH",
+    "adverse_close": -0.5605422238505221,
+    "end_return": -0.5237222934603407
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "GDX",
+    "adverse_close": -0.46662783375314865,
+    "end_return": -0.3529596977329975
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "FSLY",
+    "adverse_close": -0.4627358091532019,
+    "end_return": -0.3730648845275357
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "MPT",
+    "adverse_close": -0.4235294117647058,
+    "end_return": -0.4088235294117647
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "MPT",
+    "adverse_close": -0.4235294117647058,
+    "end_return": -0.4088235294117647
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "BAM",
+    "adverse_close": -0.4132513661202186,
+    "end_return": -0.4132513661202186
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "B",
+    "adverse_close": -0.41288888888888886,
+    "end_return": -0.29422222222222216
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "CPT",
+    "adverse_close": -0.4033260540903746,
+    "end_return": -0.4033260540903746
+  },
+  {
+    "model": "current20",
+    "date": "2020-01-23",
+    "symbol": "GEN",
+    "adverse_close": -0.39484827099506004,
+    "end_return": -0.2776993648553282
+  },
+  {
+    "model": "report28",
+    "date": "2020-01-23",
+    "symbol": "GEN",
+    "adverse_close": -0.39484827099506004,
+    "end_return": -0.2776993648553282
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-01-23",
+    "symbol": "GEN",
+    "adverse_close": -0.39484827099506004,
+    "end_return": -0.2776993648553282
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "WRB",
+    "adverse_close": -0.3894189071986124,
+    "end_return": -0.38855160450997406
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "BWXT",
+    "adverse_close": -0.3841758241758242,
+    "end_return": -0.37304029304029307
+  },
+  {
+    "model": "current20",
+    "date": "2017-12-27",
+    "symbol": "RIOT",
+    "adverse_close": -0.37022058823529413,
+    "end_return": -0.37022058823529413
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "PODD",
+    "adverse_close": -0.3693121179780732,
+    "end_return": -0.3082371204036092
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "PNW",
+    "adverse_close": -0.36550188752298907,
+    "end_return": -0.36550188752298907
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "PNW",
+    "adverse_close": -0.36550188752298907,
+    "end_return": -0.36550188752298907
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "PNW",
+    "adverse_close": -0.36550188752298907,
+    "end_return": -0.36550188752298907
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "REXR",
+    "adverse_close": -0.3533333333333333,
+    "end_return": -0.3533333333333333
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "EVRG",
+    "adverse_close": -0.3523678792038435,
+    "end_return": -0.3523678792038435
+  },
+  {
+    "model": "current20",
+    "date": "2019-04-08",
+    "symbol": "STNE",
+    "adverse_close": -0.34326018808777425,
+    "end_return": -0.292319749216301
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "GRFS",
+    "adverse_close": -0.34115742614326183,
+    "end_return": -0.2662889518413598
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "AON",
+    "adverse_close": -0.34098620720045825,
+    "end_return": -0.34098620720045825
+  },
+  {
+    "model": "current20",
+    "date": "2019-08-29",
+    "symbol": "ROKU",
+    "adverse_close": -0.33938269969532386,
+    "end_return": -0.33938269969532386
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "DUK",
+    "adverse_close": -0.329937304075235,
+    "end_return": -0.329937304075235
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "DUK",
+    "adverse_close": -0.329937304075235,
+    "end_return": -0.329937304075235
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "DUK",
+    "adverse_close": -0.329937304075235,
+    "end_return": -0.329937304075235
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "SCI",
+    "adverse_close": -0.3244186046511628,
+    "end_return": -0.3034883720930234
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "VALE",
+    "adverse_close": -0.31999999999999995,
+    "end_return": -0.29391304347826097
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "DXCM",
+    "adverse_close": -0.3128684399712437,
+    "end_return": -0.2468727534148094
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "INGN",
+    "adverse_close": -0.3068712003393186,
+    "end_return": -0.28806729817616294
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "INGN",
+    "adverse_close": -0.3068712003393186,
+    "end_return": -0.28806729817616294
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "KNSL",
+    "adverse_close": -0.30317302925136336,
+    "end_return": -0.2863163113534952
+  },
+  {
+    "model": "current20",
+    "date": "2020-08-12",
+    "symbol": "NXH",
+    "adverse_close": -0.3027563395810364,
+    "end_return": -0.17861080485115766
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "DKNG",
+    "adverse_close": -0.3024630541871921,
+    "end_return": -0.15211822660098517
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "NEE",
+    "adverse_close": -0.3021834061135372,
+    "end_return": -0.3021834061135372
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "NEE",
+    "adverse_close": -0.3021834061135372,
+    "end_return": -0.3021834061135372
+  },
+  {
+    "model": "report28",
+    "date": "2019-08-01",
+    "symbol": "GKOS",
+    "adverse_close": -0.294301891338393,
+    "end_return": -0.2075653535718589
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "XEL",
+    "adverse_close": -0.29376482075603283,
+    "end_return": -0.29376482075603283
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "SEDG",
+    "adverse_close": -0.29356164383561645,
+    "end_return": -0.1998972602739726
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "ES",
+    "adverse_close": -0.2871596954208825,
+    "end_return": -0.2871596954208825
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "ES",
+    "adverse_close": -0.2871596954208825,
+    "end_return": -0.2871596954208825
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "UDOW",
+    "adverse_close": -0.28482972136222917,
+    "end_return": -0.109391124871001
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "UDOW",
+    "adverse_close": -0.28482972136222917,
+    "end_return": -0.109391124871001
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "FNV",
+    "adverse_close": -0.28267427639624954,
+    "end_return": -0.2345699143905423
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "TQQQ",
+    "adverse_close": -0.28137436985937925,
+    "end_return": -0.027062881400902183
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "SPXL",
+    "adverse_close": -0.27890653860362025,
+    "end_return": -0.10195788695973407
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "UPRO",
+    "adverse_close": -0.27845884413309985,
+    "end_return": -0.10087565674255683
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "UPRO",
+    "adverse_close": -0.27845884413309985,
+    "end_return": -0.10087565674255683
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "UPRO",
+    "adverse_close": -0.27845884413309985,
+    "end_return": -0.10087565674255683
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "NVDA",
+    "adverse_close": -0.2731310140636565,
+    "end_return": -0.2384900074019245
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "RUN",
+    "adverse_close": -0.2709180098107917,
+    "end_return": -0.1871058163980378
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "NGG",
+    "adverse_close": -0.2629156769596199,
+    "end_return": -0.2629156769596199
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "FAS",
+    "adverse_close": -0.2618931446694316,
+    "end_return": -0.09136374725542828
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "FAS",
+    "adverse_close": -0.2618931446694316,
+    "end_return": -0.09136374725542828
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "FAS",
+    "adverse_close": -0.2618931446694316,
+    "end_return": -0.09136374725542828
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "AEE",
+    "adverse_close": -0.25964705882352945,
+    "end_return": -0.25964705882352945
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "AEE",
+    "adverse_close": -0.25964705882352945,
+    "end_return": -0.25964705882352945
+  },
+  {
+    "model": "current20",
+    "date": "2017-02-13",
+    "symbol": "CLF",
+    "adverse_close": -0.25426621160409557,
+    "end_return": -0.22610921501706482
+  },
+  {
+    "model": "current20",
+    "date": "2016-08-22",
+    "symbol": "AMD",
+    "adverse_close": -0.25065274151436034,
+    "end_return": -0.1945169712793734
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "AYI",
+    "adverse_close": -0.2502197112366604,
+    "end_return": -0.2293157564344006
+  },
+  {
+    "model": "current20",
+    "date": "2019-08-29",
+    "symbol": "SHOP",
+    "adverse_close": -0.2492378048780487,
+    "end_return": -0.22332317073170727
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "PCTY",
+    "adverse_close": -0.2487083137623297,
+    "end_return": -0.22827618600281818
+  },
+  {
+    "model": "current20",
+    "date": "2019-10-25",
+    "symbol": "PDD",
+    "adverse_close": -0.24182059640226972,
+    "end_return": -0.17928286852589637
+  },
+  {
+    "model": "report28",
+    "date": "2018-11-09",
+    "symbol": "ROST",
+    "adverse_close": -0.2376411054885169,
+    "end_return": -0.21613468275593628
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-11-09",
+    "symbol": "ROST",
+    "adverse_close": -0.2376411054885169,
+    "end_return": -0.21613468275593628
+  },
+  {
+    "model": "report28",
+    "date": "2019-05-07",
+    "symbol": "CRUS",
+    "adverse_close": -0.23578732106339473,
+    "end_return": -0.18036809815950916
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-05-07",
+    "symbol": "CRUS",
+    "adverse_close": -0.23578732106339473,
+    "end_return": -0.18036809815950916
+  },
+  {
+    "model": "report28",
+    "date": "2017-06-08",
+    "symbol": "MKSI",
+    "adverse_close": -0.23392145702902678,
+    "end_return": -0.20717131474103578
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "MANH",
+    "adverse_close": -0.2338669747483083,
+    "end_return": -0.21125598283545144
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "NEM",
+    "adverse_close": -0.22776148582600197,
+    "end_return": -0.2070381231671553
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "NEM",
+    "adverse_close": -0.22776148582600197,
+    "end_return": -0.2070381231671553
+  },
+  {
+    "model": "report28",
+    "date": "2016-09-20",
+    "symbol": "ILMN",
+    "adverse_close": -0.22695277020890092,
+    "end_return": -0.17563578564940963
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "CCI",
+    "adverse_close": -0.22552162080435434,
+    "end_return": -0.22552162080435434
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "CCI",
+    "adverse_close": -0.22552162080435434,
+    "end_return": -0.22552162080435434
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "CCI",
+    "adverse_close": -0.22552162080435434,
+    "end_return": -0.22552162080435434
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "SBAC",
+    "adverse_close": -0.2247126436781609,
+    "end_return": -0.2247126436781609
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "EQIX",
+    "adverse_close": -0.21855040266592607,
+    "end_return": -0.21855040266592607
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "EQIX",
+    "adverse_close": -0.21855040266592607,
+    "end_return": -0.21855040266592607
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "EQIX",
+    "adverse_close": -0.21855040266592607,
+    "end_return": -0.21855040266592607
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "PLUG",
+    "adverse_close": -0.2134831460674158,
+    "end_return": 0.05814606741573036
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "AMD",
+    "adverse_close": -0.21259842519685035,
+    "end_return": -0.17039370078740157
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "FCX",
+    "adverse_close": -0.20594965675057209,
+    "end_return": -0.13501144164759726
+  },
+  {
+    "model": "current20",
+    "date": "2020-03-20",
+    "symbol": "ZM",
+    "adverse_close": -0.19892391713880275,
+    "end_return": 0.04925121393837184
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "NCLH",
+    "adverse_close": -0.19873484449130208,
+    "end_return": -0.02477596204533472
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "MUR",
+    "adverse_close": -0.19822073950514318,
+    "end_return": -0.13705865999443978
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "ADBE",
+    "adverse_close": -0.19806409859590868,
+    "end_return": -0.16896930133093224
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "ADBE",
+    "adverse_close": -0.19806409859590868,
+    "end_return": -0.16896930133093224
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "DDM",
+    "adverse_close": -0.1968379446640316,
+    "end_return": -0.06719367588932801
+  },
+  {
+    "model": "current20",
+    "date": "2018-11-09",
+    "symbol": "ULTA",
+    "adverse_close": -0.19656401944894653,
+    "end_return": -0.19656401944894653
+  },
+  {
+    "model": "current20",
+    "date": "2018-03-26",
+    "symbol": "UVXY",
+    "adverse_close": -0.19209354120267264,
+    "end_return": -0.08296213808463249
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "SSO",
+    "adverse_close": -0.19053708439897699,
+    "end_return": -0.0626598465473146
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "SSO",
+    "adverse_close": -0.19053708439897699,
+    "end_return": -0.0626598465473146
+  },
+  {
+    "model": "current20",
+    "date": "2017-11-28",
+    "symbol": "XYZ",
+    "adverse_close": -0.18865740740740755,
+    "end_return": -0.17245370370370372
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "CACC",
+    "adverse_close": -0.18787443086508504,
+    "end_return": -0.15267460127273202
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "DPZ",
+    "adverse_close": -0.18514147629885636,
+    "end_return": -0.15718339936497228
+  },
+  {
+    "model": "current20",
+    "date": "2016-10-18",
+    "symbol": "NTES",
+    "adverse_close": -0.18511593118922964,
+    "end_return": -0.1469708302169035
+  },
+  {
+    "model": "current20",
+    "date": "2018-07-19",
+    "symbol": "USFD",
+    "adverse_close": -0.1815,
+    "end_return": -0.1522500000000001
+  },
+  {
+    "model": "report28",
+    "date": "2018-07-19",
+    "symbol": "USFD",
+    "adverse_close": -0.1815,
+    "end_return": -0.1522500000000001
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-07-19",
+    "symbol": "USFD",
+    "adverse_close": -0.1815,
+    "end_return": -0.1522500000000001
+  },
+  {
+    "model": "current20",
+    "date": "2020-08-12",
+    "symbol": "W",
+    "adverse_close": -0.18131921665421713,
+    "end_return": -0.14062550745347668
+  },
+  {
+    "model": "current20",
+    "date": "2019-08-29",
+    "symbol": "MKTX",
+    "adverse_close": -0.17961091460333511,
+    "end_return": -0.17961091460333511
+  },
+  {
+    "model": "current20",
+    "date": "2020-01-23",
+    "symbol": "SNAP",
+    "adverse_close": -0.17858954845256214,
+    "end_return": -0.1527143581938103
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-01-23",
+    "symbol": "SNAP",
+    "adverse_close": -0.17858954845256214,
+    "end_return": -0.1527143581938103
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "DVN",
+    "adverse_close": -0.17788724685276414,
+    "end_return": -0.01751505199781067
+  },
+  {
+    "model": "current20",
+    "date": "2017-06-08",
+    "symbol": "TSLA",
+    "adverse_close": -0.1750801282051282,
+    "end_return": -0.16346153846153855
+  },
+  {
+    "model": "current20",
+    "date": "2020-05-18",
+    "symbol": "QDEL",
+    "adverse_close": -0.17451106812808947,
+    "end_return": 0.11347517730496448
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-11-28",
+    "symbol": "AXTA",
+    "adverse_close": -0.17443408788282289,
+    "end_return": -0.14513981358189076
+  },
+  {
+    "model": "current20",
+    "date": "2017-11-28",
+    "symbol": "ALGN",
+    "adverse_close": -0.17261724659606648,
+    "end_return": -0.14353252647503778
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-11-28",
+    "symbol": "ALGN",
+    "adverse_close": -0.17261724659606648,
+    "end_return": -0.14353252647503778
+  },
+  {
+    "model": "report28",
+    "date": "2019-08-01",
+    "symbol": "DINO",
+    "adverse_close": -0.17130785481083155,
+    "end_return": -0.14518916842711738
+  },
+  {
+    "model": "current20",
+    "date": "2018-11-09",
+    "symbol": "TWLO",
+    "adverse_close": -0.17069172768003504,
+    "end_return": 0.013222598623101156
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "XME",
+    "adverse_close": -0.16530944625407162,
+    "end_return": -0.11359934853420195
+  },
+  {
+    "model": "current20",
+    "date": "2016-10-18",
+    "symbol": "BBD",
+    "adverse_close": -0.16502946954813358,
+    "end_return": -0.12966601178781934
+  },
+  {
+    "model": "report28",
+    "date": "2016-10-18",
+    "symbol": "BBD",
+    "adverse_close": -0.16502946954813358,
+    "end_return": -0.12966601178781934
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-10-18",
+    "symbol": "BBD",
+    "adverse_close": -0.16502946954813358,
+    "end_return": -0.12966601178781934
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "JD",
+    "adverse_close": -0.16501976284584985,
+    "end_return": -0.035573122529644396
+  },
+  {
+    "model": "report28",
+    "date": "2017-02-13",
+    "symbol": "IDCC",
+    "adverse_close": -0.1649175412293853,
+    "end_return": -0.15142428785607187
+  },
+  {
+    "model": "current20",
+    "date": "2020-09-10",
+    "symbol": "PTON",
+    "adverse_close": -0.16407169759394125,
+    "end_return": 0.17219552221310508
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "XYZ",
+    "adverse_close": -0.16335350043215213,
+    "end_return": -0.05342480553154716
+  },
+  {
+    "model": "report28",
+    "date": "2017-06-08",
+    "symbol": "KLAC",
+    "adverse_close": -0.1627630375114364,
+    "end_return": -0.13476669716376932
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-06-08",
+    "symbol": "KLAC",
+    "adverse_close": -0.1627630375114364,
+    "end_return": -0.13476669716376932
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "TNA",
+    "adverse_close": -0.16148199930094376,
+    "end_return": 0.030758476057322515
+  },
+  {
+    "model": "current20",
+    "date": "2017-11-28",
+    "symbol": "MU",
+    "adverse_close": -0.16000000000000003,
+    "end_return": -0.10568421052631582
+  },
+  {
+    "model": "current20",
+    "date": "2016-08-22",
+    "symbol": "GDXJ",
+    "adverse_close": -0.15992757996379003,
+    "end_return": -0.10541138603902644
+  },
+  {
+    "model": "current20",
+    "date": "2017-06-08",
+    "symbol": "LRCX",
+    "adverse_close": -0.15779927448609432,
+    "end_return": -0.10459492140266013
+  },
+  {
+    "model": "report28",
+    "date": "2017-06-08",
+    "symbol": "LRCX",
+    "adverse_close": -0.15779927448609432,
+    "end_return": -0.10459492140266013
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-06-08",
+    "symbol": "LRCX",
+    "adverse_close": -0.15779927448609432,
+    "end_return": -0.10459492140266013
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "HAL",
+    "adverse_close": -0.15761853058270003,
+    "end_return": -0.1272167933405719
+  },
+  {
+    "model": "current20",
+    "date": "2017-02-13",
+    "symbol": "VALE",
+    "adverse_close": -0.15611061552185546,
+    "end_return": -0.12042818911686004
+  },
+  {
+    "model": "report28",
+    "date": "2018-07-19",
+    "symbol": "TRIP",
+    "adverse_close": -0.15530615613137488,
+    "end_return": -0.11338504703746499
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "WMT",
+    "adverse_close": -0.1534406215316314,
+    "end_return": -0.1387347391786904
+  },
+  {
+    "model": "current20",
+    "date": "2017-11-28",
+    "symbol": "CGNX",
+    "adverse_close": -0.1533648498331479,
+    "end_return": -0.1458565072302559
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-11-28",
+    "symbol": "CGNX",
+    "adverse_close": -0.1533648498331479,
+    "end_return": -0.1458565072302559
+  },
+  {
+    "model": "current20",
+    "date": "2020-11-05",
+    "symbol": "IQ",
+    "adverse_close": -0.15313582146979599,
+    "end_return": -0.11388995767602916
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-10-08",
+    "symbol": "UNP",
+    "adverse_close": -0.15280492572322124,
+    "end_return": -0.06142494136043786
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "THO",
+    "adverse_close": -0.15266776917051095,
+    "end_return": -0.03429367220819912
+  },
+  {
+    "model": "current20",
+    "date": "2020-11-05",
+    "symbol": "TMO",
+    "adverse_close": -0.1523776466504686,
+    "end_return": -0.08476994870608201
+  },
+  {
+    "model": "report28",
+    "date": "2020-11-05",
+    "symbol": "TMO",
+    "adverse_close": -0.1523776466504686,
+    "end_return": -0.08476994870608201
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-11-05",
+    "symbol": "TMO",
+    "adverse_close": -0.1523776466504686,
+    "end_return": -0.08476994870608201
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "FICO",
+    "adverse_close": -0.1521802628833716,
+    "end_return": -0.13728353849363661
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "UDOW",
+    "adverse_close": -0.15203299941072468,
+    "end_return": 0.04419563936358273
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "COR",
+    "adverse_close": -0.1517024919155412,
+    "end_return": -0.04337074377021122
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "GOOGL",
+    "adverse_close": -0.15168350168350164,
+    "end_return": -0.03720538720538724
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "GOOGL",
+    "adverse_close": -0.15168350168350164,
+    "end_return": -0.03720538720538724
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "PYPL",
+    "adverse_close": -0.1511737089201879,
+    "end_return": -0.06866197183098599
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "GOOG",
+    "adverse_close": -0.14858891533492014,
+    "end_return": -0.027711662699761996
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "GOOG",
+    "adverse_close": -0.14858891533492014,
+    "end_return": -0.027711662699761996
+  },
+  {
+    "model": "current20",
+    "date": "2018-02-26",
+    "symbol": "PRKS",
+    "adverse_close": -0.14648910411622273,
+    "end_return": -0.13740920096852294
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-02-26",
+    "symbol": "PRKS",
+    "adverse_close": -0.14648910411622273,
+    "end_return": -0.13740920096852294
+  },
+  {
+    "model": "current20",
+    "date": "2016-08-22",
+    "symbol": "ULTA",
+    "adverse_close": -0.14640043964095983,
+    "end_return": -0.1456310679611651
+  },
+  {
+    "model": "report28",
+    "date": "2016-08-22",
+    "symbol": "ULTA",
+    "adverse_close": -0.14640043964095983,
+    "end_return": -0.1456310679611651
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-08-22",
+    "symbol": "ULTA",
+    "adverse_close": -0.14640043964095983,
+    "end_return": -0.1456310679611651
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "FTNT",
+    "adverse_close": -0.14617940199335544,
+    "end_return": -0.11461794019933547
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "FTNT",
+    "adverse_close": -0.14617940199335544,
+    "end_return": -0.11461794019933547
+  },
+  {
+    "model": "current20",
+    "date": "2017-02-13",
+    "symbol": "RIO",
+    "adverse_close": -0.14536775873291397,
+    "end_return": -0.12019960945975283
+  },
+  {
+    "model": "current20",
+    "date": "2018-03-26",
+    "symbol": "MU",
+    "adverse_close": -0.14438794042862335,
+    "end_return": -0.14438794042862335
+  },
+  {
+    "model": "current20",
+    "date": "2018-02-26",
+    "symbol": "VALE",
+    "adverse_close": -0.1441317776252573,
+    "end_return": -0.12903225806451613
+  },
+  {
+    "model": "report28",
+    "date": "2020-10-08",
+    "symbol": "ICLR",
+    "adverse_close": -0.14411890403153038,
+    "end_return": -0.04819792012916091
+  },
+  {
+    "model": "current20",
+    "date": "2016-08-22",
+    "symbol": "VIPS",
+    "adverse_close": -0.1434948979591837,
+    "end_return": -0.1243622448979591
+  },
+  {
+    "model": "current20",
+    "date": "2020-11-05",
+    "symbol": "FIVN",
+    "adverse_close": -0.1420306120115713,
+    "end_return": -0.0635446131103754
+  },
+  {
+    "model": "current20",
+    "date": "2018-03-26",
+    "symbol": "SHOP",
+    "adverse_close": -0.14107274063188835,
+    "end_return": -0.09551800146950762
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "QCOM",
+    "adverse_close": -0.14096739711384287,
+    "end_return": -0.14096739711384287
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "QCOM",
+    "adverse_close": -0.14096739711384287,
+    "end_return": -0.14096739711384287
+  },
+  {
+    "model": "current20",
+    "date": "2019-08-01",
+    "symbol": "SPOT",
+    "adverse_close": -0.14045999352121807,
+    "end_return": -0.11661807580174932
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-08-01",
+    "symbol": "SPOT",
+    "adverse_close": -0.14045999352121807,
+    "end_return": -0.11661807580174932
+  },
+  {
+    "model": "current20",
+    "date": "2020-04-20",
+    "symbol": "BILI",
+    "adverse_close": -0.13963039014373713,
+    "end_return": 0.15195071868583154
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-08-04",
+    "symbol": "JD",
+    "adverse_close": -0.1395797598627787,
+    "end_return": -0.0996998284734133
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "VICI",
+    "adverse_close": -0.138730853391685,
+    "end_return": -0.07264770240700213
+  },
+  {
+    "model": "report28",
+    "date": "2019-10-25",
+    "symbol": "SAIA",
+    "adverse_close": -0.13816425120772946,
+    "end_return": -0.10086956521739132
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "FIVE",
+    "adverse_close": -0.13790976383503706,
+    "end_return": -0.09561156150863592
+  },
+  {
+    "model": "report28",
+    "date": "2019-10-25",
+    "symbol": "FLG",
+    "adverse_close": -0.13703703703703696,
+    "end_return": -0.10962962962962952
+  },
+  {
+    "model": "current20",
+    "date": "2016-10-18",
+    "symbol": "EWZ",
+    "adverse_close": -0.1367635297254064,
+    "end_return": -0.10770461210343907
+  },
+  {
+    "model": "report28",
+    "date": "2016-10-18",
+    "symbol": "EWZ",
+    "adverse_close": -0.1367635297254064,
+    "end_return": -0.10770461210343907
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-10-18",
+    "symbol": "EWZ",
+    "adverse_close": -0.1367635297254064,
+    "end_return": -0.10770461210343907
+  },
+  {
+    "model": "current20",
+    "date": "2018-06-20",
+    "symbol": "NFLX",
+    "adverse_close": -0.13573801613668723,
+    "end_return": -0.13573801613668723
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-06-20",
+    "symbol": "NFLX",
+    "adverse_close": -0.13573801613668723,
+    "end_return": -0.13573801613668723
+  },
+  {
+    "model": "report28",
+    "date": "2018-02-26",
+    "symbol": "CRI",
+    "adverse_close": -0.13569763569763582,
+    "end_return": -0.11938061938061939
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-02-26",
+    "symbol": "CRI",
+    "adverse_close": -0.13569763569763582,
+    "end_return": -0.11938061938061939
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "TRMB",
+    "adverse_close": -0.13567038470293646,
+    "end_return": -0.11700432506259961
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "TRMB",
+    "adverse_close": -0.13567038470293646,
+    "end_return": -0.11700432506259961
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-06-16",
+    "symbol": "D",
+    "adverse_close": -0.1355733082706767,
+    "end_return": -0.11360432330827064
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "ADBE",
+    "adverse_close": -0.13487272727272726,
+    "end_return": -0.09501818181818178
+  },
+  {
+    "model": "current20",
+    "date": "2018-12-11",
+    "symbol": "MKTX",
+    "adverse_close": -0.1343264136193867,
+    "end_return": -0.07639190480326585
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "MKTX",
+    "adverse_close": -0.1343264136193867,
+    "end_return": -0.07639190480326585
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-12-11",
+    "symbol": "MKTX",
+    "adverse_close": -0.1343264136193867,
+    "end_return": -0.07639190480326585
+  },
+  {
+    "model": "report28",
+    "date": "2016-10-18",
+    "symbol": "TRMB",
+    "adverse_close": -0.13426716774854797,
+    "end_return": -0.020840450973693136
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-10-18",
+    "symbol": "TRMB",
+    "adverse_close": -0.13426716774854797,
+    "end_return": -0.020840450973693136
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "HP",
+    "adverse_close": -0.133596622633801,
+    "end_return": -0.08171047255889963
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "HP",
+    "adverse_close": -0.133596622633801,
+    "end_return": -0.08171047255889963
+  },
+  {
+    "model": "report28",
+    "date": "2017-11-28",
+    "symbol": "P",
+    "adverse_close": -0.13318895506226303,
+    "end_return": -0.13318895506226303
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-10-12",
+    "symbol": "HP",
+    "adverse_close": -0.1327014218009478,
+    "end_return": -0.10110584518167443
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "CUBE",
+    "adverse_close": -0.13230293663060277,
+    "end_return": -0.11004636785162292
+  },
+  {
+    "model": "report28",
+    "date": "2020-02-21",
+    "symbol": "GLDM",
+    "adverse_close": -0.13230035756853398,
+    "end_return": -0.11442193087008357
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "GLD",
+    "adverse_close": -0.13211356466876967,
+    "end_return": -0.11602523659305986
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "GLD",
+    "adverse_close": -0.13211356466876967,
+    "end_return": -0.11602523659305986
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "COP",
+    "adverse_close": -0.13138686131386867,
+    "end_return": -0.06715328467153292
+  },
+  {
+    "model": "current20",
+    "date": "2016-08-22",
+    "symbol": "WPM",
+    "adverse_close": -0.13134430727023327,
+    "end_return": -0.08196159122085045
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-06-08",
+    "symbol": "MCHP",
+    "adverse_close": -0.13110245244098107,
+    "end_return": -0.10199404079761643
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-05-18",
+    "symbol": "BMY",
+    "adverse_close": -0.13091482649842268,
+    "end_return": -0.09999999999999998
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "WEX",
+    "adverse_close": -0.13016688061617454,
+    "end_return": -0.013863928112965551
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-06-20",
+    "symbol": "TQQQ",
+    "adverse_close": -0.13006396588486135,
+    "end_return": 0.013294870186880914
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "FXI",
+    "adverse_close": -0.12998299641035338,
+    "end_return": -0.048932552427734644
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "FXI",
+    "adverse_close": -0.12998299641035338,
+    "end_return": -0.048932552427734644
+  },
+  {
+    "model": "report28",
+    "date": "2019-09-27",
+    "symbol": "EIX",
+    "adverse_close": -0.12966135195677964,
+    "end_return": -0.12966135195677964
+  },
+  {
+    "model": "current20",
+    "date": "2020-11-05",
+    "symbol": "JD",
+    "adverse_close": -0.12956521739130433,
+    "end_return": -0.07402173913043486
+  },
+  {
+    "model": "current20",
+    "date": "2016-08-22",
+    "symbol": "NEM",
+    "adverse_close": -0.128199268738574,
+    "end_return": -0.128199268738574
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "UAL",
+    "adverse_close": -0.12784530386740323,
+    "end_return": -0.11403314917127061
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "UAL",
+    "adverse_close": -0.12784530386740323,
+    "end_return": -0.11403314917127061
+  },
+  {
+    "model": "current20",
+    "date": "2018-03-26",
+    "symbol": "AMZN",
+    "adverse_close": -0.12744848639023165,
+    "end_return": -0.07148308318494023
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-03-26",
+    "symbol": "AMZN",
+    "adverse_close": -0.12744848639023165,
+    "end_return": -0.07148308318494023
+  },
+  {
+    "model": "current20",
+    "date": "2018-12-11",
+    "symbol": "VTR",
+    "adverse_close": -0.12712774114399616,
+    "end_return": -0.09078362214384295
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "VTR",
+    "adverse_close": -0.12712774114399616,
+    "end_return": -0.09078362214384295
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-12-11",
+    "symbol": "VTR",
+    "adverse_close": -0.12712774114399616,
+    "end_return": -0.09078362214384295
+  },
+  {
+    "model": "current20",
+    "date": "2018-02-26",
+    "symbol": "TGT",
+    "adverse_close": -0.12683303318754824,
+    "end_return": -0.09596089529199892
+  },
+  {
+    "model": "current20",
+    "date": "2018-12-11",
+    "symbol": "VNQ",
+    "adverse_close": -0.12640038967364842,
+    "end_return": -0.05577204091573307
+  },
+  {
+    "model": "current20",
+    "date": "2018-06-20",
+    "symbol": "XYZ",
+    "adverse_close": -0.12634486769409714,
+    "end_return": 0.022390229717941246
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-06-20",
+    "symbol": "XYZ",
+    "adverse_close": -0.12634486769409714,
+    "end_return": 0.022390229717941246
+  },
+  {
+    "model": "report28",
+    "date": "2019-07-03",
+    "symbol": "MTD",
+    "adverse_close": -0.12609418666420313,
+    "end_return": -0.12142873640206031
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "BA",
+    "adverse_close": -0.12600246761258493,
+    "end_return": -0.03382685585029821
+  },
+  {
+    "model": "current20",
+    "date": "2017-02-13",
+    "symbol": "TSLA",
+    "adverse_close": -0.12587412587412583,
+    "end_return": -0.0747713824636902
+  },
+  {
+    "model": "report28",
+    "date": "2017-02-13",
+    "symbol": "TSLA",
+    "adverse_close": -0.12587412587412583,
+    "end_return": -0.0747713824636902
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-02-13",
+    "symbol": "TSLA",
+    "adverse_close": -0.12587412587412583,
+    "end_return": -0.0747713824636902
+  },
+  {
+    "model": "report28",
+    "date": "2019-01-10",
+    "symbol": "VVV",
+    "adverse_close": -0.1256038647342994,
+    "end_return": -0.11884057971014494
+  },
+  {
+    "model": "report28",
+    "date": "2020-10-08",
+    "symbol": "QGEN",
+    "adverse_close": -0.1255140354013946,
+    "end_return": -0.05560522081172892
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-10-08",
+    "symbol": "QGEN",
+    "adverse_close": -0.1255140354013946,
+    "end_return": -0.05560522081172892
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "ROL",
+    "adverse_close": -0.12446808510638296,
+    "end_return": -0.11489361702127654
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "ROL",
+    "adverse_close": -0.12446808510638296,
+    "end_return": -0.11489361702127654
+  },
+  {
+    "model": "current20",
+    "date": "2016-05-26",
+    "symbol": "NXPI",
+    "adverse_close": -0.12367297800153232,
+    "end_return": -0.12367297800153232
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-05-26",
+    "symbol": "NXPI",
+    "adverse_close": -0.12367297800153232,
+    "end_return": -0.12367297800153232
+  },
+  {
+    "model": "current20",
+    "date": "2016-10-18",
+    "symbol": "AMZN",
+    "adverse_close": -0.12359824475865433,
+    "end_return": -0.09410043881033658
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "EQIX",
+    "adverse_close": -0.12350769525818661,
+    "end_return": -0.0638035192021863
+  },
+  {
+    "model": "report28",
+    "date": "2020-10-08",
+    "symbol": "EQIX",
+    "adverse_close": -0.12350769525818661,
+    "end_return": -0.0638035192021863
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-10-08",
+    "symbol": "EQIX",
+    "adverse_close": -0.12350769525818661,
+    "end_return": -0.0638035192021863
+  },
+  {
+    "model": "current20",
+    "date": "2020-04-20",
+    "symbol": "AMD",
+    "adverse_close": -0.12337434094903332,
+    "end_return": -0.040421792618629104
+  },
+  {
+    "model": "current20",
+    "date": "2020-02-21",
+    "symbol": "DLR",
+    "adverse_close": -0.1231566652065994,
+    "end_return": -0.11519929916776162
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-02-21",
+    "symbol": "DLR",
+    "adverse_close": -0.1231566652065994,
+    "end_return": -0.11519929916776162
+  },
+  {
+    "model": "report28",
+    "date": "2016-09-20",
+    "symbol": "MKTX",
+    "adverse_close": -0.12280398594551012,
+    "end_return": -0.10863429525948975
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-09-20",
+    "symbol": "MKTX",
+    "adverse_close": -0.12280398594551012,
+    "end_return": -0.10863429525948975
+  },
+  {
+    "model": "current20",
+    "date": "2018-02-26",
+    "symbol": "MELI",
+    "adverse_close": -0.12184124719788059,
+    "end_return": -0.09975545139596498
+  },
+  {
+    "model": "current20",
+    "date": "2019-04-08",
+    "symbol": "ASHR",
+    "adverse_close": -0.12179908076165469,
+    "end_return": -0.12179908076165469
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-04-08",
+    "symbol": "ASHR",
+    "adverse_close": -0.12179908076165469,
+    "end_return": -0.12179908076165469
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "EZA",
+    "adverse_close": -0.12175457775348475,
+    "end_return": 0.028969663842579818
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "SPXL",
+    "adverse_close": -0.12089416058394165,
+    "end_return": 0.07915145985401462
+  },
+  {
+    "model": "current20",
+    "date": "2020-03-20",
+    "symbol": "KR",
+    "adverse_close": -0.12083071113908117,
+    "end_return": 0.004719949653870348
+  },
+  {
+    "model": "report28",
+    "date": "2019-05-07",
+    "symbol": "VIAV",
+    "adverse_close": -0.1207658321060383,
+    "end_return": -0.09572901325478655
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "UPRO",
+    "adverse_close": -0.12053379250968577,
+    "end_return": 0.07920792079207928
+  },
+  {
+    "model": "current20",
+    "date": "2017-08-04",
+    "symbol": "BKNG",
+    "adverse_close": -0.12028504730310852,
+    "end_return": -0.09042879960683126
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-08-04",
+    "symbol": "BKNG",
+    "adverse_close": -0.12028504730310852,
+    "end_return": -0.09042879960683126
+  },
+  {
+    "model": "current20",
+    "date": "2018-12-11",
+    "symbol": "IYR",
+    "adverse_close": -0.12023460410557185,
+    "end_return": -0.05131964809384171
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-05-18",
+    "symbol": "PFE",
+    "adverse_close": -0.120211360634082,
+    "end_return": -0.11756935270805824
+  },
+  {
+    "model": "report28",
+    "date": "2016-05-26",
+    "symbol": "UNM",
+    "adverse_close": -0.12019758507135003,
+    "end_return": -0.12019758507135003
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "HQY",
+    "adverse_close": -0.11957908163265307,
+    "end_return": -0.1126700680272108
+  },
+  {
+    "model": "current20",
+    "date": "2017-07-07",
+    "symbol": "LUV",
+    "adverse_close": -0.11804893549412143,
+    "end_return": -0.10104861773117257
+  },
+  {
+    "model": "report28",
+    "date": "2017-07-07",
+    "symbol": "LUV",
+    "adverse_close": -0.11804893549412143,
+    "end_return": -0.10104861773117257
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-07-07",
+    "symbol": "LUV",
+    "adverse_close": -0.11804893549412143,
+    "end_return": -0.10104861773117257
+  },
+  {
+    "model": "current20",
+    "date": "2019-05-07",
+    "symbol": "AMZN",
+    "adverse_close": -0.11788617886178865,
+    "end_return": -0.09391286220554507
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-05-07",
+    "symbol": "AMZN",
+    "adverse_close": -0.11788617886178865,
+    "end_return": -0.09391286220554507
+  },
+  {
+    "model": "current20",
+    "date": "2019-04-08",
+    "symbol": "JD",
+    "adverse_close": -0.11772357723577243,
+    "end_return": -0.11772357723577243
+  },
+  {
+    "model": "current20",
+    "date": "2018-02-26",
+    "symbol": "CNK",
+    "adverse_close": -0.11737523105360437,
+    "end_return": -0.1016635859519408
+  },
+  {
+    "model": "current20",
+    "date": "2018-11-09",
+    "symbol": "WMT",
+    "adverse_close": -0.11711199545196138,
+    "end_return": -0.11085844229675945
+  },
+  {
+    "model": "report28",
+    "date": "2018-11-09",
+    "symbol": "WMT",
+    "adverse_close": -0.11711199545196138,
+    "end_return": -0.11085844229675945
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-11-09",
+    "symbol": "WMT",
+    "adverse_close": -0.11711199545196138,
+    "end_return": -0.11085844229675945
+  },
+  {
+    "model": "report28",
+    "date": "2019-04-08",
+    "symbol": "GRMN",
+    "adverse_close": -0.11705723298783233,
+    "end_return": -0.11705723298783233
+  },
+  {
+    "model": "report28",
+    "date": "2020-07-15",
+    "symbol": "ARGX",
+    "adverse_close": -0.1165221430783524,
+    "end_return": -0.10134716630535767
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "RVTY",
+    "adverse_close": -0.11523192645215208,
+    "end_return": -0.09151692436272463
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "EXR",
+    "adverse_close": -0.11506932496710864,
+    "end_return": -0.08946462908612496
+  },
+  {
+    "model": "report28",
+    "date": "2016-10-18",
+    "symbol": "ILF",
+    "adverse_close": -0.11462064474112665,
+    "end_return": -0.09540866167372186
+  },
+  {
+    "model": "report28",
+    "date": "2019-05-07",
+    "symbol": "FBIN",
+    "adverse_close": -0.11377466347040377,
+    "end_return": -0.03835515397381517
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "FLS",
+    "adverse_close": -0.11354260089686097,
+    "end_return": -0.10242152466367715
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "LNG",
+    "adverse_close": -0.11350000000000005,
+    "end_return": -0.06066666666666665
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-10-12",
+    "symbol": "EIX",
+    "adverse_close": -0.11311427740622271,
+    "end_return": -0.11311427740622271
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "NNN",
+    "adverse_close": -0.11290636558302503,
+    "end_return": -0.04886120303679187
+  },
+  {
+    "model": "current20",
+    "date": "2019-04-08",
+    "symbol": "SNAP",
+    "adverse_close": -0.11266447368421062,
+    "end_return": -0.08141447368421051
+  },
+  {
+    "model": "current20",
+    "date": "2016-05-26",
+    "symbol": "BG",
+    "adverse_close": -0.11252076725570148,
+    "end_return": -0.11252076725570148
+  },
+  {
+    "model": "report28",
+    "date": "2016-05-26",
+    "symbol": "BG",
+    "adverse_close": -0.11252076725570148,
+    "end_return": -0.11252076725570148
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-05-26",
+    "symbol": "BG",
+    "adverse_close": -0.11252076725570148,
+    "end_return": -0.11252076725570148
+  },
+  {
+    "model": "report28",
+    "date": "2018-02-26",
+    "symbol": "RBA",
+    "adverse_close": -0.11248164464023491,
+    "end_return": -0.09280469897209975
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-02-26",
+    "symbol": "RBA",
+    "adverse_close": -0.11248164464023491,
+    "end_return": -0.09280469897209975
+  },
+  {
+    "model": "report28",
+    "date": "2020-08-12",
+    "symbol": "MGA",
+    "adverse_close": -0.11240382811033967,
+    "end_return": -0.11240382811033967
+  },
+  {
+    "model": "current20",
+    "date": "2018-03-26",
+    "symbol": "ON",
+    "adverse_close": -0.1123381568926124,
+    "end_return": -0.1123381568926124
+  },
+  {
+    "model": "current20",
+    "date": "2018-06-20",
+    "symbol": "TNA",
+    "adverse_close": -0.1120857699805069,
+    "end_return": -0.012670565302144277
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-06-20",
+    "symbol": "TNA",
+    "adverse_close": -0.1120857699805069,
+    "end_return": -0.012670565302144277
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "EEM",
+    "adverse_close": -0.11195335276967944,
+    "end_return": -0.02468415937803703
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "EEM",
+    "adverse_close": -0.11195335276967944,
+    "end_return": -0.02468415937803703
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "TDY",
+    "adverse_close": -0.11178443017008033,
+    "end_return": -0.10495697491213185
+  },
+  {
+    "model": "report28",
+    "date": "2017-05-10",
+    "symbol": "CPA",
+    "adverse_close": -0.11172131147540976,
+    "end_return": -0.06491803278688524
+  },
+  {
+    "model": "current20",
+    "date": "2020-05-18",
+    "symbol": "JD",
+    "adverse_close": -0.11162542282357135,
+    "end_return": 0.08563290012462166
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "GLW",
+    "adverse_close": -0.11142614119648431,
+    "end_return": -0.08902750212645305
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "GLW",
+    "adverse_close": -0.11142614119648431,
+    "end_return": -0.08902750212645305
+  },
+  {
+    "model": "current20",
+    "date": "2019-11-22",
+    "symbol": "PANW",
+    "adverse_close": -0.11086903897361422,
+    "end_return": -0.06656983781166792
+  },
+  {
+    "model": "report28",
+    "date": "2019-11-22",
+    "symbol": "PANW",
+    "adverse_close": -0.11086903897361422,
+    "end_return": -0.06656983781166792
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-11-22",
+    "symbol": "PANW",
+    "adverse_close": -0.11086903897361422,
+    "end_return": -0.06656983781166792
+  },
+  {
+    "model": "current20",
+    "date": "2020-06-16",
+    "symbol": "URI",
+    "adverse_close": -0.11049163710086163,
+    "end_return": 0.018753167764825163
+  },
+  {
+    "model": "report28",
+    "date": "2020-05-18",
+    "symbol": "REYN",
+    "adverse_close": -0.11045029736618528,
+    "end_return": -0.0657037666383461
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "VMC",
+    "adverse_close": -0.11027012919222223,
+    "end_return": -0.10302753490799943
+  },
+  {
+    "model": "current20",
+    "date": "2018-09-14",
+    "symbol": "ROK",
+    "adverse_close": -0.11006781429316637,
+    "end_return": -0.09864371413667183
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "ROK",
+    "adverse_close": -0.11006781429316637,
+    "end_return": -0.09864371413667183
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "ROK",
+    "adverse_close": -0.11006781429316637,
+    "end_return": -0.09864371413667183
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "GWW",
+    "adverse_close": -0.11004097642979704,
+    "end_return": -0.051518229257871306
+  },
+  {
+    "model": "current20",
+    "date": "2019-01-10",
+    "symbol": "IBN",
+    "adverse_close": -0.10997204100652369,
+    "end_return": -0.08760484622553599
+  },
+  {
+    "model": "current20",
+    "date": "2019-07-03",
+    "symbol": "SAP",
+    "adverse_close": -0.10895392639814538,
+    "end_return": -0.10844682700666475
+  },
+  {
+    "model": "report28",
+    "date": "2019-07-03",
+    "symbol": "SAP",
+    "adverse_close": -0.10895392639814538,
+    "end_return": -0.10844682700666475
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-07-03",
+    "symbol": "SAP",
+    "adverse_close": -0.10895392639814538,
+    "end_return": -0.10844682700666475
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "PBR",
+    "adverse_close": -0.10875912408759114,
+    "end_return": 0.05036496350364983
+  },
+  {
+    "model": "report28",
+    "date": "2017-10-02",
+    "symbol": "LAD",
+    "adverse_close": -0.10866026371479731,
+    "end_return": -0.08212599706983559
+  },
+  {
+    "model": "current20",
+    "date": "2017-07-07",
+    "symbol": "NTRS",
+    "adverse_close": -0.10831800531371338,
+    "end_return": -0.09063968935213573
+  },
+  {
+    "model": "report28",
+    "date": "2017-07-07",
+    "symbol": "NTRS",
+    "adverse_close": -0.10831800531371338,
+    "end_return": -0.09063968935213573
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-07-07",
+    "symbol": "NTRS",
+    "adverse_close": -0.10831800531371338,
+    "end_return": -0.09063968935213573
+  },
+  {
+    "model": "current20",
+    "date": "2017-06-08",
+    "symbol": "MU",
+    "adverse_close": -0.10805019895928991,
+    "end_return": -0.0756045301499848
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "UPS",
+    "adverse_close": -0.10732909288865966,
+    "end_return": -0.06274712050885334
+  },
+  {
+    "model": "report28",
+    "date": "2020-10-08",
+    "symbol": "UPS",
+    "adverse_close": -0.10732909288865966,
+    "end_return": -0.06274712050885334
+  },
+  {
+    "model": "reuse28",
+    "date": "2020-10-08",
+    "symbol": "UPS",
+    "adverse_close": -0.10732909288865966,
+    "end_return": -0.06274712050885334
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "ABBV",
+    "adverse_close": -0.10716049382716042,
+    "end_return": 0.00032921810699604315
+  },
+  {
+    "model": "current20",
+    "date": "2016-07-25",
+    "symbol": "FE",
+    "adverse_close": -0.10688705234159768,
+    "end_return": -0.10110192837465548
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-07-25",
+    "symbol": "FE",
+    "adverse_close": -0.10688705234159768,
+    "end_return": -0.10110192837465548
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-08-01",
+    "symbol": "OLED",
+    "adverse_close": -0.10674621385956873,
+    "end_return": -0.05043597980725112
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "UBS",
+    "adverse_close": -0.10671173346209561,
+    "end_return": -0.05890873973925648
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "UBS",
+    "adverse_close": -0.10671173346209561,
+    "end_return": -0.05890873973925648
+  },
+  {
+    "model": "current20",
+    "date": "2016-06-24",
+    "symbol": "MU",
+    "adverse_close": -0.1066260472201066,
+    "end_return": 0.06016755521706019
+  },
+  {
+    "model": "report28",
+    "date": "2019-08-29",
+    "symbol": "BFAM",
+    "adverse_close": -0.105900060204696,
+    "end_return": -0.105900060204696
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "VWO",
+    "adverse_close": -0.1058074781225139,
+    "end_return": -0.023269689737470234
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "XEL",
+    "adverse_close": -0.10575311859988823,
+    "end_return": -0.08266617017315203
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-12-11",
+    "symbol": "XEL",
+    "adverse_close": -0.10575311859988823,
+    "end_return": -0.08266617017315203
+  },
+  {
+    "model": "report28",
+    "date": "2018-02-26",
+    "symbol": "ACN",
+    "adverse_close": -0.10545167557066537,
+    "end_return": -0.07206168042739192
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-02-26",
+    "symbol": "ACN",
+    "adverse_close": -0.10545167557066537,
+    "end_return": -0.07206168042739192
+  },
+  {
+    "model": "current20",
+    "date": "2018-11-09",
+    "symbol": "LW",
+    "adverse_close": -0.10524390243902437,
+    "end_return": -0.08329268292682923
+  },
+  {
+    "model": "report28",
+    "date": "2018-11-09",
+    "symbol": "LW",
+    "adverse_close": -0.10524390243902437,
+    "end_return": -0.08329268292682923
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-11-09",
+    "symbol": "LW",
+    "adverse_close": -0.10524390243902437,
+    "end_return": -0.08329268292682923
+  },
+  {
+    "model": "report28",
+    "date": "2018-09-14",
+    "symbol": "HUBB",
+    "adverse_close": -0.10503982729099992,
+    "end_return": -0.09551105486488509
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-09-14",
+    "symbol": "HUBB",
+    "adverse_close": -0.10503982729099992,
+    "end_return": -0.09551105486488509
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-08-29",
+    "symbol": "SBAC",
+    "adverse_close": -0.1048155427880254,
+    "end_return": -0.1048155427880254
+  },
+  {
+    "model": "current20",
+    "date": "2020-10-08",
+    "symbol": "MLM",
+    "adverse_close": -0.10473950795947895,
+    "end_return": -0.058574529667149045
+  },
+  {
+    "model": "report28",
+    "date": "2017-03-14",
+    "symbol": "ADNT",
+    "adverse_close": -0.10406569736133553,
+    "end_return": -0.09114162627894451
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "ZTS",
+    "adverse_close": -0.10399699285803776,
+    "end_return": 0.04372885603307841
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "ZTS",
+    "adverse_close": -0.10399699285803776,
+    "end_return": 0.04372885603307841
+  },
+  {
+    "model": "current20",
+    "date": "2020-05-18",
+    "symbol": "PDD",
+    "adverse_close": -0.10394265232974897,
+    "end_return": 0.16487455197132617
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "SFM",
+    "adverse_close": -0.10392857142857148,
+    "end_return": -0.07178571428571434
+  },
+  {
+    "model": "current20",
+    "date": "2017-11-28",
+    "symbol": "ISRG",
+    "adverse_close": -0.10386221294363263,
+    "end_return": -0.08522218908440204
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-11-28",
+    "symbol": "ISRG",
+    "adverse_close": -0.10386221294363263,
+    "end_return": -0.08522218908440204
+  },
+  {
+    "model": "current20",
+    "date": "2019-08-29",
+    "symbol": "B",
+    "adverse_close": -0.10377358490566024,
+    "end_return": -0.070754716981132
+  },
+  {
+    "model": "reuse28",
+    "date": "2019-08-29",
+    "symbol": "B",
+    "adverse_close": -0.10377358490566024,
+    "end_return": -0.070754716981132
+  },
+  {
+    "model": "report28",
+    "date": "2016-10-18",
+    "symbol": "RDN",
+    "adverse_close": -0.10351966873706009,
+    "end_return": -0.013112491373360902
+  },
+  {
+    "model": "current20",
+    "date": "2018-01-26",
+    "symbol": "FLR",
+    "adverse_close": -0.1034876140808344,
+    "end_return": -0.045306388526727526
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "FLR",
+    "adverse_close": -0.1034876140808344,
+    "end_return": -0.045306388526727526
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-01-26",
+    "symbol": "FLR",
+    "adverse_close": -0.1034876140808344,
+    "end_return": -0.045306388526727526
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "BKH",
+    "adverse_close": -0.10323826500297084,
+    "end_return": -0.051099227569815664
+  },
+  {
+    "model": "current20",
+    "date": "2017-07-07",
+    "symbol": "DAL",
+    "adverse_close": -0.10319767441860461,
+    "end_return": -0.08048691860465118
+  },
+  {
+    "model": "report28",
+    "date": "2017-07-07",
+    "symbol": "DAL",
+    "adverse_close": -0.10319767441860461,
+    "end_return": -0.08048691860465118
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-07-07",
+    "symbol": "DAL",
+    "adverse_close": -0.10319767441860461,
+    "end_return": -0.08048691860465118
+  },
+  {
+    "model": "current20",
+    "date": "2020-04-20",
+    "symbol": "AKAM",
+    "adverse_close": -0.10223100818977693,
+    "end_return": -0.0765320530923469
+  },
+  {
+    "model": "current20",
+    "date": "2018-05-22",
+    "symbol": "SLB",
+    "adverse_close": -0.102054794520548,
+    "end_return": -0.102054794520548
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-05-22",
+    "symbol": "SLB",
+    "adverse_close": -0.102054794520548,
+    "end_return": -0.102054794520548
+  },
+  {
+    "model": "report28",
+    "date": "2018-12-11",
+    "symbol": "TXNM",
+    "adverse_close": -0.10202247191011238,
+    "end_return": -0.06067415730337089
+  },
+  {
+    "model": "current20",
+    "date": "2016-04-28",
+    "symbol": "NSC",
+    "adverse_close": -0.10199847111499394,
+    "end_return": -0.08452549961777867
+  },
+  {
+    "model": "current20",
+    "date": "2018-12-11",
+    "symbol": "DTE",
+    "adverse_close": -0.10196437489595467,
+    "end_return": -0.07025137339770271
+  },
+  {
+    "model": "report28",
+    "date": "2020-01-23",
+    "symbol": "CG",
+    "adverse_close": -0.10169491525423735,
+    "end_return": -0.10169491525423735
+  },
+  {
+    "model": "report28",
+    "date": "2018-03-26",
+    "symbol": "SSNC",
+    "adverse_close": -0.10147360567058383,
+    "end_return": -0.06715165081141583
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-03-26",
+    "symbol": "SSNC",
+    "adverse_close": -0.10147360567058383,
+    "end_return": -0.06715165081141583
+  },
+  {
+    "model": "report28",
+    "date": "2017-10-30",
+    "symbol": "AEIS",
+    "adverse_close": -0.10127423822714687,
+    "end_return": -0.0699168975069252
+  },
+  {
+    "model": "report28",
+    "date": "2018-01-26",
+    "symbol": "DG",
+    "adverse_close": -0.10122611919019098,
+    "end_return": -0.07280676741754588
+  },
+  {
+    "model": "current20",
+    "date": "2018-06-20",
+    "symbol": "AMD",
+    "adverse_close": -0.10090090090090076,
+    "end_return": 0.003603603603603789
+  },
+  {
+    "model": "report28",
+    "date": "2018-10-12",
+    "symbol": "MOS",
+    "adverse_close": -0.10082241851964668,
+    "end_return": 0.11574779165397509
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-10-12",
+    "symbol": "MOS",
+    "adverse_close": -0.10082241851964668,
+    "end_return": 0.11574779165397509
+  },
+  {
+    "model": "current20",
+    "date": "2018-05-22",
+    "symbol": "OIH",
+    "adverse_close": -0.10045343564701781,
+    "end_return": -0.09801185908615262
+  },
+  {
+    "model": "reuse28",
+    "date": "2018-05-22",
+    "symbol": "OIH",
+    "adverse_close": -0.10045343564701781,
+    "end_return": -0.09801185908615262
+  },
+  {
+    "model": "reuse28",
+    "date": "2016-04-28",
+    "symbol": "PCAR",
+    "adverse_close": -0.10022836843440741,
+    "end_return": -0.061659477290027964
+  },
+  {
+    "model": "current20",
+    "date": "2017-03-14",
+    "symbol": "AMGN",
+    "adverse_close": -0.10021629416005762,
+    "end_return": -0.09539127058954022
+  },
+  {
+    "model": "report28",
+    "date": "2017-03-14",
+    "symbol": "AMGN",
+    "adverse_close": -0.10021629416005762,
+    "end_return": -0.09539127058954022
+  },
+  {
+    "model": "reuse28",
+    "date": "2017-03-14",
+    "symbol": "AMGN",
+    "adverse_close": -0.10021629416005762,
+    "end_return": -0.09539127058954022
+  },
+  {
+    "model": "report28",
+    "date": "2019-01-10",
+    "symbol": "GNTX",
+    "adverse_close": -0.10013654984069187,
+    "end_return": -0.10013654984069187
+  },
+  {
+    "model": "current20",
+    "date": "2018-02-26",
+    "symbol": "JPM",
+    "adverse_close": -0.10007568749474383,
+    "end_return": -0.07232360608863841
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "USAR",
+    "adverse_close": -0.5563656758272574,
+    "end_return": -0.5016825574873808
+  },
+  {
+    "model": "current20",
+    "date": "2021-06-25",
+    "symbol": "SPCE",
+    "adverse_close": -0.48241469816272964,
+    "end_return": -0.46421697287839025
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "MP",
+    "adverse_close": -0.4628270085823596,
+    "end_return": -0.3594250853065867
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "KEEL",
+    "adverse_close": -0.45950280673616684,
+    "end_return": -0.45950280673616684
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "UUUU",
+    "adverse_close": -0.43275182892515485,
+    "end_return": -0.4117426374038642
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "DOCN",
+    "adverse_close": -0.41836495666432416,
+    "end_return": -0.3880690247520886
+  },
+  {
+    "model": "current20",
+    "date": "2023-01-27",
+    "symbol": "W",
+    "adverse_close": -0.3931582360570688,
+    "end_return": -0.36478599221789887
+  },
+  {
+    "model": "report28",
+    "date": "2025-01-27",
+    "symbol": "FRPT",
+    "adverse_close": -0.37914809311540365,
+    "end_return": -0.337295690936107
+  },
+  {
+    "model": "current20",
+    "date": "2025-07-21",
+    "symbol": "TTD",
+    "adverse_close": -0.3673978065802592,
+    "end_return": -0.3151794616151544
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "SPCE",
+    "adverse_close": -0.35914365746298516,
+    "end_return": -0.35914365746298516
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "LCID",
+    "adverse_close": -0.35017793594306057,
+    "end_return": -0.2738434163701067
+  },
+  {
+    "model": "current20",
+    "date": "2025-02-25",
+    "symbol": "SMCI",
+    "adverse_close": -0.3444202108324246,
+    "end_return": -0.26135950563431487
+  },
+  {
+    "model": "current20",
+    "date": "2024-12-24",
+    "symbol": "TSLL",
+    "adverse_close": -0.3430200977729495,
+    "end_return": -0.2987506789788159
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "ASTS",
+    "adverse_close": -0.33920437291223815,
+    "end_return": -0.31278469480716675
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "SIRI",
+    "adverse_close": -0.33677991137370755,
+    "end_return": -0.33677991137370755
+  },
+  {
+    "model": "current20",
+    "date": "2024-07-05",
+    "symbol": "TSLL",
+    "adverse_close": -0.33640226628895187,
+    "end_return": -0.33640226628895187
+  },
+  {
+    "model": "current20",
+    "date": "2022-03-14",
+    "symbol": "ZIM",
+    "adverse_close": -0.33593656133605665,
+    "end_return": -0.33593656133605665
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "COIN",
+    "adverse_close": -0.33299264104660664,
+    "end_return": -0.33299264104660664
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "CVNA",
+    "adverse_close": -0.32650885050117295,
+    "end_return": -0.32650885050117295
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "XOP",
+    "adverse_close": -0.3230120481927711,
+    "end_return": -0.28656626506024097
+  },
+  {
+    "model": "current20",
+    "date": "2024-11-25",
+    "symbol": "TPL",
+    "adverse_close": -0.3210842142419231,
+    "end_return": -0.28089992011444065
+  },
+  {
+    "model": "current20",
+    "date": "2025-06-20",
+    "symbol": "OSCR",
+    "adverse_close": -0.3201621073961499,
+    "end_return": -0.3100303951367781
+  },
+  {
+    "model": "current20",
+    "date": "2025-01-27",
+    "symbol": "RKLB",
+    "adverse_close": -0.3171717171717171,
+    "end_return": -0.3171717171717171
+  },
+  {
+    "model": "report28",
+    "date": "2024-02-09",
+    "symbol": "WCC",
+    "adverse_close": -0.3147095307008476,
+    "end_return": -0.18601405830059947
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "AHCO",
+    "adverse_close": -0.31112852664576807,
+    "end_return": -0.31112852664576807
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "COP",
+    "adverse_close": -0.30906980600232137,
+    "end_return": -0.2832034488476207
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "VIR",
+    "adverse_close": -0.30366666666666664,
+    "end_return": -0.30366666666666664
+  },
+  {
+    "model": "current20",
+    "date": "2024-02-09",
+    "symbol": "PANW",
+    "adverse_close": -0.30224258243221636,
+    "end_return": -0.2453523677622117
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "MPC",
+    "adverse_close": -0.2951475293281194,
+    "end_return": -0.2599537859936012
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "MPC",
+    "adverse_close": -0.2951475293281194,
+    "end_return": -0.2599537859936012
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "MPC",
+    "adverse_close": -0.2951475293281194,
+    "end_return": -0.2599537859936012
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "SOFI",
+    "adverse_close": -0.29484029484029484,
+    "end_return": -0.29484029484029484
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "PDD",
+    "adverse_close": -0.29466709244770883,
+    "end_return": -0.19822768641226252
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "VLO",
+    "adverse_close": -0.28918862254525135,
+    "end_return": -0.2520092249633098
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "U",
+    "adverse_close": -0.2861603029992834,
+    "end_return": -0.2796601494523492
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "SNDK",
+    "adverse_close": -0.2842624640989764,
+    "end_return": -0.14257309080197356
+  },
+  {
+    "model": "current20",
+    "date": "2022-01-13",
+    "symbol": "F",
+    "adverse_close": -0.28279525950143025,
+    "end_return": -0.28279525950143025
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "PSX",
+    "adverse_close": -0.27522099699261826,
+    "end_return": -0.2526200674382575
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "PSX",
+    "adverse_close": -0.27522099699261826,
+    "end_return": -0.2526200674382575
+  },
+  {
+    "model": "report28",
+    "date": "2022-01-13",
+    "symbol": "EPC",
+    "adverse_close": -0.274341580207502,
+    "end_return": -0.274341580207502
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "IREN",
+    "adverse_close": -0.2739371016319956,
+    "end_return": -0.19618967570217838
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "PLTR",
+    "adverse_close": -0.2716887928372955,
+    "end_return": -0.2716887928372955
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-03",
+    "symbol": "VIPS",
+    "adverse_close": -0.2668040175122328,
+    "end_return": -0.23100695338655675
+  },
+  {
+    "model": "report28",
+    "date": "2021-10-19",
+    "symbol": "PLTK",
+    "adverse_close": -0.2628689087165408,
+    "end_return": -0.2628689087165408
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "VDE",
+    "adverse_close": -0.2590243520476079,
+    "end_return": -0.2295043457834155
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "BBY",
+    "adverse_close": -0.2537780093798855,
+    "end_return": -0.2370282140996055
+  },
+  {
+    "model": "report28",
+    "date": "2021-11-16",
+    "symbol": "BBY",
+    "adverse_close": -0.2537780093798855,
+    "end_return": -0.2370282140996055
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-11-16",
+    "symbol": "BBY",
+    "adverse_close": -0.2537780093798855,
+    "end_return": -0.2370282140996055
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "DINO",
+    "adverse_close": -0.2532819884474008,
+    "end_return": -0.20094521267285148
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "EVGO",
+    "adverse_close": -0.25320729237002026,
+    "end_return": -0.24645509790681974
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "SLB",
+    "adverse_close": -0.2524567150210576,
+    "end_return": -0.20379036031820308
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "MUFG",
+    "adverse_close": -0.25225225225225234,
+    "end_return": -0.16285516285516288
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "XLE",
+    "adverse_close": -0.2511475409836066,
+    "end_return": -0.22448087431693997
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "XLE",
+    "adverse_close": -0.2511475409836066,
+    "end_return": -0.22448087431693997
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "XLE",
+    "adverse_close": -0.2511475409836066,
+    "end_return": -0.22448087431693997
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "BP",
+    "adverse_close": -0.2462471131639723,
+    "end_return": -0.17436489607390293
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-03-25",
+    "symbol": "BP",
+    "adverse_close": -0.2462471131639723,
+    "end_return": -0.17436489607390293
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "LGND",
+    "adverse_close": -0.2435471228952134,
+    "end_return": -0.2011135436092868
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "IYE",
+    "adverse_close": -0.24277095901809864,
+    "end_return": -0.21198252548366958
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "DDOG",
+    "adverse_close": -0.24058262179809142,
+    "end_return": -0.24058262179809142
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "WSM",
+    "adverse_close": -0.2358558558558559,
+    "end_return": -0.22702702702702704
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "IGE",
+    "adverse_close": -0.22965116279069764,
+    "end_return": -0.20617173524150267
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "IXC",
+    "adverse_close": -0.2285851780558229,
+    "end_return": -0.2023580365736286
+  },
+  {
+    "model": "current20",
+    "date": "2025-07-21",
+    "symbol": "RIOT",
+    "adverse_close": -0.22813156053184047,
+    "end_return": -0.13785864240727774
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "SU",
+    "adverse_close": -0.2261593341260404,
+    "end_return": -0.22140309155766935
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "SU",
+    "adverse_close": -0.2261593341260404,
+    "end_return": -0.22140309155766935
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "WULF",
+    "adverse_close": -0.2259073842302879,
+    "end_return": -0.2259073842302879
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "SNOW",
+    "adverse_close": -0.22410997180849734,
+    "end_return": -0.10101539305940177
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "FLGT",
+    "adverse_close": -0.22345745962882624,
+    "end_return": -0.22345745962882624
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "ZS",
+    "adverse_close": -0.22222537207654147,
+    "end_return": -0.12901488306165843
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-11-16",
+    "symbol": "ZS",
+    "adverse_close": -0.22222537207654147,
+    "end_return": -0.12901488306165843
+  },
+  {
+    "model": "current20",
+    "date": "2024-12-24",
+    "symbol": "PLTR",
+    "adverse_close": -0.21861471861471848,
+    "end_return": -0.09283309283309282
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "CVX",
+    "adverse_close": -0.2180192190190524,
+    "end_return": -0.20696550574904182
+  },
+  {
+    "model": "current20",
+    "date": "2025-02-25",
+    "symbol": "HIMS",
+    "adverse_close": -0.21744532803180927,
+    "end_return": -0.07952286282306165
+  },
+  {
+    "model": "current20",
+    "date": "2022-02-11",
+    "symbol": "WFC",
+    "adverse_close": -0.21705691334814559,
+    "end_return": -0.14783797641428809
+  },
+  {
+    "model": "report28",
+    "date": "2025-07-21",
+    "symbol": "ATI",
+    "adverse_close": -0.21520632513809168,
+    "end_return": -0.2141232535470594
+  },
+  {
+    "model": "current20",
+    "date": "2025-09-16",
+    "symbol": "OPEN",
+    "adverse_close": -0.2130965593784684,
+    "end_return": -0.1520532741398446
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "EWZ",
+    "adverse_close": -0.21285454072339316,
+    "end_return": -0.21155347384855583
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "DDOG",
+    "adverse_close": -0.2128470332063146,
+    "end_return": -0.1505171475231356
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "BP",
+    "adverse_close": -0.21272834413671182,
+    "end_return": -0.17972893341190332
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "BP",
+    "adverse_close": -0.21272834413671182,
+    "end_return": -0.17972893341190332
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "BP",
+    "adverse_close": -0.21272834413671182,
+    "end_return": -0.17972893341190332
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "ABNB",
+    "adverse_close": -0.2121739130434782,
+    "end_return": -0.18772946859903383
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "NET",
+    "adverse_close": -0.2111521666106818,
+    "end_return": -0.2111521666106818
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "PBA",
+    "adverse_close": -0.20993818354731353,
+    "end_return": -0.1509747979077508
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "SHEL",
+    "adverse_close": -0.2095818241685875,
+    "end_return": -0.1924596641422457
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "SHEL",
+    "adverse_close": -0.2095818241685875,
+    "end_return": -0.1924596641422457
+  },
+  {
+    "model": "report28",
+    "date": "2023-03-27",
+    "symbol": "CRUS",
+    "adverse_close": -0.20838041431261778,
+    "end_return": -0.20838041431261778
+  },
+  {
+    "model": "current20",
+    "date": "2021-12-15",
+    "symbol": "HUM",
+    "adverse_close": -0.20557803784315865,
+    "end_return": -0.13903532757300663
+  },
+  {
+    "model": "report28",
+    "date": "2021-12-15",
+    "symbol": "HUM",
+    "adverse_close": -0.20557803784315865,
+    "end_return": -0.13903532757300663
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-12-15",
+    "symbol": "HUM",
+    "adverse_close": -0.20557803784315865,
+    "end_return": -0.13903532757300663
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "DBO",
+    "adverse_close": -0.20498084291187724,
+    "end_return": -0.1518199233716474
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "TTD",
+    "adverse_close": -0.2048789269961293,
+    "end_return": -0.1769736249887478
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-02-27",
+    "symbol": "MOS",
+    "adverse_close": -0.20439189189189189,
+    "end_return": -0.18768768768768773
+  },
+  {
+    "model": "current20",
+    "date": "2022-05-10",
+    "symbol": "WMT",
+    "adverse_close": -0.20301204819277108,
+    "end_return": -0.18132530120481916
+  },
+  {
+    "model": "current20",
+    "date": "2023-02-27",
+    "symbol": "URI",
+    "adverse_close": -0.2019106357284569,
+    "end_return": -0.19600189769688614
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "CVX",
+    "adverse_close": -0.20099181454263015,
+    "end_return": -0.18336619465854098
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-03-25",
+    "symbol": "CVX",
+    "adverse_close": -0.20099181454263015,
+    "end_return": -0.18336619465854098
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "RGEN",
+    "adverse_close": -0.2005414012738853,
+    "end_return": -0.1635350318471338
+  },
+  {
+    "model": "report28",
+    "date": "2021-09-21",
+    "symbol": "RGEN",
+    "adverse_close": -0.2005414012738853,
+    "end_return": -0.1635350318471338
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-09-21",
+    "symbol": "RGEN",
+    "adverse_close": -0.2005414012738853,
+    "end_return": -0.1635350318471338
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "MPWR",
+    "adverse_close": -0.20015076560659595,
+    "end_return": -0.20015076560659595
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "AMD",
+    "adverse_close": -0.19808115130921455,
+    "end_return": -0.19808115130921455
+  },
+  {
+    "model": "current20",
+    "date": "2025-06-20",
+    "symbol": "MP",
+    "adverse_close": -0.1980237681933502,
+    "end_return": 0.575911336627053
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-03",
+    "symbol": "RKT",
+    "adverse_close": -0.1975,
+    "end_return": -0.17535714285714288
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "SMCI",
+    "adverse_close": -0.19736408566721586,
+    "end_return": -0.19736408566721586
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "LYFT",
+    "adverse_close": -0.1973011654058474,
+    "end_return": -0.16908607646698015
+  },
+  {
+    "model": "report28",
+    "date": "2024-01-11",
+    "symbol": "PDD",
+    "adverse_close": -0.19684412915202554,
+    "end_return": -0.154810051050852
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "XOM",
+    "adverse_close": -0.1947398955714562,
+    "end_return": -0.1676658286598337
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "XOM",
+    "adverse_close": -0.1947398955714562,
+    "end_return": -0.1676658286598337
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "XOM",
+    "adverse_close": -0.1947398955714562,
+    "end_return": -0.1676658286598337
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "WMB",
+    "adverse_close": -0.19457994579945803,
+    "end_return": -0.15121951219512186
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "WMB",
+    "adverse_close": -0.19457994579945803,
+    "end_return": -0.15121951219512186
+  },
+  {
+    "model": "current20",
+    "date": "2025-01-27",
+    "symbol": "TWLO",
+    "adverse_close": -0.1937508816476231,
+    "end_return": -0.186979827902384
+  },
+  {
+    "model": "current20",
+    "date": "2024-07-05",
+    "symbol": "QLD",
+    "adverse_close": -0.19219275308180794,
+    "end_return": -0.19219275308180794
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "QLD",
+    "adverse_close": -0.19219275308180794,
+    "end_return": -0.19219275308180794
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-07-05",
+    "symbol": "QLD",
+    "adverse_close": -0.19219275308180794,
+    "end_return": -0.19219275308180794
+  },
+  {
+    "model": "report28",
+    "date": "2022-02-11",
+    "symbol": "HSBC",
+    "adverse_close": -0.1918097754293263,
+    "end_return": -0.15904887714663152
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-02-11",
+    "symbol": "HSBC",
+    "adverse_close": -0.1918097754293263,
+    "end_return": -0.15904887714663152
+  },
+  {
+    "model": "report28",
+    "date": "2024-05-07",
+    "symbol": "CNM",
+    "adverse_close": -0.19116655428186113,
+    "end_return": -0.16402562373567087
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "USO",
+    "adverse_close": -0.19070636054048118,
+    "end_return": -0.13720751400637143
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "USO",
+    "adverse_close": -0.19070636054048118,
+    "end_return": -0.13720751400637143
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "PDBC",
+    "adverse_close": -0.18978102189781032,
+    "end_return": -0.14355231143552305
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "PDBC",
+    "adverse_close": -0.18978102189781032,
+    "end_return": -0.14355231143552305
+  },
+  {
+    "model": "current20",
+    "date": "2021-06-25",
+    "symbol": "NVCR",
+    "adverse_close": -0.18828396050173468,
+    "end_return": -0.18205675651632425
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-06-25",
+    "symbol": "NVCR",
+    "adverse_close": -0.18828396050173468,
+    "end_return": -0.18205675651632425
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "DBC",
+    "adverse_close": -0.18704560475875742,
+    "end_return": -0.1384666226040978
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "DBC",
+    "adverse_close": -0.18704560475875742,
+    "end_return": -0.1384666226040978
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "CVNA",
+    "adverse_close": -0.18689956331877722,
+    "end_return": -0.14388646288209617
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-31",
+    "symbol": "FUTU",
+    "adverse_close": -0.18519656019656017,
+    "end_return": -0.08335380835380846
+  },
+  {
+    "model": "current20",
+    "date": "2024-03-11",
+    "symbol": "GE",
+    "adverse_close": -0.18501045088085988,
+    "end_return": -0.07739623768289028
+  },
+  {
+    "model": "report28",
+    "date": "2024-03-11",
+    "symbol": "GE",
+    "adverse_close": -0.18501045088085988,
+    "end_return": -0.07739623768289028
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-03-11",
+    "symbol": "GE",
+    "adverse_close": -0.18501045088085988,
+    "end_return": -0.07739623768289028
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "SHEL",
+    "adverse_close": -0.1844673445710776,
+    "end_return": -0.1194977137787483
+  },
+  {
+    "model": "report28",
+    "date": "2025-03-25",
+    "symbol": "SHEL",
+    "adverse_close": -0.1844673445710776,
+    "end_return": -0.1194977137787483
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-03-25",
+    "symbol": "SHEL",
+    "adverse_close": -0.1844673445710776,
+    "end_return": -0.1194977137787483
+  },
+  {
+    "model": "current20",
+    "date": "2025-05-21",
+    "symbol": "BITX",
+    "adverse_close": -0.1838476690741957,
+    "end_return": -0.16989494418910045
+  },
+  {
+    "model": "current20",
+    "date": "2023-01-27",
+    "symbol": "SHOP",
+    "adverse_close": -0.18354175070592982,
+    "end_return": -0.18354175070592982
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "XME",
+    "adverse_close": -0.18291078960497076,
+    "end_return": -0.14753503560252168
+  },
+  {
+    "model": "report28",
+    "date": "2025-03-25",
+    "symbol": "TTE",
+    "adverse_close": -0.1815672442876859,
+    "end_return": -0.09983131421561098
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-03-25",
+    "symbol": "TTE",
+    "adverse_close": -0.1815672442876859,
+    "end_return": -0.09983131421561098
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-11-11",
+    "symbol": "PDD",
+    "adverse_close": -0.1811919953596286,
+    "end_return": -0.16415313225057993
+  },
+  {
+    "model": "report28",
+    "date": "2025-03-25",
+    "symbol": "IXC",
+    "adverse_close": -0.1804866524923222,
+    "end_return": -0.11882825419324361
+  },
+  {
+    "model": "report28",
+    "date": "2025-01-27",
+    "symbol": "DBX",
+    "adverse_close": -0.17988757026858215,
+    "end_return": -0.17489069331667706
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "MELI",
+    "adverse_close": -0.17918010133578988,
+    "end_return": -0.17865231076308918
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-31",
+    "symbol": "VUZI",
+    "adverse_close": -0.17909852413242933,
+    "end_return": -0.05544475468687682
+  },
+  {
+    "model": "current20",
+    "date": "2024-10-28",
+    "symbol": "IONQ",
+    "adverse_close": -0.17885714285714294,
+    "end_return": 0.7645714285714285
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "PWR",
+    "adverse_close": -0.17853403141361246,
+    "end_return": -0.16364996260284215
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-04-11",
+    "symbol": "PWR",
+    "adverse_close": -0.17853403141361246,
+    "end_return": -0.16364996260284215
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "MU",
+    "adverse_close": -0.17774601878317686,
+    "end_return": 0.07680685994283376
+  },
+  {
+    "model": "report28",
+    "date": "2024-06-05",
+    "symbol": "AVAV",
+    "adverse_close": -0.17722135619641466,
+    "end_return": -0.17722135619641466
+  },
+  {
+    "model": "current20",
+    "date": "2022-02-11",
+    "symbol": "PM",
+    "adverse_close": -0.17712962962962964,
+    "end_return": -0.17046296296296293
+  },
+  {
+    "model": "report28",
+    "date": "2022-02-11",
+    "symbol": "PM",
+    "adverse_close": -0.17712962962962964,
+    "end_return": -0.17046296296296293
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-02-11",
+    "symbol": "PM",
+    "adverse_close": -0.17712962962962964,
+    "end_return": -0.17046296296296293
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-31",
+    "symbol": "CLF",
+    "adverse_close": -0.17617866004962768,
+    "end_return": -0.13697270471464007
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "GSG",
+    "adverse_close": -0.17471264367816097,
+    "end_return": -0.12758620689655176
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "GSG",
+    "adverse_close": -0.17471264367816097,
+    "end_return": -0.12758620689655176
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "EPD",
+    "adverse_close": -0.17342262953824472,
+    "end_return": -0.11949242157208317
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "EPD",
+    "adverse_close": -0.17342262953824472,
+    "end_return": -0.11949242157208317
+  },
+  {
+    "model": "current20",
+    "date": "2024-03-11",
+    "symbol": "AMD",
+    "adverse_close": -0.17300019948134848,
+    "end_return": -0.14831438260522645
+  },
+  {
+    "model": "current20",
+    "date": "2025-05-21",
+    "symbol": "RIVN",
+    "adverse_close": -0.17294626312538608,
+    "end_return": -0.1618282890673256
+  },
+  {
+    "model": "current20",
+    "date": "2021-01-04",
+    "symbol": "STLA",
+    "adverse_close": -0.17081260364842454,
+    "end_return": -0.12382531785516859
+  },
+  {
+    "model": "report28",
+    "date": "2021-01-04",
+    "symbol": "STLA",
+    "adverse_close": -0.17081260364842454,
+    "end_return": -0.12382531785516859
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-01-04",
+    "symbol": "STLA",
+    "adverse_close": -0.17081260364842454,
+    "end_return": -0.12382531785516859
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "COMT",
+    "adverse_close": -0.17033805888767728,
+    "end_return": -0.1251908396946565
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "GDXJ",
+    "adverse_close": -0.17020470053070502,
+    "end_return": -0.0708870356330552
+  },
+  {
+    "model": "report28",
+    "date": "2025-09-16",
+    "symbol": "JBGS",
+    "adverse_close": -0.1699049193881771,
+    "end_return": -0.14386109962794547
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "OMF",
+    "adverse_close": -0.16820469798657722,
+    "end_return": -0.16820469798657722
+  },
+  {
+    "model": "current20",
+    "date": "2024-09-30",
+    "symbol": "YINN",
+    "adverse_close": -0.16772655007949133,
+    "end_return": -0.06465288818230008
+  },
+  {
+    "model": "current20",
+    "date": "2022-01-13",
+    "symbol": "FCX",
+    "adverse_close": -0.16766743648960736,
+    "end_return": -0.011547344110854452
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-05-21",
+    "symbol": "ROST",
+    "adverse_close": -0.16762289737905856,
+    "end_return": -0.16762289737905856
+  },
+  {
+    "model": "report28",
+    "date": "2025-04-23",
+    "symbol": "MZTI",
+    "adverse_close": -0.16699707846410694,
+    "end_return": -0.1483722871452421
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-02-11",
+    "symbol": "TTE",
+    "adverse_close": -0.16678047115056327,
+    "end_return": -0.14697849095254356
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "RIVN",
+    "adverse_close": -0.16491028197094848,
+    "end_return": -0.0031330105383081674
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-09-16",
+    "symbol": "BX",
+    "adverse_close": -0.16461128918346268,
+    "end_return": -0.10914326071603198
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "RBLX",
+    "adverse_close": -0.16353543979504692,
+    "end_return": -0.16353543979504692
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "VRTX",
+    "adverse_close": -0.16348104644954609,
+    "end_return": -0.1451859761523403
+  },
+  {
+    "model": "report28",
+    "date": "2022-04-11",
+    "symbol": "VRTX",
+    "adverse_close": -0.16348104644954609,
+    "end_return": -0.1451859761523403
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-04-11",
+    "symbol": "VRTX",
+    "adverse_close": -0.16348104644954609,
+    "end_return": -0.1451859761523403
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "ASML",
+    "adverse_close": -0.1630489651691065,
+    "end_return": -0.059718488430790195
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-09-21",
+    "symbol": "ASML",
+    "adverse_close": -0.1630489651691065,
+    "end_return": -0.059718488430790195
+  },
+  {
+    "model": "current20",
+    "date": "2024-11-25",
+    "symbol": "TOST",
+    "adverse_close": -0.16266604521090644,
+    "end_return": -0.1055697972500581
+  },
+  {
+    "model": "report28",
+    "date": "2024-11-25",
+    "symbol": "GWRE",
+    "adverse_close": -0.16172281701208135,
+    "end_return": -0.14242215892348487
+  },
+  {
+    "model": "current20",
+    "date": "2022-05-10",
+    "symbol": "KHC",
+    "adverse_close": -0.1616628175519631,
+    "end_return": -0.1362586605080831
+  },
+  {
+    "model": "report28",
+    "date": "2022-05-10",
+    "symbol": "KHC",
+    "adverse_close": -0.1616628175519631,
+    "end_return": -0.1362586605080831
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-05-10",
+    "symbol": "KHC",
+    "adverse_close": -0.1616628175519631,
+    "end_return": -0.1362586605080831
+  },
+  {
+    "model": "current20",
+    "date": "2024-07-05",
+    "symbol": "TSLA",
+    "adverse_close": -0.1616406281538897,
+    "end_return": -0.1616406281538897
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-11-11",
+    "symbol": "PANW",
+    "adverse_close": -0.16154762996240934,
+    "end_return": -0.11543045750435488
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "PPL",
+    "adverse_close": -0.15998675057966216,
+    "end_return": -0.09970188804239821
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "CIEN",
+    "adverse_close": -0.15952176812422603,
+    "end_return": 0.05673049442697908
+  },
+  {
+    "model": "current20",
+    "date": "2022-02-11",
+    "symbol": "BP",
+    "adverse_close": -0.1590703290069424,
+    "end_return": -0.1590703290069424
+  },
+  {
+    "model": "current20",
+    "date": "2025-07-21",
+    "symbol": "WBD",
+    "adverse_close": -0.15781250000000013,
+    "end_return": -0.07656249999999998
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "COHR",
+    "adverse_close": -0.15770186335403713,
+    "end_return": 0.2263975155279503
+  },
+  {
+    "model": "report28",
+    "date": "2024-09-30",
+    "symbol": "EXPO",
+    "adverse_close": -0.15729067037648903,
+    "end_return": -0.14963916181201642
+  },
+  {
+    "model": "current20",
+    "date": "2024-10-28",
+    "symbol": "MSTR",
+    "adverse_close": -0.1561400189214759,
+    "end_return": 0.5267738883632922
+  },
+  {
+    "model": "current20",
+    "date": "2024-04-09",
+    "symbol": "META",
+    "adverse_close": -0.1553535313868326,
+    "end_return": -0.08060240727287005
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-04-09",
+    "symbol": "META",
+    "adverse_close": -0.1553535313868326,
+    "end_return": -0.08060240727287005
+  },
+  {
+    "model": "current20",
+    "date": "2024-04-09",
+    "symbol": "MPC",
+    "adverse_close": -0.1551243922012936,
+    "end_return": -0.14591889722891005
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-04-09",
+    "symbol": "MPC",
+    "adverse_close": -0.1551243922012936,
+    "end_return": -0.14591889722891005
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-07-21",
+    "symbol": "TXN",
+    "adverse_close": -0.15501775369089876,
+    "end_return": -0.09208559147822826
+  },
+  {
+    "model": "report28",
+    "date": "2022-07-08",
+    "symbol": "FCN",
+    "adverse_close": -0.1519175608201423,
+    "end_return": -0.14490598108998198
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-07-08",
+    "symbol": "FCN",
+    "adverse_close": -0.1519175608201423,
+    "end_return": -0.14490598108998198
+  },
+  {
+    "model": "report28",
+    "date": "2024-10-28",
+    "symbol": "KVYO",
+    "adverse_close": -0.15183112919633768,
+    "end_return": -0.0528992878942014
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "XOM",
+    "adverse_close": -0.1508327668252889,
+    "end_return": -0.08761046906866077
+  },
+  {
+    "model": "current20",
+    "date": "2021-05-27",
+    "symbol": "NEM",
+    "adverse_close": -0.15006821282401095,
+    "end_return": -0.1448840381991814
+  },
+  {
+    "model": "report28",
+    "date": "2021-05-27",
+    "symbol": "NEM",
+    "adverse_close": -0.15006821282401095,
+    "end_return": -0.1448840381991814
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "PII",
+    "adverse_close": -0.14987733254033153,
+    "end_return": -0.148093078581518
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "COST",
+    "adverse_close": -0.1497554074553854,
+    "end_return": -0.14527263120216816
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-04-11",
+    "symbol": "COST",
+    "adverse_close": -0.1497554074553854,
+    "end_return": -0.14527263120216816
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "ABNB",
+    "adverse_close": -0.1495988032095743,
+    "end_return": -0.1495988032095743
+  },
+  {
+    "model": "current20",
+    "date": "2024-08-30",
+    "symbol": "AFRM",
+    "adverse_close": -0.148698035632709,
+    "end_return": -0.0676107811786204
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "PLTR",
+    "adverse_close": -0.14810355207706194,
+    "end_return": -0.13305237808549064
+  },
+  {
+    "model": "report28",
+    "date": "2024-12-24",
+    "symbol": "WK",
+    "adverse_close": -0.14807658528016865,
+    "end_return": -0.14201651150535743
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-12-24",
+    "symbol": "WK",
+    "adverse_close": -0.14807658528016865,
+    "end_return": -0.14201651150535743
+  },
+  {
+    "model": "report28",
+    "date": "2024-02-09",
+    "symbol": "OTTR",
+    "adverse_close": -0.14790174002047085,
+    "end_return": -0.14790174002047085
+  },
+  {
+    "model": "current20",
+    "date": "2025-01-27",
+    "symbol": "HUM",
+    "adverse_close": -0.14769127064374787,
+    "end_return": -0.12615436467812613
+  },
+  {
+    "model": "current20",
+    "date": "2024-11-25",
+    "symbol": "MSTR",
+    "adverse_close": -0.14713412403991843,
+    "end_return": -0.06426668059982221
+  },
+  {
+    "model": "report28",
+    "date": "2022-10-03",
+    "symbol": "FCN",
+    "adverse_close": -0.1465173091819103,
+    "end_return": -0.07269260561282265
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-10-03",
+    "symbol": "FCN",
+    "adverse_close": -0.1465173091819103,
+    "end_return": -0.07269260561282265
+  },
+  {
+    "model": "current20",
+    "date": "2021-10-19",
+    "symbol": "AFRM",
+    "adverse_close": -0.14562671955979267,
+    "end_return": -0.031991810096615225
+  },
+  {
+    "model": "current20",
+    "date": "2024-03-11",
+    "symbol": "SOXL",
+    "adverse_close": -0.14492155243600324,
+    "end_return": -0.06296449215524358
+  },
+  {
+    "model": "current20",
+    "date": "2022-01-13",
+    "symbol": "TSM",
+    "adverse_close": -0.14483062679109415,
+    "end_return": -0.11080902344037036
+  },
+  {
+    "model": "current20",
+    "date": "2023-12-12",
+    "symbol": "NKE",
+    "adverse_close": -0.14470046082949306,
+    "end_return": -0.1126937578550481
+  },
+  {
+    "model": "report28",
+    "date": "2023-12-12",
+    "symbol": "NKE",
+    "adverse_close": -0.14470046082949306,
+    "end_return": -0.1126937578550481
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-12-12",
+    "symbol": "NKE",
+    "adverse_close": -0.14470046082949306,
+    "end_return": -0.1126937578550481
+  },
+  {
+    "model": "current20",
+    "date": "2023-02-27",
+    "symbol": "WBD",
+    "adverse_close": -0.1443883984867591,
+    "end_return": -0.09583858764186626
+  },
+  {
+    "model": "current20",
+    "date": "2024-01-11",
+    "symbol": "BITO",
+    "adverse_close": -0.14427860696517403,
+    "end_return": 0.019448213478064247
+  },
+  {
+    "model": "report28",
+    "date": "2023-12-12",
+    "symbol": "UTHR",
+    "adverse_close": -0.1439725918253526,
+    "end_return": -0.12238068679786474
+  },
+  {
+    "model": "current20",
+    "date": "2021-11-16",
+    "symbol": "WDAY",
+    "adverse_close": -0.14337317745960843,
+    "end_return": -0.08308157099697866
+  },
+  {
+    "model": "report28",
+    "date": "2021-11-16",
+    "symbol": "WDAY",
+    "adverse_close": -0.14337317745960843,
+    "end_return": -0.08308157099697866
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-11-16",
+    "symbol": "WDAY",
+    "adverse_close": -0.14337317745960843,
+    "end_return": -0.08308157099697866
+  },
+  {
+    "model": "current20",
+    "date": "2025-02-25",
+    "symbol": "PLTR",
+    "adverse_close": -0.1433378196500673,
+    "end_return": 0.082323912068192
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "BABA",
+    "adverse_close": -0.14330434782608703,
+    "end_return": 0.05130434782608706
+  },
+  {
+    "model": "current20",
+    "date": "2022-09-02",
+    "symbol": "PDD",
+    "adverse_close": -0.14263278126784706,
+    "end_return": -0.10551113649343247
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "BB",
+    "adverse_close": -0.14249146757679176,
+    "end_return": -0.13395904436860073
+  },
+  {
+    "model": "current20",
+    "date": "2022-11-29",
+    "symbol": "MPC",
+    "adverse_close": -0.14199662677696578,
+    "end_return": -0.08023451931571768
+  },
+  {
+    "model": "current20",
+    "date": "2022-05-10",
+    "symbol": "CLX",
+    "adverse_close": -0.1412125863392173,
+    "end_return": -0.14089281146073163
+  },
+  {
+    "model": "report28",
+    "date": "2022-07-08",
+    "symbol": "SIGI",
+    "adverse_close": -0.14002732240437155,
+    "end_return": -0.11646174863387981
+  },
+  {
+    "model": "current20",
+    "date": "2023-10-16",
+    "symbol": "BP",
+    "adverse_close": -0.13988095238095244,
+    "end_return": -0.11458333333333326
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-10-16",
+    "symbol": "BP",
+    "adverse_close": -0.13988095238095244,
+    "end_return": -0.11458333333333326
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "UBER",
+    "adverse_close": -0.13980822765233525,
+    "end_return": -0.10145375811939372
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "XBI",
+    "adverse_close": -0.13973074322247492,
+    "end_return": -0.13973074322247492
+  },
+  {
+    "model": "current20",
+    "date": "2024-07-05",
+    "symbol": "LLY",
+    "adverse_close": -0.13910163527220032,
+    "end_return": -0.12357689919271364
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-07-05",
+    "symbol": "LLY",
+    "adverse_close": -0.13910163527220032,
+    "end_return": -0.12357689919271364
+  },
+  {
+    "model": "current20",
+    "date": "2024-05-07",
+    "symbol": "CVNA",
+    "adverse_close": -0.13881636205395997,
+    "end_return": -0.10313315926892952
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "MDB",
+    "adverse_close": -0.1386389540730808,
+    "end_return": 0.14625544753603759
+  },
+  {
+    "model": "report28",
+    "date": "2023-08-18",
+    "symbol": "DHT",
+    "adverse_close": -0.13861386138613863,
+    "end_return": -0.06435643564356441
+  },
+  {
+    "model": "report28",
+    "date": "2021-04-29",
+    "symbol": "MTG",
+    "adverse_close": -0.13851132686084133,
+    "end_return": -0.05436893203883497
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "ICE",
+    "adverse_close": -0.13817995793781623,
+    "end_return": -0.08492013869152504
+  },
+  {
+    "model": "report28",
+    "date": "2025-03-25",
+    "symbol": "ICE",
+    "adverse_close": -0.13817995793781623,
+    "end_return": -0.08492013869152504
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-03-25",
+    "symbol": "ICE",
+    "adverse_close": -0.13817995793781623,
+    "end_return": -0.08492013869152504
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "ENB",
+    "adverse_close": -0.13814389101745417,
+    "end_return": -0.1019582801191996
+  },
+  {
+    "model": "report28",
+    "date": "2022-05-10",
+    "symbol": "SJM",
+    "adverse_close": -0.13808119117853634,
+    "end_return": -0.10493046776232617
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-05-10",
+    "symbol": "SJM",
+    "adverse_close": -0.13808119117853634,
+    "end_return": -0.10493046776232617
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "AVTR",
+    "adverse_close": -0.13805104408352675,
+    "end_return": -0.11299303944315553
+  },
+  {
+    "model": "report28",
+    "date": "2021-09-21",
+    "symbol": "AVTR",
+    "adverse_close": -0.13805104408352675,
+    "end_return": -0.11299303944315553
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-09-21",
+    "symbol": "AVTR",
+    "adverse_close": -0.13805104408352675,
+    "end_return": -0.11299303944315553
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "AJG",
+    "adverse_close": -0.13783710160719154,
+    "end_return": -0.13783710160719154
+  },
+  {
+    "model": "report28",
+    "date": "2022-04-11",
+    "symbol": "AJG",
+    "adverse_close": -0.13783710160719154,
+    "end_return": -0.13783710160719154
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-04-11",
+    "symbol": "AJG",
+    "adverse_close": -0.13783710160719154,
+    "end_return": -0.13783710160719154
+  },
+  {
+    "model": "current20",
+    "date": "2024-12-24",
+    "symbol": "AAPL",
+    "adverse_close": -0.13768929857856627,
+    "end_return": -0.10972539602618225
+  },
+  {
+    "model": "report28",
+    "date": "2024-12-24",
+    "symbol": "AAPL",
+    "adverse_close": -0.13768929857856627,
+    "end_return": -0.10972539602618225
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-12-24",
+    "symbol": "AAPL",
+    "adverse_close": -0.13768929857856627,
+    "end_return": -0.10972539602618225
+  },
+  {
+    "model": "report28",
+    "date": "2022-06-08",
+    "symbol": "NFG",
+    "adverse_close": -0.13755692472542191,
+    "end_return": -0.13755692472542191
+  },
+  {
+    "model": "current20",
+    "date": "2023-09-18",
+    "symbol": "WFRD",
+    "adverse_close": -0.1372050447518307,
+    "end_return": -0.02674938974776231
+  },
+  {
+    "model": "report28",
+    "date": "2023-09-18",
+    "symbol": "WFRD",
+    "adverse_close": -0.1372050447518307,
+    "end_return": -0.02674938974776231
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-09-18",
+    "symbol": "WFRD",
+    "adverse_close": -0.1372050447518307,
+    "end_return": -0.02674938974776231
+  },
+  {
+    "model": "report28",
+    "date": "2025-03-25",
+    "symbol": "BAP",
+    "adverse_close": -0.13686937966773371,
+    "end_return": -0.02174465274602444
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "DKNG",
+    "adverse_close": -0.13656633221850623,
+    "end_return": -0.13656633221850623
+  },
+  {
+    "model": "current20",
+    "date": "2021-08-23",
+    "symbol": "KR",
+    "adverse_close": -0.13579982891360143,
+    "end_return": -0.1349443969204447
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-08-23",
+    "symbol": "KR",
+    "adverse_close": -0.13579982891360143,
+    "end_return": -0.1349443969204447
+  },
+  {
+    "model": "current20",
+    "date": "2025-11-11",
+    "symbol": "LITE",
+    "adverse_close": -0.1356397165282327,
+    "end_return": 0.3944982092509335
+  },
+  {
+    "model": "current20",
+    "date": "2024-01-11",
+    "symbol": "LABU",
+    "adverse_close": -0.1356302127991269,
+    "end_return": -0.03211474004209203
+  },
+  {
+    "model": "report28",
+    "date": "2024-08-02",
+    "symbol": "MCK",
+    "adverse_close": -0.13558455665063973,
+    "end_return": -0.10374902161238264
+  },
+  {
+    "model": "current20",
+    "date": "2021-04-29",
+    "symbol": "RH",
+    "adverse_close": -0.13537385844748862,
+    "end_return": -0.08103595890410953
+  },
+  {
+    "model": "report28",
+    "date": "2023-08-18",
+    "symbol": "VTRS",
+    "adverse_close": -0.1352549889135255,
+    "end_return": -0.12904656319290464
+  },
+  {
+    "model": "current20",
+    "date": "2023-03-27",
+    "symbol": "AMD",
+    "adverse_close": -0.1340291412627881,
+    "end_return": -0.1340291412627881
+  },
+  {
+    "model": "report28",
+    "date": "2023-09-18",
+    "symbol": "JEF",
+    "adverse_close": -0.13272490221642774,
+    "end_return": -0.11760104302477181
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-11-11",
+    "symbol": "TEL",
+    "adverse_close": -0.1327079374064939,
+    "end_return": -0.012858355909587171
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "ABBV",
+    "adverse_close": -0.1324788848857127,
+    "end_return": -0.10170692812001658
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-04-11",
+    "symbol": "ABBV",
+    "adverse_close": -0.1324788848857127,
+    "end_return": -0.10170692812001658
+  },
+  {
+    "model": "current20",
+    "date": "2022-02-11",
+    "symbol": "MET",
+    "adverse_close": -0.13209132931783163,
+    "end_return": -0.09385067936685809
+  },
+  {
+    "model": "report28",
+    "date": "2022-02-11",
+    "symbol": "MET",
+    "adverse_close": -0.13209132931783163,
+    "end_return": -0.09385067936685809
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-02-11",
+    "symbol": "MET",
+    "adverse_close": -0.13209132931783163,
+    "end_return": -0.09385067936685809
+  },
+  {
+    "model": "current20",
+    "date": "2025-08-18",
+    "symbol": "HOOD",
+    "adverse_close": -0.13176024801929043,
+    "end_return": 0.010850843954529621
+  },
+  {
+    "model": "report28",
+    "date": "2021-11-16",
+    "symbol": "TNET",
+    "adverse_close": -0.1315545673522327,
+    "end_return": -0.11645358532518058
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "UPRO",
+    "adverse_close": -0.13144329896907225,
+    "end_return": -0.13144329896907225
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-07-05",
+    "symbol": "UPRO",
+    "adverse_close": -0.13144329896907225,
+    "end_return": -0.13144329896907225
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "SPXL",
+    "adverse_close": -0.13135292218275751,
+    "end_return": -0.13135292218275751
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "BX",
+    "adverse_close": -0.13096263805122577,
+    "end_return": -0.006892770423748695
+  },
+  {
+    "model": "current20",
+    "date": "2023-02-27",
+    "symbol": "RBA",
+    "adverse_close": -0.13088574250905505,
+    "end_return": -0.08758643398090216
+  },
+  {
+    "model": "report28",
+    "date": "2022-09-02",
+    "symbol": "SWX",
+    "adverse_close": -0.13084112149532712,
+    "end_return": -0.11601246105919005
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-02-27",
+    "symbol": "PH",
+    "adverse_close": -0.13041494367603013,
+    "end_return": -0.07411949237131032
+  },
+  {
+    "model": "current20",
+    "date": "2024-03-11",
+    "symbol": "BITO",
+    "adverse_close": -0.13034316676700775,
+    "end_return": -0.09030704394942801
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "MAGS",
+    "adverse_close": -0.13031914893617025,
+    "end_return": -0.13031914893617025
+  },
+  {
+    "model": "current20",
+    "date": "2021-04-29",
+    "symbol": "STX",
+    "adverse_close": -0.12988351716317914,
+    "end_return": -0.0059787650757653354
+  },
+  {
+    "model": "report28",
+    "date": "2021-04-29",
+    "symbol": "STX",
+    "adverse_close": -0.12988351716317914,
+    "end_return": -0.0059787650757653354
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-04-29",
+    "symbol": "STX",
+    "adverse_close": -0.12988351716317914,
+    "end_return": -0.0059787650757653354
+  },
+  {
+    "model": "report28",
+    "date": "2023-09-18",
+    "symbol": "TM",
+    "adverse_close": -0.1286125681374063,
+    "end_return": -0.07898796667695163
+  },
+  {
+    "model": "report28",
+    "date": "2021-09-21",
+    "symbol": "ON",
+    "adverse_close": -0.12859739535889725,
+    "end_return": -0.06516594084444938
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-09-21",
+    "symbol": "ON",
+    "adverse_close": -0.12859739535889725,
+    "end_return": -0.06516594084444938
+  },
+  {
+    "model": "current20",
+    "date": "2024-08-02",
+    "symbol": "TMF",
+    "adverse_close": -0.12858986769925784,
+    "end_return": -0.10342045821232648
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "LYV",
+    "adverse_close": -0.128202479338843,
+    "end_return": -0.128202479338843
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "LYV",
+    "adverse_close": -0.128202479338843,
+    "end_return": -0.128202479338843
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-07-21",
+    "symbol": "LYV",
+    "adverse_close": -0.128202479338843,
+    "end_return": -0.128202479338843
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-03",
+    "symbol": "TRIP",
+    "adverse_close": -0.1281581838154522,
+    "end_return": -0.015195898938117902
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-01-27",
+    "symbol": "RIO",
+    "adverse_close": -0.12762724740440612,
+    "end_return": -0.12433527475310213
+  },
+  {
+    "model": "report28",
+    "date": "2022-10-31",
+    "symbol": "CHH",
+    "adverse_close": -0.1270130659374049,
+    "end_return": -0.07862351868732897
+  },
+  {
+    "model": "current20",
+    "date": "2022-09-02",
+    "symbol": "XLU",
+    "adverse_close": -0.12663289789389498,
+    "end_return": -0.10103972274060247
+  },
+  {
+    "model": "report28",
+    "date": "2022-09-02",
+    "symbol": "MPLX",
+    "adverse_close": -0.12660550458715603,
+    "end_return": -0.071559633027523
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-09-02",
+    "symbol": "MPLX",
+    "adverse_close": -0.12660550458715603,
+    "end_return": -0.071559633027523
+  },
+  {
+    "model": "current20",
+    "date": "2022-10-31",
+    "symbol": "ELV",
+    "adverse_close": -0.126348623853211,
+    "end_return": -0.05438532110091743
+  },
+  {
+    "model": "report28",
+    "date": "2022-10-31",
+    "symbol": "ELV",
+    "adverse_close": -0.126348623853211,
+    "end_return": -0.05438532110091743
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-10-31",
+    "symbol": "ELV",
+    "adverse_close": -0.126348623853211,
+    "end_return": -0.05438532110091743
+  },
+  {
+    "model": "current20",
+    "date": "2023-02-27",
+    "symbol": "JPM",
+    "adverse_close": -0.12613684063243324,
+    "end_return": -0.10109136700713584
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-03-03",
+    "symbol": "RIO",
+    "adverse_close": -0.12588235294117656,
+    "end_return": -0.08647058823529408
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-02-27",
+    "symbol": "IBKR",
+    "adverse_close": -0.12551915089986165,
+    "end_return": -0.08214120904476241
+  },
+  {
+    "model": "current20",
+    "date": "2024-11-25",
+    "symbol": "BX",
+    "adverse_close": -0.12472795108301371,
+    "end_return": -0.08959477666079385
+  },
+  {
+    "model": "current20",
+    "date": "2022-10-03",
+    "symbol": "NFLX",
+    "adverse_close": -0.12459150326797386,
+    "end_return": 0.1924019607843137
+  },
+  {
+    "model": "current20",
+    "date": "2024-07-05",
+    "symbol": "MSFT",
+    "adverse_close": -0.12444539706355162,
+    "end_return": -0.12444539706355162
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-07-05",
+    "symbol": "MSFT",
+    "adverse_close": -0.12444539706355162,
+    "end_return": -0.12444539706355162
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "TEAM",
+    "adverse_close": -0.12429825552918139,
+    "end_return": -0.12429825552918139
+  },
+  {
+    "model": "current20",
+    "date": "2025-07-21",
+    "symbol": "ETHU",
+    "adverse_close": -0.12412795644036079,
+    "end_return": 0.31895524927684193
+  },
+  {
+    "model": "current20",
+    "date": "2024-02-09",
+    "symbol": "WDAY",
+    "adverse_close": -0.12407211028632026,
+    "end_return": -0.1161187698833509
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-02-09",
+    "symbol": "WDAY",
+    "adverse_close": -0.12407211028632026,
+    "end_return": -0.1161187698833509
+  },
+  {
+    "model": "report28",
+    "date": "2024-02-09",
+    "symbol": "TENB",
+    "adverse_close": -0.12403846153846154,
+    "end_return": -0.08730769230769231
+  },
+  {
+    "model": "current20",
+    "date": "2023-04-25",
+    "symbol": "ABBV",
+    "adverse_close": -0.12392426850258176,
+    "end_return": -0.12392426850258176
+  },
+  {
+    "model": "current20",
+    "date": "2025-06-20",
+    "symbol": "USO",
+    "adverse_close": -0.12312312312312312,
+    "end_return": -0.09201201201201192
+  },
+  {
+    "model": "report28",
+    "date": "2025-02-25",
+    "symbol": "FE",
+    "adverse_close": -0.12294892535243818,
+    "end_return": -0.12294892535243818
+  },
+  {
+    "model": "current20",
+    "date": "2025-04-23",
+    "symbol": "AEM",
+    "adverse_close": -0.12281289242360827,
+    "end_return": -0.03197990791126004
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "GOOGL",
+    "adverse_close": -0.12235709207720058,
+    "end_return": -0.12235709207720058
+  },
+  {
+    "model": "report28",
+    "date": "2024-11-25",
+    "symbol": "APD",
+    "adverse_close": -0.12195633292401686,
+    "end_return": -0.1134205876186768
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-11-25",
+    "symbol": "APD",
+    "adverse_close": -0.12195633292401686,
+    "end_return": -0.1134205876186768
+  },
+  {
+    "model": "current20",
+    "date": "2023-01-27",
+    "symbol": "XYZ",
+    "adverse_close": -0.12181130233125848,
+    "end_return": -0.08287562553399253
+  },
+  {
+    "model": "current20",
+    "date": "2024-11-25",
+    "symbol": "ORCL",
+    "adverse_close": -0.12165463041631264,
+    "end_return": -0.08979396771452841
+  },
+  {
+    "model": "report28",
+    "date": "2023-10-16",
+    "symbol": "ERIE",
+    "adverse_close": -0.12146347736625518,
+    "end_return": -0.08619470164609055
+  },
+  {
+    "model": "current20",
+    "date": "2025-01-27",
+    "symbol": "A",
+    "adverse_close": -0.12076534958390672,
+    "end_return": -0.12076534958390672
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-01-27",
+    "symbol": "A",
+    "adverse_close": -0.12076534958390672,
+    "end_return": -0.12076534958390672
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "GOOG",
+    "adverse_close": -0.12000627073916337,
+    "end_return": -0.12000627073916337
+  },
+  {
+    "model": "report28",
+    "date": "2025-01-27",
+    "symbol": "RBLX",
+    "adverse_close": -0.1195434669828801,
+    "end_return": -0.1195434669828801
+  },
+  {
+    "model": "report28",
+    "date": "2025-04-23",
+    "symbol": "CWT",
+    "adverse_close": -0.11928233438485802,
+    "end_return": -0.0652602523659307
+  },
+  {
+    "model": "current20",
+    "date": "2025-03-25",
+    "symbol": "HALO",
+    "adverse_close": -0.11902198985083812,
+    "end_return": -0.10179916961402435
+  },
+  {
+    "model": "report28",
+    "date": "2025-03-25",
+    "symbol": "HALO",
+    "adverse_close": -0.11902198985083812,
+    "end_return": -0.10179916961402435
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-03-25",
+    "symbol": "HALO",
+    "adverse_close": -0.11902198985083812,
+    "end_return": -0.10179916961402435
+  },
+  {
+    "model": "current20",
+    "date": "2022-08-05",
+    "symbol": "SNPS",
+    "adverse_close": -0.11850666666666665,
+    "end_return": -0.11850666666666665
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-11-16",
+    "symbol": "UPRO",
+    "adverse_close": -0.11774281063483438,
+    "end_return": 0.0006782419967443776
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "DASH",
+    "adverse_close": -0.11768692116557478,
+    "end_return": -0.036232211429862105
+  },
+  {
+    "model": "report28",
+    "date": "2022-10-31",
+    "symbol": "HST",
+    "adverse_close": -0.11764705882352933,
+    "end_return": -0.01995798319327724
+  },
+  {
+    "model": "current20",
+    "date": "2021-08-23",
+    "symbol": "PFE",
+    "adverse_close": -0.11761158021712914,
+    "end_return": -0.11700844390832332
+  },
+  {
+    "model": "current20",
+    "date": "2025-05-21",
+    "symbol": "WDAY",
+    "adverse_close": -0.11760104302477181,
+    "end_return": -0.1127211771279567
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-05-21",
+    "symbol": "WDAY",
+    "adverse_close": -0.11760104302477181,
+    "end_return": -0.1127211771279567
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-11-16",
+    "symbol": "SPXL",
+    "adverse_close": -0.11706120092378747,
+    "end_return": 0.0013712471131639425
+  },
+  {
+    "model": "report28",
+    "date": "2023-06-22",
+    "symbol": "MKC",
+    "adverse_close": -0.11615572292351761,
+    "end_return": -0.06513206746578981
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-06-22",
+    "symbol": "MKC",
+    "adverse_close": -0.11615572292351761,
+    "end_return": -0.06513206746578981
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-03",
+    "symbol": "GE",
+    "adverse_close": -0.11599423631123928,
+    "end_return": -0.054034582132564846
+  },
+  {
+    "model": "report28",
+    "date": "2025-04-23",
+    "symbol": "ED",
+    "adverse_close": -0.11587103669397936,
+    "end_return": -0.06287851799073751
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-04-23",
+    "symbol": "ED",
+    "adverse_close": -0.11587103669397936,
+    "end_return": -0.06287851799073751
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "LECO",
+    "adverse_close": -0.11574697173620452,
+    "end_return": -0.11574697173620452
+  },
+  {
+    "model": "current20",
+    "date": "2022-01-13",
+    "symbol": "MTB",
+    "adverse_close": -0.11541436464088395,
+    "end_return": 0.007182320441988965
+  },
+  {
+    "model": "current20",
+    "date": "2023-09-18",
+    "symbol": "PSX",
+    "adverse_close": -0.1151539708265803,
+    "end_return": -0.09416531604538092
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-09-18",
+    "symbol": "PSX",
+    "adverse_close": -0.1151539708265803,
+    "end_return": -0.09416531604538092
+  },
+  {
+    "model": "report28",
+    "date": "2023-01-27",
+    "symbol": "BCS",
+    "adverse_close": -0.11505376344086027,
+    "end_return": -0.10215053763440873
+  },
+  {
+    "model": "report28",
+    "date": "2023-09-18",
+    "symbol": "HAL",
+    "adverse_close": -0.11488372093023247,
+    "end_return": -0.014883720930232602
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-09-16",
+    "symbol": "HD",
+    "adverse_close": -0.11471586089906705,
+    "end_return": -0.08651399491094136
+  },
+  {
+    "model": "report28",
+    "date": "2023-06-22",
+    "symbol": "ALKS",
+    "adverse_close": -0.11469534050179198,
+    "end_return": -0.04659498207885293
+  },
+  {
+    "model": "report28",
+    "date": "2021-04-29",
+    "symbol": "AGO",
+    "adverse_close": -0.11460367044123387,
+    "end_return": -0.07497071456462312
+  },
+  {
+    "model": "report28",
+    "date": "2021-10-19",
+    "symbol": "NOC",
+    "adverse_close": -0.11420976074635103,
+    "end_return": -0.11069870090785972
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-10-19",
+    "symbol": "NOC",
+    "adverse_close": -0.11420976074635103,
+    "end_return": -0.11069870090785972
+  },
+  {
+    "model": "report28",
+    "date": "2021-09-21",
+    "symbol": "KMX",
+    "adverse_close": -0.11414732885129764,
+    "end_return": 0.0012289452757896502
+  },
+  {
+    "model": "report28",
+    "date": "2024-10-28",
+    "symbol": "IRM",
+    "adverse_close": -0.1139656928017545,
+    "end_return": -0.053967259340487184
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-10-28",
+    "symbol": "IRM",
+    "adverse_close": -0.1139656928017545,
+    "end_return": -0.053967259340487184
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "ASAN",
+    "adverse_close": -0.11386226482073136,
+    "end_return": 0.13285410010649623
+  },
+  {
+    "model": "report28",
+    "date": "2024-07-05",
+    "symbol": "IGM",
+    "adverse_close": -0.11364333163004592,
+    "end_return": -0.11364333163004592
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "SOXL",
+    "adverse_close": -0.11299721307322019,
+    "end_return": -0.11299721307322019
+  },
+  {
+    "model": "current20",
+    "date": "2021-02-02",
+    "symbol": "PANW",
+    "adverse_close": -0.11288324558686902,
+    "end_return": -0.11288324558686902
+  },
+  {
+    "model": "report28",
+    "date": "2021-03-31",
+    "symbol": "FFIV",
+    "adverse_close": -0.11281125261357161,
+    "end_return": -0.0944687321801938
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-03-31",
+    "symbol": "FFIV",
+    "adverse_close": -0.11281125261357161,
+    "end_return": -0.0944687321801938
+  },
+  {
+    "model": "current20",
+    "date": "2025-05-21",
+    "symbol": "ACHR",
+    "adverse_close": -0.11279620853080585,
+    "end_return": -0.04834123222748832
+  },
+  {
+    "model": "current20",
+    "date": "2024-06-05",
+    "symbol": "NVDL",
+    "adverse_close": -0.11226611226611227,
+    "end_return": -0.004158004158004269
+  },
+  {
+    "model": "report28",
+    "date": "2022-02-11",
+    "symbol": "TD",
+    "adverse_close": -0.11220729822893138,
+    "end_return": -0.08249138238440501
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-02-11",
+    "symbol": "TD",
+    "adverse_close": -0.11220729822893138,
+    "end_return": -0.08249138238440501
+  },
+  {
+    "model": "current20",
+    "date": "2025-10-14",
+    "symbol": "SLV",
+    "adverse_close": -0.11204188481675392,
+    "end_return": -0.027225130890052296
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-10-14",
+    "symbol": "SLV",
+    "adverse_close": -0.11204188481675392,
+    "end_return": -0.027225130890052296
+  },
+  {
+    "model": "current20",
+    "date": "2025-08-18",
+    "symbol": "FSLR",
+    "adverse_close": -0.11192123717085412,
+    "end_return": -0.04681187015278876
+  },
+  {
+    "model": "current20",
+    "date": "2023-09-18",
+    "symbol": "MORN",
+    "adverse_close": -0.11134321299069838,
+    "end_return": -0.07799936938357244
+  },
+  {
+    "model": "report28",
+    "date": "2023-09-18",
+    "symbol": "MORN",
+    "adverse_close": -0.11134321299069838,
+    "end_return": -0.07799936938357244
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-09-18",
+    "symbol": "MORN",
+    "adverse_close": -0.11134321299069838,
+    "end_return": -0.07799936938357244
+  },
+  {
+    "model": "report28",
+    "date": "2022-05-10",
+    "symbol": "CAG",
+    "adverse_close": -0.11123564023536003,
+    "end_return": -0.08489773045671056
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-05-10",
+    "symbol": "CAG",
+    "adverse_close": -0.11123564023536003,
+    "end_return": -0.08489773045671056
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "TAP",
+    "adverse_close": -0.11122230164403146,
+    "end_return": -0.09892780557541103
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "PDD",
+    "adverse_close": -0.11116556399575273,
+    "end_return": -0.006779384137874822
+  },
+  {
+    "model": "current20",
+    "date": "2025-04-23",
+    "symbol": "NEM",
+    "adverse_close": -0.11107051516258681,
+    "end_return": -0.038363171355498715
+  },
+  {
+    "model": "current20",
+    "date": "2025-07-21",
+    "symbol": "U",
+    "adverse_close": -0.11089385474860336,
+    "end_return": 0.07094972067039129
+  },
+  {
+    "model": "report28",
+    "date": "2023-02-27",
+    "symbol": "EPRT",
+    "adverse_close": -0.11081185071181221,
+    "end_return": -0.08387841477491342
+  },
+  {
+    "model": "report28",
+    "date": "2024-05-07",
+    "symbol": "ERIE",
+    "adverse_close": -0.11057123125493284,
+    "end_return": -0.11057123125493284
+  },
+  {
+    "model": "current20",
+    "date": "2023-09-18",
+    "symbol": "CCJ",
+    "adverse_close": -0.11045510455104557,
+    "end_return": -0.10996309963099626
+  },
+  {
+    "model": "report28",
+    "date": "2023-09-18",
+    "symbol": "CCJ",
+    "adverse_close": -0.11045510455104557,
+    "end_return": -0.10996309963099626
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-09-18",
+    "symbol": "CCJ",
+    "adverse_close": -0.11045510455104557,
+    "end_return": -0.10996309963099626
+  },
+  {
+    "model": "current20",
+    "date": "2021-09-21",
+    "symbol": "KLAC",
+    "adverse_close": -0.1099972152603731,
+    "end_return": -0.07518796992481191
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-09-21",
+    "symbol": "KLAC",
+    "adverse_close": -0.1099972152603731,
+    "end_return": -0.07518796992481191
+  },
+  {
+    "model": "report28",
+    "date": "2023-10-16",
+    "symbol": "MSM",
+    "adverse_close": -0.1096246390760347,
+    "end_return": -0.06044273339749762
+  },
+  {
+    "model": "current20",
+    "date": "2024-02-09",
+    "symbol": "NET",
+    "adverse_close": -0.10960250948078087,
+    "end_return": -0.09115595299405399
+  },
+  {
+    "model": "report28",
+    "date": "2022-09-02",
+    "symbol": "EG",
+    "adverse_close": -0.1094887866381653,
+    "end_return": -0.0366653382123836
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-09-02",
+    "symbol": "EG",
+    "adverse_close": -0.1094887866381653,
+    "end_return": -0.0366653382123836
+  },
+  {
+    "model": "report28",
+    "date": "2023-02-27",
+    "symbol": "OBDC",
+    "adverse_close": -0.10923753665689151,
+    "end_return": -0.08284457478005869
+  },
+  {
+    "model": "current20",
+    "date": "2022-11-29",
+    "symbol": "GS",
+    "adverse_close": -0.10883660130718953,
+    "end_return": -0.10883660130718953
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-11-29",
+    "symbol": "GS",
+    "adverse_close": -0.10883660130718953,
+    "end_return": -0.10883660130718953
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-08-18",
+    "symbol": "CSX",
+    "adverse_close": -0.10873192436040058,
+    "end_return": -0.09705228031145718
+  },
+  {
+    "model": "current20",
+    "date": "2024-12-24",
+    "symbol": "EXPE",
+    "adverse_close": -0.10863377609108149,
+    "end_return": -0.10863377609108149
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-12-24",
+    "symbol": "EXPE",
+    "adverse_close": -0.10863377609108149,
+    "end_return": -0.10863377609108149
+  },
+  {
+    "model": "current20",
+    "date": "2024-12-24",
+    "symbol": "APO",
+    "adverse_close": -0.10844900074871844,
+    "end_return": -0.036687208431722684
+  },
+  {
+    "model": "report28",
+    "date": "2023-02-27",
+    "symbol": "H",
+    "adverse_close": -0.10835700146312077,
+    "end_return": -0.10319304587313882
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "BLK",
+    "adverse_close": -0.1083543967008116,
+    "end_return": -0.1083543967008116
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-11-25",
+    "symbol": "WMB",
+    "adverse_close": -0.10834904851705818,
+    "end_return": -0.06394651122921302
+  },
+  {
+    "model": "report28",
+    "date": "2025-07-21",
+    "symbol": "BSY",
+    "adverse_close": -0.10827586206896556,
+    "end_return": -0.07517241379310347
+  },
+  {
+    "model": "report28",
+    "date": "2022-01-13",
+    "symbol": "BCS",
+    "adverse_close": -0.10822147651006708,
+    "end_return": -0.07130872483221473
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-12-15",
+    "symbol": "ZTS",
+    "adverse_close": -0.10821988626572465,
+    "end_return": -0.10821988626572465
+  },
+  {
+    "model": "current20",
+    "date": "2024-12-24",
+    "symbol": "AXON",
+    "adverse_close": -0.10788888888888892,
+    "end_return": -0.04019047619047622
+  },
+  {
+    "model": "report28",
+    "date": "2024-12-24",
+    "symbol": "NFLX",
+    "adverse_close": -0.10771219302024992,
+    "end_return": 0.04685480396380859
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-12-24",
+    "symbol": "NFLX",
+    "adverse_close": -0.10771219302024992,
+    "end_return": 0.04685480396380859
+  },
+  {
+    "model": "current20",
+    "date": "2025-02-25",
+    "symbol": "LLY",
+    "adverse_close": -0.10765668742660284,
+    "end_return": -0.051220828950370945
+  },
+  {
+    "model": "report28",
+    "date": "2025-02-25",
+    "symbol": "LLY",
+    "adverse_close": -0.10765668742660284,
+    "end_return": -0.051220828950370945
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-02-25",
+    "symbol": "LLY",
+    "adverse_close": -0.10765668742660284,
+    "end_return": -0.051220828950370945
+  },
+  {
+    "model": "current20",
+    "date": "2023-07-21",
+    "symbol": "SCHW",
+    "adverse_close": -0.10751237067026531,
+    "end_return": -0.10751237067026531
+  },
+  {
+    "model": "current20",
+    "date": "2024-03-11",
+    "symbol": "COIN",
+    "adverse_close": -0.1074912250082416,
+    "end_return": -0.05773071925844042
+  },
+  {
+    "model": "current20",
+    "date": "2025-02-25",
+    "symbol": "FOXA",
+    "adverse_close": -0.10738020286813577,
+    "end_return": -0.03882476390346268
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-02-25",
+    "symbol": "FOXA",
+    "adverse_close": -0.10738020286813577,
+    "end_return": -0.03882476390346268
+  },
+  {
+    "model": "current20",
+    "date": "2025-02-25",
+    "symbol": "EBAY",
+    "adverse_close": -0.10736131617802147,
+    "end_return": -0.06770723476059903
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-02-25",
+    "symbol": "EBAY",
+    "adverse_close": -0.10736131617802147,
+    "end_return": -0.06770723476059903
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-02-27",
+    "symbol": "AZO",
+    "adverse_close": -0.10721249071552363,
+    "end_return": -0.08371889700420887
+  },
+  {
+    "model": "reuse28",
+    "date": "2024-07-05",
+    "symbol": "VGT",
+    "adverse_close": -0.10688963210702329,
+    "end_return": -0.10688963210702329
+  },
+  {
+    "model": "current20",
+    "date": "2023-09-18",
+    "symbol": "FTI",
+    "adverse_close": -0.10688278130138584,
+    "end_return": -0.03969931876908617
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-09-18",
+    "symbol": "FTI",
+    "adverse_close": -0.10688278130138584,
+    "end_return": -0.03969931876908617
+  },
+  {
+    "model": "report28",
+    "date": "2024-10-28",
+    "symbol": "TPG",
+    "adverse_close": -0.10680751173708913,
+    "end_return": 0.04592136150234749
+  },
+  {
+    "model": "current20",
+    "date": "2025-08-18",
+    "symbol": "PLTR",
+    "adverse_close": -0.10650093370681601,
+    "end_return": -0.006419234360410919
+  },
+  {
+    "model": "current20",
+    "date": "2023-12-12",
+    "symbol": "BA",
+    "adverse_close": -0.10614211160176634,
+    "end_return": -0.10614211160176634
+  },
+  {
+    "model": "report28",
+    "date": "2023-12-12",
+    "symbol": "BA",
+    "adverse_close": -0.10614211160176634,
+    "end_return": -0.10614211160176634
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-12-12",
+    "symbol": "BA",
+    "adverse_close": -0.10614211160176634,
+    "end_return": -0.10614211160176634
+  },
+  {
+    "model": "current20",
+    "date": "2021-07-26",
+    "symbol": "EBAY",
+    "adverse_close": -0.10589683951292939,
+    "end_return": 0.0015049938432070142
+  },
+  {
+    "model": "reuse28",
+    "date": "2021-07-26",
+    "symbol": "EBAY",
+    "adverse_close": -0.10589683951292939,
+    "end_return": 0.0015049938432070142
+  },
+  {
+    "model": "reuse28",
+    "date": "2025-10-14",
+    "symbol": "UNH",
+    "adverse_close": -0.10526169342497005,
+    "end_return": -0.08887281226522714
+  },
+  {
+    "model": "current20",
+    "date": "2023-10-16",
+    "symbol": "LLY",
+    "adverse_close": -0.10512116316639752,
+    "end_return": -0.01016155088852988
+  },
+  {
+    "model": "current20",
+    "date": "2021-12-15",
+    "symbol": "DHI",
+    "adverse_close": -0.10455058292591202,
+    "end_return": -0.06205340353516353
+  },
+  {
+    "model": "current20",
+    "date": "2025-05-21",
+    "symbol": "CHTR",
+    "adverse_close": -0.10445829338446788,
+    "end_return": -0.07389741131351868
+  },
+  {
+    "model": "current20",
+    "date": "2022-04-11",
+    "symbol": "KR",
+    "adverse_close": -0.10436812270756912,
+    "end_return": -0.07985995331777263
+  },
+  {
+    "model": "report28",
+    "date": "2022-04-11",
+    "symbol": "KR",
+    "adverse_close": -0.10436812270756912,
+    "end_return": -0.07985995331777263
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-04-11",
+    "symbol": "KR",
+    "adverse_close": -0.10436812270756912,
+    "end_return": -0.07985995331777263
+  },
+  {
+    "model": "report28",
+    "date": "2023-07-21",
+    "symbol": "SBRA",
+    "adverse_close": -0.1039453717754173,
+    "end_return": -0.09028831562974204
+  },
+  {
+    "model": "current20",
+    "date": "2025-09-16",
+    "symbol": "BIDU",
+    "adverse_close": -0.10392230108330214,
+    "end_return": -0.10392230108330214
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-08-05",
+    "symbol": "PH",
+    "adverse_close": -0.10383678440925703,
+    "end_return": -0.10383678440925703
+  },
+  {
+    "model": "report28",
+    "date": "2021-11-16",
+    "symbol": "ICUI",
+    "adverse_close": -0.10361054766734279,
+    "end_return": -0.07979716024340766
+  },
+  {
+    "model": "current20",
+    "date": "2023-10-16",
+    "symbol": "AMGN",
+    "adverse_close": -0.10340474771205166,
+    "end_return": -0.06486903467863525
+  },
+  {
+    "model": "report28",
+    "date": "2023-10-16",
+    "symbol": "AMGN",
+    "adverse_close": -0.10340474771205166,
+    "end_return": -0.06486903467863525
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-10-16",
+    "symbol": "AMGN",
+    "adverse_close": -0.10340474771205166,
+    "end_return": -0.06486903467863525
+  },
+  {
+    "model": "current20",
+    "date": "2022-11-29",
+    "symbol": "FSLR",
+    "adverse_close": -0.10336155072997188,
+    "end_return": -0.10336155072997188
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "AMT",
+    "adverse_close": -0.1033426503809779,
+    "end_return": -0.023586169927633405
+  },
+  {
+    "model": "report28",
+    "date": "2025-07-21",
+    "symbol": "TPR",
+    "adverse_close": -0.10293428330364685,
+    "end_return": -0.06337301959313779
+  },
+  {
+    "model": "current20",
+    "date": "2023-11-13",
+    "symbol": "WMT",
+    "adverse_close": -0.10292543703175172,
+    "end_return": -0.10007135212272567
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-11-13",
+    "symbol": "WMT",
+    "adverse_close": -0.10292543703175172,
+    "end_return": -0.10007135212272567
+  },
+  {
+    "model": "current20",
+    "date": "2021-04-29",
+    "symbol": "DHI",
+    "adverse_close": -0.10268609376548721,
+    "end_return": -0.052631578947368474
+  },
+  {
+    "model": "current20",
+    "date": "2023-09-18",
+    "symbol": "XOM",
+    "adverse_close": -0.10242792109256449,
+    "end_return": -0.07309054122407688
+  },
+  {
+    "model": "current20",
+    "date": "2022-09-02",
+    "symbol": "SRE",
+    "adverse_close": -0.10237068965517238,
+    "end_return": -0.07136015325670486
+  },
+  {
+    "model": "report28",
+    "date": "2024-11-25",
+    "symbol": "NJR",
+    "adverse_close": -0.10223452639905084,
+    "end_return": -0.0739568914376113
+  },
+  {
+    "model": "report28",
+    "date": "2022-02-11",
+    "symbol": "AFL",
+    "adverse_close": -0.10196560196560212,
+    "end_return": -0.0657248157248157
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-02-11",
+    "symbol": "AFL",
+    "adverse_close": -0.10196560196560212,
+    "end_return": -0.0657248157248157
+  },
+  {
+    "model": "current20",
+    "date": "2022-09-02",
+    "symbol": "LNG",
+    "adverse_close": -0.10189930660235158,
+    "end_return": 0.008923726258667664
+  },
+  {
+    "model": "current20",
+    "date": "2021-03-03",
+    "symbol": "VLO",
+    "adverse_close": -0.10153846153846158,
+    "end_return": -0.08205128205128209
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-08-05",
+    "symbol": "MA",
+    "adverse_close": -0.10150417827298053,
+    "end_return": -0.10150417827298053
+  },
+  {
+    "model": "current20",
+    "date": "2021-10-19",
+    "symbol": "HAL",
+    "adverse_close": -0.1012099097368927,
+    "end_return": -0.09314384482427507
+  },
+  {
+    "model": "report28",
+    "date": "2023-02-27",
+    "symbol": "IR",
+    "adverse_close": -0.10094258783204801,
+    "end_return": -0.043873179091688086
+  },
+  {
+    "model": "reuse28",
+    "date": "2023-02-27",
+    "symbol": "IR",
+    "adverse_close": -0.10094258783204801,
+    "end_return": -0.043873179091688086
+  },
+  {
+    "model": "current20",
+    "date": "2025-04-23",
+    "symbol": "CI",
+    "adverse_close": -0.10071492403932081,
+    "end_return": -0.05543640154900209
+  },
+  {
+    "model": "current20",
+    "date": "2022-06-08",
+    "symbol": "VICI",
+    "adverse_close": -0.10070332480818422,
+    "end_return": 0.0012787723785165905
+  },
+  {
+    "model": "reuse28",
+    "date": "2022-06-08",
+    "symbol": "VICI",
+    "adverse_close": -0.10070332480818422,
+    "end_return": 0.0012787723785165905
+  },
+  {
+    "model": "report28",
+    "date": "2023-04-25",
+    "symbol": "ENSG",
+    "adverse_close": -0.10067313403286482,
+    "end_return": -0.09196198772520281
+  }
+]

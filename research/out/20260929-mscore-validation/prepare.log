@@ -1,0 +1,52 @@
+2015q1 annual_filings 856 retained_facts 20988
+2015q2 annual_filings 107 retained_facts 2732
+2015q3 annual_filings 122 retained_facts 3110
+2015q4 annual_filings 129 retained_facts 3217
+2016q1 annual_filings 898 retained_facts 22012
+2016q2 annual_filings 102 retained_facts 2591
+2016q3 annual_filings 76 retained_facts 1996
+2016q4 annual_filings 127 retained_facts 3148
+2017q1 annual_filings 934 retained_facts 22949
+2017q2 annual_filings 102 retained_facts 2511
+2017q3 annual_filings 115 retained_facts 2981
+2017q4 annual_filings 129 retained_facts 3278
+2018q1 annual_filings 964 retained_facts 24246
+2018q2 annual_filings 135 retained_facts 3494
+2018q3 annual_filings 113 retained_facts 2959
+2018q4 annual_filings 138 retained_facts 3488
+2019q1 annual_filings 989 retained_facts 24605
+2019q2 annual_filings 148 retained_facts 3767
+2019q3 annual_filings 119 retained_facts 2987
+2019q4 annual_filings 143 retained_facts 3663
+2020q1 annual_filings 1059 retained_facts 26316
+2020q2 annual_filings 119 retained_facts 3059
+2020q3 annual_filings 130 retained_facts 3386
+2020q4 annual_filings 135 retained_facts 3432
+{
+  "matched_annual_filings": 11053,
+  "financial_sector_filings": 3164,
+  "mapped_ciks": 3805,
+  "annual_records": 7889,
+  "complete_records": 182,
+  "complete_ciks": 73,
+  "rejected_reasons": {
+    "missing_pair:Depreciation": 3827,
+    "missing_pair:SellingGeneralAndAdministrativeExpense": 453,
+    "no_comparable_previous_year": 1002,
+    "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet": 1697,
+    "extraordinary_status_unknown_before_effective_year": 58,
+    "missing_pair:LongTermDebt": 284,
+    "missing_or_conflicting:NetCashProvidedByUsedInOperatingActivities": 72,
+    "missing_pair:AssetsCurrent": 67,
+    "missing_pair:SalesRevenueNet/Revenues/RevenueFromContractWithCustomerExcludingAssessedTax/SalesRevenueGoodsNet": 9,
+    "missing_or_conflicting:NetIncomeLoss": 39,
+    "missing_pair:PropertyPlantAndEquipmentNet": 143,
+    "missing_pair:CostOfGoodsAndServicesSold/CostOfRevenue/CostOfGoodsSold": 44,
+    "missing_pair:LongTermDebtCurrent": 8,
+    "missing_pair:LiabilitiesCurrent": 1,
+    "missing_pair:Assets": 2,
+    "nonpositive_asset_quality_residual": 1
+  },
+  "mapping_sha256": "7ff3c9600cabb5ad565a9d93b5f8ca7756659d767e96dd9e6132ce4703665a49",
+  "method_sha256": "c5e442c5a8edbf414b41d46c24581f784ce033023ad4e91a3897a60776f5c769"
+}

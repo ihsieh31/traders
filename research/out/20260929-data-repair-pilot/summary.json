@@ -1,0 +1,3394 @@
+{
+  "status": "conditional exploratory test; no independently validated tradable alpha",
+  "checks": {
+    "decimal_oracle": true,
+    "scale_invariance": true,
+    "missing_rejected": true,
+    "no_DA_substitution": true,
+    "same_day_filing_excluded": true,
+    "future_filing_invariance": true,
+    "latest_missing_no_fallback": true,
+    "older_amendment_no_period_rollback": true,
+    "strict_threshold": true,
+    "short_measurement_checks": {
+      "short_pnl": true,
+      "unbounded_loss": true,
+      "daily_high_risk": true,
+      "missing_exit_unknown": true,
+      "prefix_invariance": true,
+      "legacy_production_equivalence": true,
+      "budget_and_ties": true,
+      "network": "blocked"
+    }
+  },
+  "periods": 59,
+  "data": {
+    "n_sessions": 1259,
+    "n_symbols": 9753,
+    "in_window_bar_rows": 5342671,
+    "identical_duplicate_rows": 0,
+    "panel_sha256": "e8c595528329edd58a760a777e7335f99181a624b102b70b51591d10ebfe1f83",
+    "trusted_symbols_sha256": "a30d3b5a2ddb89e0e100be351435ed3f9abb3fd847c260b67e622ab72dfaa2ce",
+    "method_sha256": "18483a5f498267e14a14d563e27a80f0da81cfa113e2bf81425e42f790663738"
+  },
+  "method_sha256": "aafcc85846270917f5c709cea8755093769251c8cd6c52e73a59a556aee01a48",
+  "financials_sha256": "2d04210af8287e4f81be2189481eb8280be492e11ae6b7da6ff1defc13c87d28",
+  "maximum_decimal_oracle_error": 6.661338147750939e-16,
+  "models": {
+    "price_matched": {
+      "periods": 59,
+      "total_name_observations": 454,
+      "full20_periods": 8,
+      "partial_periods": 38,
+      "zero_periods": 13,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 99,
+      "high_up10_rate": 0.21806167400881057,
+      "high_up20": 29,
+      "high_up20_rate": 0.06387665198237885,
+      "end_down10": 47,
+      "end_down10_rate": 0.10352422907488987,
+      "winning_names": 190,
+      "winning_names_rate": 0.4185022026431718,
+      "high_up10_rate_upper": 0.21806167400881057,
+      "high_up20_rate_upper": 0.06387665198237885,
+      "returns": {
+        "gross": {
+          "mean": -0.0034962437605622365,
+          "ci95": [
+            -0.014107176191997476,
+            0.006238131543394095
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -0.638828084514602
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": -0.0038809895232741016,
+          "ci95": [
+            -0.014518383819116125,
+            0.005812911354869797
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -0.7094327501529899
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": -0.005371005775886129,
+          "ci95": [
+            -0.016059781900871022,
+            0.004283321487705906
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -0.981716907720135
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": -0.009841054533722209,
+          "ci95": [
+            -0.020568995830792237,
+            -0.0002814399432737959
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.7812724115049114
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": -0.004265735285985964,
+          "ci95": [
+            -0.014928339298487142,
+            0.005397163643988905
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -0.780013898647299
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": -0.0057557515385979925,
+          "ci95": [
+            -0.016424179341147663,
+            0.0038965487303433436
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0519426154049927
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": -0.010225800296434074,
+          "ci95": [
+            -0.02088278710221017,
+            -0.0006855762778473906
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.8484878728046226
+        }
+      },
+      "active_periods": 46,
+      "mean_capital_fraction": 0.3847457627118644,
+      "active_gross": {
+        "mean": -0.0044843126494167815,
+        "ci95": [
+          -0.01747003468265755,
+          0.00888921256164895
+        ],
+        "n": 46
+      },
+      "active_net5": {
+        "mean": -0.006888898712549598,
+        "ci95": [
+          -0.019673129437256385,
+          0.006406991894868124
+        ],
+        "n": 46
+      },
+      "per_invested_notional_net5": {
+        "mean": -0.01706419208662767,
+        "ci95": [
+          -0.03576583146420434,
+          0.0012665533550513172
+        ],
+        "n": 46
+      },
+      "positive_active_net5_periods": 13
+    },
+    "m_only_raw": {
+      "periods": 59,
+      "total_name_observations": 20,
+      "full20_periods": 0,
+      "partial_periods": 11,
+      "zero_periods": 48,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 9,
+      "high_up10_rate": 0.45,
+      "high_up20": 3,
+      "high_up20_rate": 0.15,
+      "end_down10": 2,
+      "end_down10_rate": 0.1,
+      "winning_names": 6,
+      "winning_names_rate": 0.3,
+      "high_up10_rate_upper": 0.45,
+      "high_up20_rate_upper": 0.15,
+      "returns": {
+        "gross": {
+          "mean": -0.0006591467167207844,
+          "ci95": [
+            -0.0019856988241396534,
+            0.00023862464587614182
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0741776469839275
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": -0.0006760958692631573,
+          "ci95": [
+            -0.002017118315665077,
+            0.00022887313494874474
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0953310662118498
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": -0.0007420350380581422,
+          "ci95": [
+            -0.0021366381853496607,
+            0.00020332021307840884
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.1742967783277622
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": -0.000939852544443097,
+          "ci95": [
+            -0.00247630927261102,
+            0.00012151225400161245
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.3828639233999596
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": -0.00069304502180553,
+          "ci95": [
+            -0.0020483748324864126,
+            0.00022211573720592784
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.1161529076772103
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": -0.0007589841906005151,
+          "ci95": [
+            -0.002162964597897641,
+            0.00019885521264839497
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.1938532016652268
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": -0.00095680169698547,
+          "ci95": [
+            -0.00251121269307271,
+            0.00011473259298466334
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.3989458913437418
+        }
+      },
+      "active_periods": 11,
+      "mean_capital_fraction": 0.016949152542372878,
+      "active_gross": {
+        "mean": -0.003535423298775116,
+        "ci95": [
+          -0.009691377754491987,
+          0.001087843295842662
+        ],
+        "n": 11
+      },
+      "active_net5": {
+        "mean": -0.003980006113220944,
+        "ci95": [
+          -0.010182495438178165,
+          0.0006426626614205745
+        ],
+        "n": 11
+      },
+      "per_invested_notional_net5": {
+        "mean": -0.023576957724365976,
+        "ci95": [
+          -0.09494318125446242,
+          0.04153501721357843
+        ],
+        "n": 11
+      },
+      "positive_active_net5_periods": 5
+    },
+    "m_weak_raw": {
+      "periods": 59,
+      "total_name_observations": 6,
+      "full20_periods": 0,
+      "partial_periods": 4,
+      "zero_periods": 55,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 4,
+      "high_up10_rate": 0.6666666666666666,
+      "high_up20": 2,
+      "high_up20_rate": 0.3333333333333333,
+      "end_down10": 1,
+      "end_down10_rate": 0.16666666666666666,
+      "winning_names": 1,
+      "winning_names_rate": 0.16666666666666666,
+      "high_up10_rate_upper": 0.6666666666666666,
+      "high_up20_rate_upper": 0.3333333333333333,
+      "returns": {
+        "gross": {
+          "mean": -0.0003896877056833873,
+          "ci95": [
+            -0.001228906824065102,
+            0.00018478546364949144
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0020507518693906
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": -0.00039477245144609925,
+          "ci95": [
+            -0.00123653394270917,
+            0.00017970071788677957
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0107198909394912
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": -0.0004145077660502321,
+          "ci95": [
+            -0.0012664851848730894,
+            0.00016740777608630758
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0431036322232536
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": -0.0004737137098626305,
+          "ci95": [
+            -0.0013566754654807014,
+            0.0001381530744378284
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.1320196524475503
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": -0.00039985719720881107,
+          "ci95": [
+            -0.0012441610613532377,
+            0.0001746169704211114
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0192914224003355
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": -0.0004195925118129439,
+          "ci95": [
+            -0.0012741123035171571,
+            0.00016486540320495167
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0513056082714975
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": -0.0004787984556253423,
+          "ci95": [
+            -0.0013644720756501932,
+            0.00013561070155647246
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.139204458276793
+        }
+      },
+      "active_periods": 4,
+      "mean_capital_fraction": 0.005084745762711865,
+      "active_gross": {
+        "mean": -0.005747893658829963,
+        "ci95": [
+          -0.01269854740676005,
+          0.0012027600891001216
+        ],
+        "n": 4
+      },
+      "active_net5": {
+        "mean": -0.006113989549240923,
+        "ci95": [
+          -0.013128513160184707,
+          0.0009005340617028613
+        ],
+        "n": 4
+      },
+      "per_invested_notional_net5": {
+        "mean": -0.05107105146218312,
+        "ci95": [
+          -0.1358400905141252,
+          0.033697987589758976
+        ],
+        "n": 4
+      },
+      "positive_active_net5_periods": 1
+    },
+    "m_weak_winsor": {
+      "periods": 59,
+      "total_name_observations": 6,
+      "full20_periods": 0,
+      "partial_periods": 4,
+      "zero_periods": 55,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 4,
+      "high_up10_rate": 0.6666666666666666,
+      "high_up20": 2,
+      "high_up20_rate": 0.3333333333333333,
+      "end_down10": 1,
+      "end_down10_rate": 0.16666666666666666,
+      "winning_names": 1,
+      "winning_names_rate": 0.16666666666666666,
+      "high_up10_rate_upper": 0.6666666666666666,
+      "high_up20_rate_upper": 0.3333333333333333,
+      "returns": {
+        "gross": {
+          "mean": -0.0003896877056833873,
+          "ci95": [
+            -0.001228906824065102,
+            0.00018478546364949144
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0020507518693906
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": -0.00039477245144609925,
+          "ci95": [
+            -0.00123653394270917,
+            0.00017970071788677957
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0107198909394912
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": -0.0004145077660502321,
+          "ci95": [
+            -0.0012664851848730894,
+            0.00016740777608630758
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0431036322232536
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": -0.0004737137098626305,
+          "ci95": [
+            -0.0013566754654807014,
+            0.0001381530744378284
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.1320196524475503
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": -0.00039985719720881107,
+          "ci95": [
+            -0.0012441610613532377,
+            0.0001746169704211114
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0192914224003355
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": -0.0004195925118129439,
+          "ci95": [
+            -0.0012741123035171571,
+            0.00016486540320495167
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0513056082714975
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": -0.0004787984556253423,
+          "ci95": [
+            -0.0013644720756501932,
+            0.00013561070155647246
+          ],
+          "n": 59,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.139204458276793
+        }
+      },
+      "active_periods": 4,
+      "mean_capital_fraction": 0.005084745762711865,
+      "active_gross": {
+        "mean": -0.005747893658829963,
+        "ci95": [
+          -0.01269854740676005,
+          0.0012027600891001216
+        ],
+        "n": 4
+      },
+      "active_net5": {
+        "mean": -0.006113989549240923,
+        "ci95": [
+          -0.013128513160184707,
+          0.0009005340617028613
+        ],
+        "n": 4
+      },
+      "per_invested_notional_net5": {
+        "mean": -0.05107105146218312,
+        "ci95": [
+          -0.1358400905141252,
+          0.033697987589758976
+        ],
+        "n": 4
+      },
+      "positive_active_net5_periods": 1
+    }
+  },
+  "annual": {
+    "2016": {
+      "price_matched": {
+        "periods": 10,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 10,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_only_raw": {
+        "periods": 10,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 10,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_raw": {
+        "periods": 10,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 10,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_winsor": {
+        "periods": 10,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 10,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 10,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      }
+    },
+    "2017": {
+      "price_matched": {
+        "periods": 13,
+        "total_name_observations": 48,
+        "full20_periods": 0,
+        "partial_periods": 11,
+        "zero_periods": 2,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 7,
+        "high_up10_rate": 0.14583333333333334,
+        "high_up20": 0,
+        "high_up20_rate": 0.0,
+        "end_down10": 1,
+        "end_down10_rate": 0.020833333333333332,
+        "winning_names": 19,
+        "winning_names_rate": 0.3958333333333333,
+        "high_up10_rate_upper": 0.14583333333333334,
+        "high_up20_rate_upper": 0.0,
+        "returns": {
+          "gross": {
+            "mean": -0.0036927415308460605,
+            "ci95": [
+              -0.005368961431766693,
+              -0.0019715084715382536
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -2.8074888297878795
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": -0.003877356915461445,
+            "ci95": [
+              -0.005556275113240376,
+              -0.002148752868495441
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -2.9115082723618615
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.004595481256873457,
+            "ci95": [
+              -0.006371174459240066,
+              -0.0027601414917826817
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -3.263995141755308
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.006749854281109497,
+            "ci95": [
+              -0.009055523984819978,
+              -0.004502735393008007
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -4.016772829566692
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": -0.004061972300076829,
+            "ci95": [
+              -0.005756653233676434,
+              -0.0023127728229907552
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -3.011520474735055
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.004780096641488842,
+            "ci95": [
+              -0.006579865554764615,
+              -0.002904117688860302
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -3.3490888614494985
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.00693446966572488,
+            "ci95": [
+              -0.009278594355854387,
+              -0.004668612079046862
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -4.067896114570093
+          }
+        },
+        "active_periods": 11,
+        "mean_capital_fraction": 0.1846153846153846,
+        "active_gross": {
+          "mean": -0.00436414908190898,
+          "ci95": [
+            -0.006991750835315657,
+            -0.0021019520797060367
+          ],
+          "n": 11
+        },
+        "active_net5": {
+          "mean": -0.005431023303577723,
+          "ci95": [
+            -0.008327045863964164,
+            -0.0029987469314744094
+          ],
+          "n": 11
+        },
+        "per_invested_notional_net5": {
+          "mean": -0.02398099044587244,
+          "ci95": [
+            -0.03363752403558226,
+            -0.014061981532786259
+          ],
+          "n": 11
+        },
+        "positive_active_net5_periods": 2
+      },
+      "m_only_raw": {
+        "periods": 13,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 13,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_raw": {
+        "periods": 13,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 13,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_winsor": {
+        "periods": 13,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 13,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      }
+    },
+    "2018": {
+      "price_matched": {
+        "periods": 12,
+        "total_name_observations": 192,
+        "full20_periods": 6,
+        "partial_periods": 6,
+        "zero_periods": 0,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 29,
+        "high_up10_rate": 0.15104166666666666,
+        "high_up20": 3,
+        "high_up20_rate": 0.015625,
+        "end_down10": 22,
+        "end_down10_rate": 0.11458333333333333,
+        "winning_names": 89,
+        "winning_names_rate": 0.4635416666666667,
+        "high_up10_rate_upper": 0.15104166666666666,
+        "high_up20_rate_upper": 0.015625,
+        "returns": {
+          "gross": {
+            "mean": 0.0025827123883839175,
+            "ci95": [
+              -0.018364524381135942,
+              0.023516447320729227
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 0.27766490017073914
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0017827123883839174,
+            "ci95": [
+              -0.01931643053711315,
+              0.022639521925528896
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 0.19142831523853918
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.0013263058764562644,
+            "ci95": [
+              -0.022714507506447542,
+              0.019609446865216727
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.14137779292288544
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.010653360670976816,
+            "ci95": [
+              -0.03293813290319791,
+              0.01006650000446486
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.1045829917107197
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.000982712388383918,
+            "ci95": [
+              -0.020270597203779817,
+              0.021822224776210684
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 0.10539016628330496
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.002126305876456264,
+            "ci95": [
+              -0.023524195006447545,
+              0.01882444686521674
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.22630701611435264
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.011453360670976812,
+            "ci95": [
+              -0.03374646623653125,
+              0.00921650000446486
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.184865963362352
+          }
+        },
+        "active_periods": 12,
+        "mean_capital_fraction": 0.7999999999999999,
+        "active_gross": {
+          "mean": 0.0025827123883839175,
+          "ci95": [
+            -0.018364524381135942,
+            0.023516447320729227
+          ],
+          "n": 12
+        },
+        "active_net5": {
+          "mean": -0.0013263058764562644,
+          "ci95": [
+            -0.022714507506447542,
+            0.019609446865216727
+          ],
+          "n": 12
+        },
+        "per_invested_notional_net5": {
+          "mean": 0.00793488455215781,
+          "ci95": [
+            -0.02260953923953712,
+            0.034546077251638045
+          ],
+          "n": 12
+        },
+        "positive_active_net5_periods": 6
+      },
+      "m_only_raw": {
+        "periods": 12,
+        "total_name_observations": 1,
+        "full20_periods": 0,
+        "partial_periods": 1,
+        "zero_periods": 11,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 1,
+        "high_up10_rate": 1.0,
+        "high_up20": 0,
+        "high_up20_rate": 0.0,
+        "end_down10": 1,
+        "end_down10_rate": 1.0,
+        "winning_names": 1,
+        "winning_names_rate": 1.0,
+        "high_up10_rate_upper": 1.0,
+        "high_up20_rate_upper": 0.0,
+        "returns": {
+          "gross": {
+            "mean": 0.0005076084999099589,
+            "ci95": [
+              0.0,
+              0.0015228254997298768
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0005034418332432923,
+            "ci95": [
+              0.0,
+              0.001510325499729877
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0004874600980834749,
+            "ci95": [
+              0.0,
+              0.0014623802942504247
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338537
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0004395148926040229,
+            "ci95": [
+              0.0,
+              0.001318544677812069
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0004992751665766256,
+            "ci95": [
+              0.0,
+              0.0014978254997298768
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.00048329343141680824,
+            "ci95": [
+              0.0,
+              0.0014498802942504248
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0004353482259373562,
+            "ci95": [
+              0.0,
+              0.0013060446778120685
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338537
+          }
+        },
+        "active_periods": 1,
+        "mean_capital_fraction": 0.004166666666666667,
+        "active_gross": {
+          "mean": 0.006091301998919507,
+          "ci95": [
+            0.006091301998919507,
+            0.006091301998919507
+          ],
+          "n": 1
+        },
+        "active_net5": {
+          "mean": 0.005849521177001699,
+          "ci95": [
+            0.005849521177001699,
+            0.005849521177001699
+          ],
+          "n": 1
+        },
+        "per_invested_notional_net5": {
+          "mean": 0.11699042354003397,
+          "ci95": [
+            0.11699042354003397,
+            0.11699042354003397
+          ],
+          "n": 1
+        },
+        "positive_active_net5_periods": 1
+      },
+      "m_weak_raw": {
+        "periods": 12,
+        "total_name_observations": 1,
+        "full20_periods": 0,
+        "partial_periods": 1,
+        "zero_periods": 11,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 1,
+        "high_up10_rate": 1.0,
+        "high_up20": 0,
+        "high_up20_rate": 0.0,
+        "end_down10": 1,
+        "end_down10_rate": 1.0,
+        "winning_names": 1,
+        "winning_names_rate": 1.0,
+        "high_up10_rate_upper": 1.0,
+        "high_up20_rate_upper": 0.0,
+        "returns": {
+          "gross": {
+            "mean": 0.0005076084999099589,
+            "ci95": [
+              0.0,
+              0.0015228254997298768
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0005034418332432923,
+            "ci95": [
+              0.0,
+              0.001510325499729877
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0004874600980834749,
+            "ci95": [
+              0.0,
+              0.0014623802942504247
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338537
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0004395148926040229,
+            "ci95": [
+              0.0,
+              0.001318544677812069
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0004992751665766256,
+            "ci95": [
+              0.0,
+              0.0014978254997298768
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.00048329343141680824,
+            "ci95": [
+              0.0,
+              0.0014498802942504248
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0004353482259373562,
+            "ci95": [
+              0.0,
+              0.0013060446778120685
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338537
+          }
+        },
+        "active_periods": 1,
+        "mean_capital_fraction": 0.004166666666666667,
+        "active_gross": {
+          "mean": 0.006091301998919507,
+          "ci95": [
+            0.006091301998919507,
+            0.006091301998919507
+          ],
+          "n": 1
+        },
+        "active_net5": {
+          "mean": 0.005849521177001699,
+          "ci95": [
+            0.005849521177001699,
+            0.005849521177001699
+          ],
+          "n": 1
+        },
+        "per_invested_notional_net5": {
+          "mean": 0.11699042354003397,
+          "ci95": [
+            0.11699042354003397,
+            0.11699042354003397
+          ],
+          "n": 1
+        },
+        "positive_active_net5_periods": 1
+      },
+      "m_weak_winsor": {
+        "periods": 12,
+        "total_name_observations": 1,
+        "full20_periods": 0,
+        "partial_periods": 1,
+        "zero_periods": 11,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 1,
+        "high_up10_rate": 1.0,
+        "high_up20": 0,
+        "high_up20_rate": 0.0,
+        "end_down10": 1,
+        "end_down10_rate": 1.0,
+        "winning_names": 1,
+        "winning_names_rate": 1.0,
+        "high_up10_rate_upper": 1.0,
+        "high_up20_rate_upper": 0.0,
+        "returns": {
+          "gross": {
+            "mean": 0.0005076084999099589,
+            "ci95": [
+              0.0,
+              0.0015228254997298768
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0005034418332432923,
+            "ci95": [
+              0.0,
+              0.001510325499729877
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0004874600980834749,
+            "ci95": [
+              0.0,
+              0.0014623802942504247
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338537
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0004395148926040229,
+            "ci95": [
+              0.0,
+              0.001318544677812069
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0004992751665766256,
+            "ci95": [
+              0.0,
+              0.0014978254997298768
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.00048329343141680824,
+            "ci95": [
+              0.0,
+              0.0014498802942504248
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338535
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0004353482259373562,
+            "ci95": [
+              0.0,
+              0.0013060446778120685
+            ],
+            "n": 12,
+            "unknown_periods": 0,
+            "nw_lag1_t": 1.1000381964338537
+          }
+        },
+        "active_periods": 1,
+        "mean_capital_fraction": 0.004166666666666667,
+        "active_gross": {
+          "mean": 0.006091301998919507,
+          "ci95": [
+            0.006091301998919507,
+            0.006091301998919507
+          ],
+          "n": 1
+        },
+        "active_net5": {
+          "mean": 0.005849521177001699,
+          "ci95": [
+            0.005849521177001699,
+            0.005849521177001699
+          ],
+          "n": 1
+        },
+        "per_invested_notional_net5": {
+          "mean": 0.11699042354003397,
+          "ci95": [
+            0.11699042354003397,
+            0.11699042354003397
+          ],
+          "n": 1
+        },
+        "positive_active_net5_periods": 1
+      }
+    },
+    "2019": {
+      "price_matched": {
+        "periods": 13,
+        "total_name_observations": 109,
+        "full20_periods": 0,
+        "partial_periods": 13,
+        "zero_periods": 0,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 19,
+        "high_up10_rate": 0.1743119266055046,
+        "high_up20": 2,
+        "high_up20_rate": 0.01834862385321101,
+        "end_down10": 4,
+        "end_down10_rate": 0.03669724770642202,
+        "winning_names": 43,
+        "winning_names_rate": 0.3944954128440367,
+        "high_up10_rate_upper": 0.1743119266055046,
+        "high_up20_rate_upper": 0.01834862385321101,
+        "returns": {
+          "gross": {
+            "mean": -0.005482640847993054,
+            "ci95": [
+              -0.010875616892870475,
+              -0.0006078263619974383
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.7964528776327946
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": -0.005901871617223823,
+            "ci95": [
+              -0.011287860771906775,
+              -0.0010515046459918154
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.9429150192122986
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.007515675621438787,
+            "ci95": [
+              -0.012945014157499235,
+              -0.0028256531873412493
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -2.5104050438916814
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.012357087634083675,
+            "ci95": [
+              -0.01790294885484523,
+              -0.007598347168970847
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -4.15722138629279
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": -0.006321102386454592,
+            "ci95": [
+              -0.011693615589351098,
+              -0.0015204349992752183
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -2.089855636253242
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.007934906390669558,
+            "ci95": [
+              -0.013386844658601935,
+              -0.0033097077800279115
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -2.6576221346293756
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.012776318403314446,
+            "ci95": [
+              -0.018304178554576493,
+              -0.00798375265153869
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": -4.287973279884081
+          }
+        },
+        "active_periods": 13,
+        "mean_capital_fraction": 0.41923076923076924,
+        "active_gross": {
+          "mean": -0.005482640847993054,
+          "ci95": [
+            -0.010875616892870475,
+            -0.0006078263619974383
+          ],
+          "n": 13
+        },
+        "active_net5": {
+          "mean": -0.007515675621438787,
+          "ci95": [
+            -0.012945014157499235,
+            -0.0028256531873412493
+          ],
+          "n": 13
+        },
+        "per_invested_notional_net5": {
+          "mean": -0.02986944422106628,
+          "ci95": [
+            -0.04756117776012303,
+            -0.015467694684261514
+          ],
+          "n": 13
+        },
+        "positive_active_net5_periods": 2
+      },
+      "m_only_raw": {
+        "periods": 13,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 13,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_raw": {
+        "periods": 13,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 13,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_winsor": {
+        "periods": 13,
+        "total_name_observations": 0,
+        "full20_periods": 0,
+        "partial_periods": 0,
+        "zero_periods": 13,
+        "unknown_end": 0,
+        "unknown_end_rate": null,
+        "unknown_path": 0,
+        "unknown_path_rate": null,
+        "high_up10": 0,
+        "high_up10_rate": null,
+        "high_up20": 0,
+        "high_up20_rate": null,
+        "end_down10": 0,
+        "end_down10_rate": null,
+        "winning_names": 0,
+        "winning_names_rate": null,
+        "high_up10_rate_upper": null,
+        "high_up20_rate_upper": null,
+        "returns": {
+          "gross": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "n": 13,
+            "unknown_periods": 0,
+            "nw_lag1_t": null
+          }
+        },
+        "active_periods": 0,
+        "mean_capital_fraction": 0.0,
+        "active_gross": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "active_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "per_invested_notional_net5": {
+          "mean": null,
+          "ci95": null,
+          "n": 0
+        },
+        "positive_active_net5_periods": 0
+      }
+    },
+    "2020": {
+      "price_matched": {
+        "periods": 11,
+        "total_name_observations": 105,
+        "full20_periods": 2,
+        "partial_periods": 8,
+        "zero_periods": 1,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 44,
+        "high_up10_rate": 0.41904761904761906,
+        "high_up20": 24,
+        "high_up20_rate": 0.22857142857142856,
+        "end_down10": 20,
+        "end_down10_rate": 0.19047619047619047,
+        "winning_names": 39,
+        "winning_names_rate": 0.37142857142857144,
+        "high_up10_rate_upper": 0.41904761904761906,
+        "high_up20_rate_upper": 0.22857142857142856,
+        "returns": {
+          "gross": {
+            "mean": -0.010726450873533681,
+            "ci95": [
+              -0.05526023190987719,
+              0.04143055617708981
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.3978767086819872
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": -0.011203723600806405,
+            "ci95": [
+              -0.055710231909877186,
+              0.04093065683349612
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.41578387194239
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.013048057349249747,
+            "ci95": [
+              -0.05746303390240521,
+              0.03902133242502792
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.4848089990223369
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.018581058594579758,
+            "ci95": [
+              -0.06272145070404753,
+              0.03331074858726941
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.6921699234932461
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": -0.011680996328079134,
+            "ci95": [
+              -0.05616023190987718,
+              0.040428952288041595
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.4337034038917919
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.013525330076522474,
+            "ci95": [
+              -0.05791303390240521,
+              0.03851962787957338
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.5027603388661801
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.019058331321852483,
+            "ci95": [
+              -0.06317235979495661,
+              0.03281074858726941
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -0.7101605504061999
+          }
+        },
+        "active_periods": 10,
+        "mean_capital_fraction": 0.4772727272727272,
+        "active_gross": {
+          "mean": -0.01179909596088705,
+          "ci95": [
+            -0.06521496406527241,
+            0.04496871488780786
+          ],
+          "n": 10
+        },
+        "active_net5": {
+          "mean": -0.01435286308417472,
+          "ci95": [
+            -0.0679149640652724,
+            0.0424472295973271
+          ],
+          "n": 10
+        },
+        "per_invested_notional_net5": {
+          "mean": -0.0228077780832308,
+          "ci95": [
+            -0.0894661714329683,
+            0.04261073487490807
+          ],
+          "n": 10
+        },
+        "positive_active_net5_periods": 3
+      },
+      "m_only_raw": {
+        "periods": 11,
+        "total_name_observations": 19,
+        "full20_periods": 0,
+        "partial_periods": 10,
+        "zero_periods": 1,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 8,
+        "high_up10_rate": 0.42105263157894735,
+        "high_up20": 3,
+        "high_up20_rate": 0.15789473684210525,
+        "end_down10": 1,
+        "end_down10_rate": 0.05263157894736842,
+        "winning_names": 5,
+        "winning_names_rate": 0.2631578947368421,
+        "high_up10_rate_upper": 0.42105263157894735,
+        "high_up20_rate_upper": 0.15789473684210525,
+        "returns": {
+          "gross": {
+            "mean": -0.004089178025949617,
+            "ci95": [
+              -0.009851670050850289,
+              -7.044661547037498e-05
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.4423015708500828
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": -0.004175541662313254,
+            "ci95": [
+              -0.009947405059567397,
+              -0.00014244700920424124
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.470193211058907
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.004511780765675644,
+            "ci95": [
+              -0.010284889492942241,
+              -0.0003714383689906101
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5773562440567308
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.0055204980757628174,
+            "ci95": [
+              -0.011381475596183686,
+              -0.0012688476136348628
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.8879397228233181
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": -0.004261905298676889,
+            "ci95": [
+              -0.010033768695931033,
+              -0.00020211145948209215
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.4979699198513095
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.004598144402039281,
+            "ci95": [
+              -0.010371253129305877,
+              -0.00043937044138499996
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.6046761147271023
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.0056068617121264545,
+            "ci95": [
+              -0.01147693014163823,
+              -0.0013422491261019206
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.9138729832685395
+          }
+        },
+        "active_periods": 10,
+        "mean_capital_fraction": 0.08636363636363636,
+        "active_gross": {
+          "mean": -0.004498095828544579,
+          "ci95": [
+            -0.010518691530984095,
+            0.0002693674478912046
+          ],
+          "n": 10
+        },
+        "active_net5": {
+          "mean": -0.004962958842243209,
+          "ci95": [
+            -0.010967428530439352,
+            -0.000179995335585367
+          ],
+          "n": 10
+        },
+        "per_invested_notional_net5": {
+          "mean": -0.03763369585080597,
+          "ci95": [
+            -0.10113789185073854,
+            0.017552497076857916
+          ],
+          "n": 10
+        },
+        "positive_active_net5_periods": 4
+      },
+      "m_weak_raw": {
+        "periods": 11,
+        "total_name_observations": 5,
+        "full20_periods": 0,
+        "partial_periods": 3,
+        "zero_periods": 8,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 3,
+        "high_up10_rate": 0.6,
+        "high_up20": 2,
+        "high_up20_rate": 0.4,
+        "end_down10": 0,
+        "end_down10_rate": 0.0,
+        "winning_names": 0,
+        "winning_names_rate": 0.0,
+        "high_up10_rate_upper": 0.6,
+        "high_up20_rate_upper": 0.4,
+        "returns": {
+          "gross": {
+            "mean": -0.002643897875839942,
+            "ci95": [
+              -0.0060649219746723585,
+              -0.0001436547948175856
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5620532209540239
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": -0.0026666251485672147,
+            "ci95": [
+              -0.00609674015649054,
+              -0.00014820024936304014
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5689202500639714
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.002755043579451399,
+            "ci95": [
+              -0.006222518487748324,
+              -0.00016563486953738636
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5942770545421825
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.0030202988721039522,
+            "ci95": [
+              -0.006599853481521673,
+              -0.00021793873006042497
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.663969140910004
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": -0.0026893524212944875,
+            "ci95": [
+              -0.006128558338308721,
+              -0.0001527457039084947
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5757099463574995
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.002777770852178672,
+            "ci95": [
+              -0.0062543366695665065,
+              -0.0001701803240828409
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.600776931417766
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.003043026144831225,
+            "ci95": [
+              -0.006631671663339856,
+              -0.0002224841846058795
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.6696814547335015
+          }
+        },
+        "active_periods": 3,
+        "mean_capital_fraction": 0.022727272727272728,
+        "active_gross": {
+          "mean": -0.009694292211413122,
+          "ci95": [
+            -0.009694292211413122,
+            -0.009694292211413122
+          ],
+          "n": 3
+        },
+        "active_net5": {
+          "mean": -0.010101826457988463,
+          "ci95": [
+            -0.010101826457988463,
+            -0.010101826457988463
+          ],
+          "n": 3
+        },
+        "per_invested_notional_net5": {
+          "mean": -0.10709154312958881,
+          "ci95": [
+            -0.10709154312958881,
+            -0.10709154312958881
+          ],
+          "n": 3
+        },
+        "positive_active_net5_periods": 0
+      },
+      "m_weak_winsor": {
+        "periods": 11,
+        "total_name_observations": 5,
+        "full20_periods": 0,
+        "partial_periods": 3,
+        "zero_periods": 8,
+        "unknown_end": 0,
+        "unknown_end_rate": 0.0,
+        "unknown_path": 0,
+        "unknown_path_rate": 0.0,
+        "high_up10": 3,
+        "high_up10_rate": 0.6,
+        "high_up20": 2,
+        "high_up20_rate": 0.4,
+        "end_down10": 0,
+        "end_down10_rate": 0.0,
+        "winning_names": 0,
+        "winning_names_rate": 0.0,
+        "high_up10_rate_upper": 0.6,
+        "high_up20_rate_upper": 0.4,
+        "returns": {
+          "gross": {
+            "mean": -0.002643897875839942,
+            "ci95": [
+              -0.0060649219746723585,
+              -0.0001436547948175856
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5620532209540239
+          },
+          "net_rt10bp_borrow0pct": {
+            "mean": -0.0026666251485672147,
+            "ci95": [
+              -0.00609674015649054,
+              -0.00014820024936304014
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5689202500639714
+          },
+          "net_rt10bp_borrow5pct": {
+            "mean": -0.002755043579451399,
+            "ci95": [
+              -0.006222518487748324,
+              -0.00016563486953738636
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5942770545421825
+          },
+          "net_rt10bp_borrow20pct": {
+            "mean": -0.0030202988721039522,
+            "ci95": [
+              -0.006599853481521673,
+              -0.00021793873006042497
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.663969140910004
+          },
+          "net_rt20bp_borrow0pct": {
+            "mean": -0.0026893524212944875,
+            "ci95": [
+              -0.006128558338308721,
+              -0.0001527457039084947
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.5757099463574995
+          },
+          "net_rt20bp_borrow5pct": {
+            "mean": -0.002777770852178672,
+            "ci95": [
+              -0.0062543366695665065,
+              -0.0001701803240828409
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.600776931417766
+          },
+          "net_rt20bp_borrow20pct": {
+            "mean": -0.003043026144831225,
+            "ci95": [
+              -0.006631671663339856,
+              -0.0002224841846058795
+            ],
+            "n": 11,
+            "unknown_periods": 0,
+            "nw_lag1_t": -1.6696814547335015
+          }
+        },
+        "active_periods": 3,
+        "mean_capital_fraction": 0.022727272727272728,
+        "active_gross": {
+          "mean": -0.009694292211413122,
+          "ci95": [
+            -0.009694292211413122,
+            -0.009694292211413122
+          ],
+          "n": 3
+        },
+        "active_net5": {
+          "mean": -0.010101826457988463,
+          "ci95": [
+            -0.010101826457988463,
+            -0.010101826457988463
+          ],
+          "n": 3
+        },
+        "per_invested_notional_net5": {
+          "mean": -0.10709154312958881,
+          "ci95": [
+            -0.10709154312958881,
+            -0.10709154312958881
+          ],
+          "n": 3
+        },
+        "positive_active_net5_periods": 0
+      }
+    }
+  },
+  "exclude2020": {
+    "price_matched": {
+      "periods": 48,
+      "total_name_observations": 349,
+      "full20_periods": 6,
+      "partial_periods": 30,
+      "zero_periods": 12,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 55,
+      "high_up10_rate": 0.15759312320916904,
+      "high_up20": 5,
+      "high_up20_rate": 0.014326647564469915,
+      "end_down10": 27,
+      "end_down10_rate": 0.07736389684813753,
+      "winning_names": 151,
+      "winning_names_rate": 0.4326647564469914,
+      "high_up10_rate_upper": 0.15759312320916904,
+      "high_up20_rate_upper": 0.014326647564469915,
+      "returns": {
+        "gross": {
+          "mean": -0.0018393212971729476,
+          "ci95": [
+            -0.0070177584338828045,
+            0.0035525517152207417
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -0.7175053987301889
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": -0.002202862963839614,
+          "ci95": [
+            -0.0074290631757949095,
+            0.003185321095100293
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -0.8603843690860794
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": -0.0036116814569902996,
+          "ci95": [
+            -0.008941532892339421,
+            0.0017828117487880429
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.4062072925897489
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": -0.007838136936442355,
+          "ci95": [
+            -0.01405703873092286,
+            -0.0024677168939846177
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -2.862975434108883
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": -0.0025664046305062804,
+          "ci95": [
+            -0.007795013368552953,
+            0.002798095413729932
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.0029553637761897
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": -0.0039752231236569666,
+          "ci95": [
+            -0.009379487708898104,
+            0.0013741442833859801
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -1.5447348532481604
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": -0.00820167860310902,
+          "ci95": [
+            -0.01446620471565564,
+            -0.0028164983649407267
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": -2.9709082605926653
+        }
+      },
+      "active_periods": 36,
+      "mean_capital_fraction": 0.36354166666666665,
+      "active_gross": {
+        "mean": -0.0024524283962305965,
+        "ci95": [
+          -0.009341427857086361,
+          0.0046714238919004615
+        ],
+        "n": 36
+      },
+      "active_net5": {
+        "mean": -0.0048155752759870656,
+        "ci95": [
+          -0.012087818084328605,
+          0.002216222959482708
+        ],
+        "n": 36
+      },
+      "per_invested_notional_net5": {
+        "mean": -0.015468751532015691,
+        "ci95": [
+          -0.02797210417163917,
+          -0.0023226260466471444
+        ],
+        "n": 36
+      },
+      "positive_active_net5_periods": 10
+    },
+    "m_only_raw": {
+      "periods": 48,
+      "total_name_observations": 1,
+      "full20_periods": 0,
+      "partial_periods": 1,
+      "zero_periods": 47,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 1,
+      "high_up10_rate": 1.0,
+      "high_up20": 0,
+      "high_up20_rate": 0.0,
+      "end_down10": 1,
+      "end_down10_rate": 1.0,
+      "winning_names": 1,
+      "winning_names_rate": 1.0,
+      "high_up10_rate_upper": 1.0,
+      "high_up20_rate_upper": 0.0,
+      "returns": {
+        "gross": {
+          "mean": 0.00012690212497748973,
+          "ci95": [
+            0.0,
+            0.0003807063749324692
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": 0.00012586045831082307,
+          "ci95": [
+            0.0,
+            0.00037758137493246923
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": 0.00012186502452086872,
+          "ci95": [
+            0.0,
+            0.0003655950735626062
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": 0.00010987872315100572,
+          "ci95": [
+            0.0,
+            0.0003296361694530172
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": 0.0001248187916441564,
+          "ci95": [
+            0.0,
+            0.0003744563749324692
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": 0.00012082335785420206,
+          "ci95": [
+            0.0,
+            0.0003624700735626062
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": 0.00010883705648433904,
+          "ci95": [
+            0.0,
+            0.00032651116945301713
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        }
+      },
+      "active_periods": 1,
+      "mean_capital_fraction": 0.0010416666666666667,
+      "active_gross": {
+        "mean": 0.006091301998919507,
+        "ci95": [
+          0.006091301998919507,
+          0.006091301998919507
+        ],
+        "n": 1
+      },
+      "active_net5": {
+        "mean": 0.005849521177001699,
+        "ci95": [
+          0.005849521177001699,
+          0.005849521177001699
+        ],
+        "n": 1
+      },
+      "per_invested_notional_net5": {
+        "mean": 0.11699042354003397,
+        "ci95": [
+          0.11699042354003397,
+          0.11699042354003397
+        ],
+        "n": 1
+      },
+      "positive_active_net5_periods": 1
+    },
+    "m_weak_raw": {
+      "periods": 48,
+      "total_name_observations": 1,
+      "full20_periods": 0,
+      "partial_periods": 1,
+      "zero_periods": 47,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 1,
+      "high_up10_rate": 1.0,
+      "high_up20": 0,
+      "high_up20_rate": 0.0,
+      "end_down10": 1,
+      "end_down10_rate": 1.0,
+      "winning_names": 1,
+      "winning_names_rate": 1.0,
+      "high_up10_rate_upper": 1.0,
+      "high_up20_rate_upper": 0.0,
+      "returns": {
+        "gross": {
+          "mean": 0.00012690212497748973,
+          "ci95": [
+            0.0,
+            0.0003807063749324692
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": 0.00012586045831082307,
+          "ci95": [
+            0.0,
+            0.00037758137493246923
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": 0.00012186502452086872,
+          "ci95": [
+            0.0,
+            0.0003655950735626062
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": 0.00010987872315100572,
+          "ci95": [
+            0.0,
+            0.0003296361694530172
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": 0.0001248187916441564,
+          "ci95": [
+            0.0,
+            0.0003744563749324692
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": 0.00012082335785420206,
+          "ci95": [
+            0.0,
+            0.0003624700735626062
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": 0.00010883705648433904,
+          "ci95": [
+            0.0,
+            0.00032651116945301713
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        }
+      },
+      "active_periods": 1,
+      "mean_capital_fraction": 0.0010416666666666667,
+      "active_gross": {
+        "mean": 0.006091301998919507,
+        "ci95": [
+          0.006091301998919507,
+          0.006091301998919507
+        ],
+        "n": 1
+      },
+      "active_net5": {
+        "mean": 0.005849521177001699,
+        "ci95": [
+          0.005849521177001699,
+          0.005849521177001699
+        ],
+        "n": 1
+      },
+      "per_invested_notional_net5": {
+        "mean": 0.11699042354003397,
+        "ci95": [
+          0.11699042354003397,
+          0.11699042354003397
+        ],
+        "n": 1
+      },
+      "positive_active_net5_periods": 1
+    },
+    "m_weak_winsor": {
+      "periods": 48,
+      "total_name_observations": 1,
+      "full20_periods": 0,
+      "partial_periods": 1,
+      "zero_periods": 47,
+      "unknown_end": 0,
+      "unknown_end_rate": 0.0,
+      "unknown_path": 0,
+      "unknown_path_rate": 0.0,
+      "high_up10": 1,
+      "high_up10_rate": 1.0,
+      "high_up20": 0,
+      "high_up20_rate": 0.0,
+      "end_down10": 1,
+      "end_down10_rate": 1.0,
+      "winning_names": 1,
+      "winning_names_rate": 1.0,
+      "high_up10_rate_upper": 1.0,
+      "high_up20_rate_upper": 0.0,
+      "returns": {
+        "gross": {
+          "mean": 0.00012690212497748973,
+          "ci95": [
+            0.0,
+            0.0003807063749324692
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        },
+        "net_rt10bp_borrow0pct": {
+          "mean": 0.00012586045831082307,
+          "ci95": [
+            0.0,
+            0.00037758137493246923
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt10bp_borrow5pct": {
+          "mean": 0.00012186502452086872,
+          "ci95": [
+            0.0,
+            0.0003655950735626062
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        },
+        "net_rt10bp_borrow20pct": {
+          "mean": 0.00010987872315100572,
+          "ci95": [
+            0.0,
+            0.0003296361694530172
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow0pct": {
+          "mean": 0.0001248187916441564,
+          "ci95": [
+            0.0,
+            0.0003744563749324692
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow5pct": {
+          "mean": 0.00012082335785420206,
+          "ci95": [
+            0.0,
+            0.0003624700735626062
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.021739235222881
+        },
+        "net_rt20bp_borrow20pct": {
+          "mean": 0.00010883705648433904,
+          "ci95": [
+            0.0,
+            0.00032651116945301713
+          ],
+          "n": 48,
+          "unknown_periods": 0,
+          "nw_lag1_t": 1.0217392352228811
+        }
+      },
+      "active_periods": 1,
+      "mean_capital_fraction": 0.0010416666666666667,
+      "active_gross": {
+        "mean": 0.006091301998919507,
+        "ci95": [
+          0.006091301998919507,
+          0.006091301998919507
+        ],
+        "n": 1
+      },
+      "active_net5": {
+        "mean": 0.005849521177001699,
+        "ci95": [
+          0.005849521177001699,
+          0.005849521177001699
+        ],
+        "n": 1
+      },
+      "per_invested_notional_net5": {
+        "mean": 0.11699042354003397,
+        "ci95": [
+          0.11699042354003397,
+          0.11699042354003397
+        ],
+        "n": 1
+      },
+      "positive_active_net5_periods": 1
+    }
+  },
+  "paired": {
+    "m_only_raw": {
+      "cash_net5_delta": {
+        "mean": 0.011928051510975484,
+        "ci95": [
+          -0.04145621291837779,
+          0.061330529648456575
+        ],
+        "n": 10
+      },
+      "per_invested_net5_delta": {
+        "mean": 0.016305046917319904,
+        "ci95": [
+          -0.007367190095550269,
+          0.04266971433396197
+        ],
+        "n": 10
+      },
+      "full20_net5_delta": {
+        "mean": null,
+        "ci95": null,
+        "n": 0
+      }
+    },
+    "m_weak_raw": {
+      "cash_net5_delta": {
+        "mean": 0.07954228245203825,
+        "ci95": [
+          0.015401400552067821,
+          0.14368316435200867
+        ],
+        "n": 4
+      },
+      "per_invested_net5_delta": {
+        "mean": 0.03768582470161178,
+        "ci95": [
+          0.007760786301282215,
+          0.06761086310194135
+        ],
+        "n": 4
+      },
+      "full20_net5_delta": {
+        "mean": null,
+        "ci95": null,
+        "n": 0
+      }
+    },
+    "m_weak_winsor": {
+      "cash_net5_delta": {
+        "mean": 0.07954228245203825,
+        "ci95": [
+          0.015401400552067821,
+          0.14368316435200867
+        ],
+        "n": 4
+      },
+      "per_invested_net5_delta": {
+        "mean": 0.03768582470161178,
+        "ci95": [
+          0.007760786301282215,
+          0.06761086310194135
+        ],
+        "n": 4
+      },
+      "full20_net5_delta": {
+        "mean": null,
+        "ci95": null,
+        "n": 0
+      }
+    }
+  }
+}

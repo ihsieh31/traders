@@ -287,8 +287,12 @@ def run_preflight(
     probe_routes = [
         ("analysis", roles["analysis"]),
         ("decision", roles["decision"]),
-        (SCREENING_ROLE, screening["spec"]),
     ]
+    if screening.get("spec") is not None:
+        probe_routes.append((SCREENING_ROLE, screening["spec"]))
+    else:
+        checks.append({"name": "screening_formula", "ok": True,
+                       "detail": "deterministic exclusion screening; no LLM credential/probe required"})
     if roles.get("analysis_fallback") is not None:
         probe_routes.append(("analysis_fallback", roles["analysis_fallback"]))
     probe_fn = deps.llm_probe_fn or _default_llm_probe

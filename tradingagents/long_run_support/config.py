@@ -55,6 +55,10 @@ def default_long_run_config(
         # Short exposure opt-in for the observation (paper-only build;
         # broker-side deterministic guards always apply).
         "allow_shorts": False,
+        "screening_method": "auto",
+        "screening_max_vol20": 0.28,
+        "screening_min_r60": -0.25,
+        "screening_analysis_limit": 20,
         "screening_provider": None,
         "screening_model": None,
         "screening_backend_url": None,
@@ -115,11 +119,12 @@ def missing_config_fields(
         missing.append("base_trade_notional_usd")
     if not cfg.get("run_time_et"):
         missing.append("run_time_et")
+    from tradingagents.screening.policy import screening_method
+    roles = ("analysis", "decision") + (("screening",) if screening_method(cfg) == "legacy" else ())
     for key in (
         "analysis_provider", "analysis_model",
         "decision_provider", "decision_model",
-        "screening_provider", "screening_model",
-    ):
+    ) + (("screening_provider", "screening_model") if "screening" in roles else ()):
         value = cfg.get(key)
         if not value or _looks_placeholder(value):
             missing.append(key)
@@ -127,6 +132,8 @@ def missing_config_fields(
         "analysis_backend_url", "decision_backend_url", "screening_backend_url",
     ):
         provider = cfg.get(key.replace("_backend_url", "_provider")) or ""
+        if key == "screening_backend_url" and "screening" not in roles:
+            continue
         if str(provider).lower() in PROVIDERS_REQUIRING_URL and not cfg.get(key):
             if key not in missing:
                 missing.append(key)
@@ -243,7 +250,13 @@ def validate_long_run_config(
         errors.append(f"research_depth must be one of {list(VALID_RESEARCH_DEPTHS)}")
     if not (cfg.get("output_language") or "").strip():
         errors.append("output_language must be non-empty")
-    for role in ("analysis", "decision", "screening"):
+    from tradingagents.screening.policy import validate_screening_policy
+    try:
+        method = validate_screening_policy(cfg)
+    except (ValueError, TypeError, OverflowError) as exc:
+        errors.append(f"screening policy invalid: {sanitize_for_log(str(exc))}")
+        method = "legacy"
+    for role in ("analysis", "decision") + (("screening",) if method == "legacy" else ()):
         provider = (cfg.get(f"{role}_provider") or "").strip()
         model = (cfg.get(f"{role}_model") or "").strip()
         if not provider or not model:
@@ -337,6 +350,9 @@ def build_runtime_config(
     ):
         runtime[key] = long_cfg.get(key)
     runtime["auto_screening_enabled"] = True
+    for key in ("screening_method", "screening_max_vol20", "screening_min_r60", "screening_analysis_limit"):
+        if key in long_cfg:
+            runtime[key] = long_cfg[key]
     # Short exposure is now an explicit per-observation opt-in (paper only;
     # the broker-side deterministic guards in execution.service still apply).
     runtime["allow_shorts"] = bool(long_cfg.get("allow_shorts", False))

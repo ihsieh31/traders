@@ -1,0 +1,44 @@
+SEC source verified 2015q2.zip 11 filings
+SEC source verified 2015q3.zip 30 filings
+SEC source verified 2015q4.zip 29 filings
+SEC source verified 2016q1.zip 293 filings
+SEC source verified 2016q2.zip 15 filings
+SEC source verified 2016q3.zip 24 filings
+SEC source verified 2016q4.zip 39 filings
+SEC source verified 2017q1.zip 316 filings
+SEC source verified 2017q2.zip 17 filings
+SEC source verified 2017q3.zip 35 filings
+SEC source verified 2017q4.zip 45 filings
+SEC source verified 2018q1.zip 399 filings
+SEC source verified 2018q2.zip 44 filings
+SEC source verified 2018q3.zip 50 filings
+SEC source verified 2018q4.zip 58 filings
+SEC source verified 2019q1.zip 504 filings
+SEC source verified 2019q2.zip 51 filings
+SEC source verified 2019q3.zip 53 filings
+SEC source verified 2019q4.zip 68 filings
+SEC source verified 2020q1.zip 572 filings
+SEC source verified 2020q2.zip 41 filings
+SEC source verified 2020q3.zip 58 filings
+SEC source verified 2020q4.zip 13 filings
+{
+  "financial_sources": {
+    "filings": 2765,
+    "quarters": 23,
+    "source_references": 8295,
+    "max_ratio_error": 0.0
+  },
+  "universe_rows": 26946,
+  "periods": 590,
+  "observations": 7024,
+  "unique_signal_factors": 3158,
+  "unique_forward_bars": 63160,
+  "max_factor_absolute_error": 9.72747802734375e-05,
+  "max_factor_scaled_error": 7.91651957662752e-14,
+  "max_single_pnl_error": 2.220446049250313e-16,
+  "filing_timing_and_latest_missing_rejection": true,
+  "independent_pool_ranking": true,
+  "all_cost_scenarios_and_high_events": true,
+  "summary_means_match": true,
+  "method_sha256": "ac76dac2d3d89db48ebd34872010c4b8c3cbe1a940314a050b746215a3f45180"
+}

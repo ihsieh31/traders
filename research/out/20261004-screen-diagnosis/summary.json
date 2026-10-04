@@ -1,0 +1,792 @@
+[
+  {
+    "label": "2016-2020",
+    "sessions": 1259,
+    "symbols": 5104,
+    "D1": {
+      "survivor_pool": {
+        "n": 1259,
+        "mean": 442.8308181096108,
+        "p10": 68.80000000000001,
+        "median": 481.0,
+        "p90": 726.2
+      },
+      "days_below_20": 69,
+      "shortfall_days": [
+        {
+          "date": "2016-01-04",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-05",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-06",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-07",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-08",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-11",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-12",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-13",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-14",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-15",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-19",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-20",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-21",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-22",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-25",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-26",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-27",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-28",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-01-29",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-01",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-02",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-03",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-04",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-05",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-08",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-09",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-10",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-11",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-12",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-16",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-17",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-18",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-19",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-22",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-23",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-24",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-25",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-26",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-02-29",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-01",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-02",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-03",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-04",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-07",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-08",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-09",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-10",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-11",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-14",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-15",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-16",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-17",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-18",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-21",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-22",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-23",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-24",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-28",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-29",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2016-03-30",
+          "eligible": 0,
+          "survivors": 0,
+          "pass_vol_only": 0,
+          "pass_trend_only": 0,
+          "pass_r60_only": 0
+        },
+        {
+          "date": "2018-02-08",
+          "eligible": 1365,
+          "survivors": 18,
+          "pass_vol_only": 620,
+          "pass_trend_only": 71,
+          "pass_r60_only": 1345
+        },
+        {
+          "date": "2020-03-12",
+          "eligible": 1628,
+          "survivors": 16,
+          "pass_vol_only": 71,
+          "pass_trend_only": 58,
+          "pass_r60_only": 808
+        },
+        {
+          "date": "2020-03-13",
+          "eligible": 1648,
+          "survivors": 15,
+          "pass_vol_only": 63,
+          "pass_trend_only": 77,
+          "pass_r60_only": 1013
+        },
+        {
+          "date": "2020-03-16",
+          "eligible": 1655,
+          "survivors": 16,
+          "pass_vol_only": 62,
+          "pass_trend_only": 58,
+          "pass_r60_only": 615
+        },
+        {
+          "date": "2020-03-17",
+          "eligible": 1668,
+          "survivors": 15,
+          "pass_vol_only": 60,
+          "pass_trend_only": 101,
+          "pass_r60_only": 775
+        },
+        {
+          "date": "2020-03-18",
+          "eligible": 1655,
+          "survivors": 9,
+          "pass_vol_only": 55,
+          "pass_trend_only": 89,
+          "pass_r60_only": 581
+        },
+        {
+          "date": "2020-03-19",
+          "eligible": 1677,
+          "survivors": 9,
+          "pass_vol_only": 55,
+          "pass_trend_only": 81,
+          "pass_r60_only": 609
+        },
+        {
+          "date": "2020-03-20",
+          "eligible": 1687,
+          "survivors": 16,
+          "pass_vol_only": 54,
+          "pass_trend_only": 72,
+          "pass_r60_only": 524
+        },
+        {
+          "date": "2020-03-23",
+          "eligible": 1693,
+          "survivors": 17,
+          "pass_vol_only": 54,
+          "pass_trend_only": 76,
+          "pass_r60_only": 437
+        }
+      ]
+    },
+    "D2": {
+      "daily_overlap": {
+        "n": 1187,
+        "mean": 0.662552653748947,
+        "p10": 0.5,
+        "median": 0.65,
+        "p90": 0.8
+      }
+    },
+    "D3": {
+      "picked": {
+        "n": 58,
+        "mean": 3.3113227867942325,
+        "p10": 1.7872018321223853,
+        "median": 3.0447960246557164,
+        "p90": 4.635772052612863
+      },
+      "survivor_random": {
+        "n": 58,
+        "mean": 3.6040048741456396,
+        "p10": 2.1660535353324755,
+        "median": 3.499620219217916,
+        "p90": 5.185448355897766
+      },
+      "eligible_random": {
+        "n": 58,
+        "mean": 4.137071075303981,
+        "p10": 2.609633010068976,
+        "median": 3.7037745377524516,
+        "p90": 5.82149996323882
+      }
+    },
+    "D4": {
+      "picked_vanish_rate": 0.0,
+      "eligible_vanish_rate": 0.0,
+      "picked_counts": [
+        0,
+        1120
+      ],
+      "eligible_counts": [
+        0,
+        72036
+      ]
+    },
+    "D5": {
+      "vanished": {
+        "vol20": null,
+        "r60": null,
+        "trend": null
+      },
+      "all_picks": {
+        "vol20": {
+          "n": 1120,
+          "mean": 0.17433551332389213,
+          "p10": 0.11201285462415361,
+          "median": 0.17025414621876628,
+          "p90": 0.24530519257560873
+        },
+        "r60": {
+          "n": 1120,
+          "mean": 0.20289156191556326,
+          "p10": 0.09181635717410752,
+          "median": 0.18429209531868196,
+          "p90": 0.34263682579991
+        },
+        "trend": {
+          "n": 1120,
+          "mean": 0.05305544444331529,
+          "p10": 0.029050284491655344,
+          "median": 0.05004844348499138,
+          "p90": 0.07963277282894372
+        }
+      },
+      "vanished_rows": []
+    },
+    "D6": {
+      "periods": 58,
+      "missing_dropped": 0,
+      "missing_filled": 0,
+      "mean_period_return_dropped": 0.005519766962147096,
+      "mean_period_return_filled": 0.005519766962147096
+    }
+  },
+  {
+    "label": "2021-2025",
+    "sessions": 1255,
+    "symbols": 8922,
+    "D1": {
+      "survivor_pool": {
+        "n": 1255,
+        "mean": 497.29243027888447,
+        "p10": 146.0,
+        "median": 508.0,
+        "p90": 814.0
+      },
+      "days_below_20": 5,
+      "shortfall_days": [
+        {
+          "date": "2022-06-13",
+          "eligible": 1773,
+          "survivors": 16,
+          "pass_vol_only": 391,
+          "pass_trend_only": 113,
+          "pass_r60_only": 1438
+        },
+        {
+          "date": "2022-06-14",
+          "eligible": 1769,
+          "survivors": 17,
+          "pass_vol_only": 382,
+          "pass_trend_only": 121,
+          "pass_r60_only": 1399
+        },
+        {
+          "date": "2022-06-15",
+          "eligible": 1778,
+          "survivors": 17,
+          "pass_vol_only": 406,
+          "pass_trend_only": 164,
+          "pass_r60_only": 1464
+        },
+        {
+          "date": "2022-06-17",
+          "eligible": 1817,
+          "survivors": 17,
+          "pass_vol_only": 426,
+          "pass_trend_only": 112,
+          "pass_r60_only": 1426
+        },
+        {
+          "date": "2022-09-30",
+          "eligible": 1768,
+          "survivors": 18,
+          "pass_vol_only": 602,
+          "pass_trend_only": 108,
+          "pass_r60_only": 1635
+        }
+      ]
+    },
+    "D2": {
+      "daily_overlap": {
+        "n": 1246,
+        "mean": 0.6626805778491172,
+        "p10": 0.5,
+        "median": 0.65,
+        "p90": 0.8
+      }
+    },
+    "D3": {
+      "picked": {
+        "n": 62,
+        "mean": 3.5637363378917604,
+        "p10": 1.8164240985843667,
+        "median": 3.089121865233362,
+        "p90": 4.997192412531031
+      },
+      "survivor_random": {
+        "n": 62,
+        "mean": 3.455247382105974,
+        "p10": 2.180677273122997,
+        "median": 3.1566020816589244,
+        "p90": 4.545024016191
+      },
+      "eligible_random": {
+        "n": 62,
+        "mean": 3.713625633153108,
+        "p10": 2.37737677701245,
+        "median": 4.008746360727498,
+        "p90": 4.718409154146446
+      }
+    },
+    "D4": {
+      "picked_vanish_rate": 0.0,
+      "eligible_vanish_rate": 1.83496339248032e-05,
+      "picked_counts": [
+        0,
+        1200
+      ],
+      "eligible_counts": [
+        2,
+        108994
+      ]
+    },
+    "D5": {
+      "vanished": {
+        "vol20": null,
+        "r60": null,
+        "trend": null
+      },
+      "all_picks": {
+        "vol20": {
+          "n": 1200,
+          "mean": 0.18910901671154026,
+          "p10": 0.13245263664822374,
+          "median": 0.1885700580496441,
+          "p90": 0.24875851735125223
+        },
+        "r60": {
+          "n": 1200,
+          "mean": 0.20858248783880393,
+          "p10": 0.0765878941069257,
+          "median": 0.19197127158873162,
+          "p90": 0.3575084809046298
+        },
+        "trend": {
+          "n": 1200,
+          "mean": 0.054590008530445454,
+          "p10": 0.027833964049825945,
+          "median": 0.05329316383446947,
+          "p90": 0.08332913451638373
+        }
+      },
+      "vanished_rows": []
+    },
+    "D6": {
+      "periods": 62,
+      "missing_dropped": 0,
+      "missing_filled": 0,
+      "mean_period_return_dropped": 0.005015343985085647,
+      "mean_period_return_filled": 0.005015343985085647
+    }
+  }
+]

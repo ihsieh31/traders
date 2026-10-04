@@ -1,0 +1,107 @@
+[     2.5s] read 20/136 cache batches; 637,357 in-window bars
+[     4.9s] read 40/136 cache batches; 1,479,695 in-window bars
+[     7.3s] read 60/136 cache batches; 2,399,815 in-window bars
+[     9.5s] read 80/136 cache batches; 3,202,782 in-window bars
+[    11.7s] read 100/136 cache batches; 3,953,867 in-window bars
+[    13.9s] read 120/136 cache batches; 4,722,205 in-window bars
+[    15.8s] in-window panel ready
+[    15.8s] computing production trailing features
+[    16.9s] all four preregistered variants complete
+{
+  "legacy_short_proxy": {
+    "gross": {
+      "mean": -0.010210950727077436,
+      "ci95": [
+        -0.0287202156270794,
+        0.0037276429212405393
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -1.1994630042112102
+    },
+    "net5pct": {
+      "mean": -0.015102290406668804,
+      "ci95": [
+        -0.03363645663009775,
+        -0.0011604574189508863
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -1.7735207234320727
+    },
+    "high_up10_rate": 0.2135593220338983,
+    "full20_periods": 59
+  },
+  "mirror28": {
+    "gross": {
+      "mean": -0.0012282854084802782,
+      "ci95": [
+        -0.012967269778931378,
+        0.013655037355846663
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -0.1842960913787323
+    },
+    "net5pct": {
+      "mean": -0.005957598155171709,
+      "ci95": [
+        -0.017783103166986145,
+        0.008868336469769917
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -0.8956587250778454
+    },
+    "high_up10_rate": 0.15337423312883436,
+    "full20_periods": 56
+  },
+  "bounded45": {
+    "gross": {
+      "mean": -0.012192843438084178,
+      "ci95": [
+        -0.025501966848405073,
+        0.002900434606566418
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -1.6705026430711907
+    },
+    "net5pct": {
+      "mean": -0.01695586874572291,
+      "ci95": [
+        -0.030142886902005055,
+        -0.0016802500347152002
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -2.3277245853834545
+    },
+    "high_up10_rate": 0.2828546562228024,
+    "full20_periods": 57
+  },
+  "efficient60": {
+    "gross": {
+      "mean": -0.005746676987432484,
+      "ci95": [
+        -0.015481406828727305,
+        0.006326508250082494
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -1.0384788609082953
+    },
+    "net5pct": {
+      "mean": -0.010509702295071211,
+      "ci95": [
+        -0.020157426676712057,
+        0.0015697939423283086
+      ],
+      "n": 59,
+      "unknown_periods": 0,
+      "nw_lag1_t": -1.9049560270164092
+    },
+    "high_up10_rate": 0.13141862489120976,
+    "full20_periods": 57
+  }
+}

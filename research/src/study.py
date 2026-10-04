@@ -33,6 +33,9 @@ from research.src.common import OUT_DIR, log
 #: plan.md R1. The validation period is a consumable -- it is read once.
 DISCOVERY = (date(2016, 1, 4), date(2020, 12, 31))
 VALIDATION = (date(2021, 1, 4), date(2025, 12, 31))
+#: Sessions after the validation period. Never read by any round before
+#: F-20261004-10; used only for a sign check (condition 13).
+HOLDOUT_START = date(2026, 1, 2)
 
 #: plan.md R2. Fixed up front so it cannot be tuned after the fact (S-40).
 WALKFORWARD_FOLDS = 4
@@ -56,6 +59,27 @@ TRADING_DAYS_PER_YEAR = 252
 
 Builder = Callable[[P.Panel, P.FeatureSet], F.Formula]
 _REGISTRY: Dict[str, Builder] = {}
+
+#: Components whose window can be rebuilt by a candidate-supplied function,
+#: keyed by component name: (rebuild(panel, window) -> values, fixed grid).
+#: The grid is declared with the candidate, before any result (R5, S-31).
+EXTRA_SWEEPS: Dict[str, Tuple[Callable[[P.Panel, int], np.ndarray], Tuple[int, ...]]] = {}
+
+#: Formulas whose universe is "eligible AND every component defined", and
+#: whose equal-weight benchmark is that same universe (F-20261004-11). Other
+#: formulas keep the plain eligibility mask, so earlier rounds are unchanged.
+COMPLETE_CASE: set = set()
+
+#: Holding-period grids swept as the R5 plateau check, keyed by formula name.
+HORIZON_SWEEPS: Dict[str, Tuple[int, ...]] = {}
+
+
+def formula_mask(panel: P.Panel, features: P.FeatureSet, formula: F.Formula, *, wide: bool = False) -> np.ndarray:
+    mask = P.eligible_mask(panel, features, min_adv20_usd=None if wide else P.MIN_ADV20_USD)
+    if formula.name in COMPLETE_CASE:
+        for c in formula.components:
+            mask &= np.isfinite(c.values)
+    return mask
 
 
 def register(name: str, builder: Builder) -> None:
@@ -128,6 +152,34 @@ def _sessions_in(panel: P.Panel, span: Tuple[date, date]) -> np.ndarray:
     )
 
 
+def _span_periods(panel: P.Panel, span: Tuple[date, date], horizon: int) -> np.ndarray:
+    """Non-overlapping portfolio grid INSIDE ``span``.
+
+    Starts at the span's first session, steps by ``horizon``, and keeps only
+    periods whose exit session is still inside the span. Letting
+    ``build_portfolio`` fall back to its whole-panel grid sampled the leading
+    history (the previous period's last months) and, on a panel covering two
+    periods, mixed them (process.md S-57).
+    """
+    idx = _sessions_in(panel, span)[::horizon]
+    hi = span[1]
+    return np.array(
+        [t for t in idx if t + horizon < len(panel.sessions) and panel.sessions[t + horizon] <= hi],
+        dtype=int,
+    )
+
+
+def _excess(panel, features, formula, span, mask, *, top_k: int) -> dict:
+    """Condition 12/13 measurement: paired excess over equal weight in ``span``."""
+    f = F.Formula(formula.name, formula.components, formula.horizon, top_k)
+    fwd = P.forward_returns(panel, formula.horizon)
+    pf = M.build_portfolio(F.compose_scores(f, mask), fwd, mask, horizon=formula.horizon,
+                           top_k=top_k, as_of=_span_periods(panel, span, formula.horizon))
+    out = M.equal_weight_excess(pf, fwd, mask, formula.horizon)
+    out["period"] = [span[0].isoformat(), span[1].isoformat()]
+    return out
+
+
 def _ic_grid(panel: P.Panel, span: Tuple[date, date], horizon: int) -> np.ndarray:
     """Thinned as-of grid, dropping any that would run past the panel end."""
     idx = _sessions_in(panel, span)
@@ -146,8 +198,8 @@ def analyse(
     """Everything measurable for one formula over one period."""
     horizons = list(horizons or [formula.horizon])
     top_k = top_k or formula.top_k
-    wide = P.eligible_mask(panel, features, min_adv20_usd=None)
-    prod = P.eligible_mask(panel, features, min_adv20_usd=P.MIN_ADV20_USD)
+    wide = formula_mask(panel, features, formula, wide=True)
+    prod = formula_mask(panel, features, formula)
 
     out: dict = {
         "period": [span[0].isoformat(), span[1].isoformat()],
@@ -177,7 +229,8 @@ def analyse(
             scores = F.compose_scores(
                 F.Formula(formula.name, formula.components, horizon, top_k), mask
             )
-            pf = M.build_portfolio(scores, fwd, mask, horizon=horizon, top_k=top_k)
+            pf = M.build_portfolio(scores, fwd, mask, horizon=horizon, top_k=top_k,
+                                   as_of=_span_periods(panel, span, horizon))
             net_base = pf.net(M.COST_SCENARIOS["base"])
 
             # Independent periods available in a year at this holding period.
@@ -229,9 +282,7 @@ def walk_forward(
     once using all of discovery, so every fold's train segment is already
     contaminated.
     """
-    mask = P.eligible_mask(
-        panel, features, min_adv20_usd=None if universe == "wide" else P.MIN_ADV20_USD
-    )
+    mask = formula_mask(panel, features, formula, wide=universe == "wide")
     idx = _sessions_in(panel, span)
     bounds = np.linspace(0, idx.size, folds + 1).astype(int)
     horizon = formula.horizon
@@ -263,7 +314,9 @@ def walk_forward(
             # session would make 126 overlapping periods out of 66 sessions,
             # which double-charges cost and inflates the annualisation
             # (process.md S-7).
-            test_periods = test[::horizon]
+            test_periods = np.array(
+                [t for t in test[::horizon] if t + horizon < len(panel.sessions)
+                 and panel.sessions[t + horizon] <= span[1]], dtype=int)
             pf = M.build_portfolio(
                 scores, fwd, mask, horizon=horizon, top_k=formula.top_k,
                 as_of=test_periods,
@@ -349,15 +402,21 @@ def classify_curve(values: Sequence, metrics: Sequence[float]) -> dict:
     if len(finite) < 3:
         return {"verdict": "INSUFFICIENT", "run_length": 0, "curve": list(finite)}
     curve = [m for _v, m in finite]
-    best_sign = 0 if max(curve, key=abs) <= 0 else (1 if max(curve, key=abs) > 0 else -1)
-    best_sign = math.copysign(1, max(curve, key=abs))
     best_idx = int(np.argmax([abs(m) for m in curve]))
-    run = 1
-    for i in range(best_idx + 1, len(curve)):
-        if math.copysign(1, curve[i]) == best_sign and abs(curve[i]) >= 0.5 * abs(curve[i - 1]):
-            run += 1
-        else:
-            break
+    # Longest run of adjacent cells that share a sign and whose magnitudes
+    # are within a factor of two of each other, ANYWHERE on the curve. The
+    # earlier version only counted rightward from the best cell, so a curve
+    # peaking in its middle or last cell could never be a plateau -- every
+    # 3-cell sweep whose best cell was not the first read as SPIKE
+    # (process.md S-60).
+    run = longest = 1
+    for i in range(1, len(curve)):
+        a, b = curve[i - 1], curve[i]
+        same = a != 0 and b != 0 and math.copysign(1, a) == math.copysign(1, b)
+        close = min(abs(a), abs(b)) >= 0.5 * max(abs(a), abs(b))
+        run = run + 1 if same and close else 1
+        longest = max(longest, run)
+    run = longest
     verdict = "PLATEAU" if run >= 3 else "SPIKE"
     return {
         "verdict": verdict,
@@ -365,8 +424,8 @@ def classify_curve(values: Sequence, metrics: Sequence[float]) -> dict:
         "best_value": finite[best_idx][0],
         "best_metric": finite[best_idx][1],
         "curve": [{"value": v, "metric": m} for v, m in finite],
-        "rule": "three consecutive same-sign cells, adjacent change < 50% "
-        "(plan.md R5)",
+        "rule": "three consecutive same-sign cells, adjacent magnitudes within "
+        "a factor of two, anywhere on the curve (plan.md R5)",
     }
 
 
@@ -379,6 +438,7 @@ def parameter_sweep(
     metric_horizon: int,
     metric_universe: str = "production",
     top_k: int = 20,
+    mask: Optional[np.ndarray] = None,
 ) -> dict:
     """Sweep one parameter over its fixed grid and classify the curve.
 
@@ -394,11 +454,12 @@ def parameter_sweep(
     A window can look fine on IC and fail in the portfolio, or the reverse.
     Reporting only one hides which is happening.
     """
-    mask = P.eligible_mask(
-        panel,
-        features,
-        min_adv20_usd=None if metric_universe == "wide" else P.MIN_ADV20_USD,
-    )
+    if mask is None:
+        mask = P.eligible_mask(
+            panel,
+            features,
+            min_adv20_usd=None if metric_universe == "wide" else P.MIN_ADV20_USD,
+        )
     fwd = P.forward_returns(panel, metric_horizon)
     grid = _ic_grid(panel, span, metric_horizon)
     rows = []
@@ -406,7 +467,8 @@ def parameter_sweep(
         comps = parameter.build(value)
         f = F.Formula("sweep", comps, metric_horizon, top_k)
         scores = F.compose_scores(f, mask)
-        pf = M.build_portfolio(scores, fwd, mask, horizon=metric_horizon, top_k=top_k)
+        pf = M.build_portfolio(scores, fwd, mask, horizon=metric_horizon, top_k=top_k,
+                               as_of=_span_periods(panel, span, metric_horizon))
         net = pf.net(M.COST_SCENARIOS["base"])
         series = M.ic_series(comps[0].values, fwd, mask, grid)
         rows.append(
@@ -429,6 +491,36 @@ def parameter_sweep(
     curve["genuine"] = distinct
     if not distinct:
         curve["verdict"] = "NOT-SWEPTABLE"
+    return curve
+
+
+def horizon_sweep(
+    panel: P.Panel,
+    formula: F.Formula,
+    span: Tuple[date, date],
+    grid: Sequence[int],
+    mask: np.ndarray,
+    *,
+    top_k: int = 20,
+) -> dict:
+    """R5 plateau check on the holding period (plan.md R4 counts it as a
+    parameter). The score does not depend on the horizon; only the
+    rebalance spacing and the forward return do."""
+    scores = F.compose_scores(formula, mask)
+    rows = []
+    for h in grid:
+        fwd = P.forward_returns(panel, h)
+        pf = M.build_portfolio(scores, fwd, mask, horizon=h, top_k=top_k,
+                               as_of=_span_periods(panel, span, h))
+        net = pf.net(M.COST_SCENARIOS["base"])
+        rows.append({
+            "value": h,
+            "annualised_net": float(np.nanmean(net) * (M.PERIODS_PER_YEAR / h)) if np.isfinite(net).any() else None,
+            "ic_mean": None,
+            "n_periods": len(pf),
+        })
+    curve = classify_curve(list(grid), [r["annualised_net"] for r in rows])
+    curve.update(parameter="horizon", grid=list(grid), rows=rows, genuine=True)
     return curve
 
 
@@ -457,8 +549,10 @@ def judge(
     t_bonf: float,
     walk_forward_result: Optional[dict] = None,
     sweeps: Optional[List[dict]] = None,
-    baseline: Optional[dict] = None,
+    baseline: Optional[float] = None,
     participation_max: Optional[float] = None,
+    excess: Optional[dict] = None,
+    holdout_excess: Optional[dict] = None,
 ) -> dict:
     """The eleven pass conditions of plan.md R10.
 
@@ -513,15 +607,17 @@ def judge(
         add(4, "validation net annualised > 0 at 2.0x cost", (v2x or -1.0) > 0, f"{v2x}")
     else:
         add(4, "validation net annualised > 0 at 2.0x cost", None, "no validation run yet")
-    if baseline is None:
-        add(5, "beats the production baseline", None, "no baseline run supplied")
+    if baseline is None or vport is None:
+        add(5, "beats the production baseline", None, "no validation baseline run supplied")
     else:
+        # plan.md R10-5 says "in the same VALIDATION period". The earlier
+        # version compared the discovery number and was never given a baseline.
         add(
             5,
             "beats the production baseline",
-            (dport["annualised_net"] or 0.0) > (baseline or -1e9),
-            f"formula {dport['annualised_net']} vs baseline {baseline} "
-            "(net annualised, same period and universe)",
+            (vport["annualised_net"] or -1e9) > baseline,
+            f"validation: formula {vport['annualised_net']} vs production score {baseline} "
+            "(net annualised, same period, universe and holding period)",
         )
     add(
         6,
@@ -541,8 +637,8 @@ def judge(
             f"UNDECIDABLE: agreement = {agree} but a fold holds only "
             f"{min(r['n_periods'] for r in walk_forward_result['rows'] if r['variant'] == 'frozen')} "
             f"non-overlapping periods, below the floor of "
-            f"{MIN_WALKFORWARD_PERIODS_PER_FOLD}. A 60-day horizon over 5 years "
-            "leaves too few folds to measure sign agreement (process.md S-6)",
+            f"{MIN_WALKFORWARD_PERIODS_PER_FOLD}. A {horizon}-day horizon over 4 folds "
+            "of 5 years leaves too few test periods to measure sign agreement (process.md S-6)",
         )
     else:
         got_n, got_tot = (int(v) for v in str(agree).split("/"))
@@ -597,6 +693,32 @@ def judge(
             participation_max <= 0.001,
             f"worst-case participation = {participation_max:.4%} of ADV20",
         )
+    if excess is None:
+        add(12, "validation excess over same-universe equal weight is significant", None,
+            "no equal-weight benchmark run (needs a validation run)")
+    else:
+        boot = excess.get("bootstrap") or {}
+        t_ex = excess.get("nw_t")
+        add(
+            12,
+            "validation excess over same-universe equal weight is significant",
+            t_ex is not None and t_ex >= t_bonf and boot.get("ci_low") is not None and boot["ci_low"] > 0,
+            f"annualised excess {excess.get('annualised_excess')}, NW t {t_ex} (needs >= {t_bonf:.3f}), "
+            f"{boot.get('block')}-period block bootstrap 95% CI per period "
+            f"[{boot.get('ci_low')}, {boot.get('ci_high')}] (needs low > 0); {excess.get('benchmark')}",
+        )
+    if holdout_excess is not None:
+        same = (
+            excess is not None
+            and (excess.get("mean_excess_per_period") or 0.0) * (holdout_excess.get("mean_excess_per_period") or 0.0) > 0
+        )
+        add(
+            13,
+            "untouched holdout excess has the validation sign",
+            same if holdout_excess.get("n_periods") else None,
+            f"holdout mean excess/period {holdout_excess.get('mean_excess_per_period')} over "
+            f"{holdout_excess.get('n_periods')} periods (sign check only; too few periods for a t)",
+        )
     decided = [c for c in checks if c["passed"] is not None]
     ratio = drobust.get("width_over_abs_mean")
     disclosure = {
@@ -616,6 +738,9 @@ def judge(
     }
     return {
         "t_bonf": t_bonf,
+        "excess_validation": excess,
+        "excess_holdout": holdout_excess,
+        "baseline_validation_net_annualised": baseline,
         "checks": checks,
         "disclosures": [disclosure],
         "n_checks": len(checks),
@@ -1129,6 +1254,18 @@ def _default_sweep(formula: F.Formula, panel: P.Panel) -> List[F.Parameter]:
     """
     sweeps: List[F.Parameter] = []
     for c in formula.components:
+        if c.name in EXTRA_SWEEPS:
+            rebuild, grid = EXTRA_SWEEPS[c.name]
+
+            def build_extra(value, target=c, rebuild=rebuild):
+                return [
+                    F.Component(other.name, rebuild(panel, value) if other is target else other.values,
+                                other.sign, value if other is target else other.lookback)
+                    for other in formula.components
+                ]
+
+            sweeps.append(F.Parameter(name=f"{c.name}_window", values=list(grid), build=build_extra))
+            continue
         if not _sweepable(panel, c.name):
             continue
 
@@ -1184,6 +1321,13 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="per-name order value, for the participation cap (plan.md R13-L2)",
     )
     p.add_argument("--walk-forward", type=int, default=WALKFORWARD_FOLDS)
+    p.add_argument(
+        "--family-size",
+        type=int,
+        default=0,
+        help="pre-registered number of formulas in this round; when set, t_bonf is "
+        "Bonferroni over the round's formulas instead of one formula's components",
+    )
     p.add_argument("--bootstrap", type=int, default=1000)
     p.add_argument("--dry-run", action="store_true", help="build the panel, print, write nothing")
     return p.parse_args(argv)
@@ -1209,6 +1353,11 @@ def main(argv=None) -> int:
         f"production median {np.median(prod.sum(1)):.0f}")
 
     formula = _REGISTRY[args.formula](panel, features)
+    if formula.name in COMPLETE_CASE:
+        wide = formula_mask(panel, features, formula, wide=True)
+        prod = formula_mask(panel, features, formula)
+        log(f"complete-case universe: wide median {np.median(wide.sum(1)):.0f}, "
+            f"production median {np.median(prod.sum(1)):.0f}")
     horizons = (
         [int(h) for h in args.horizons.split(",")]
         if args.horizons
@@ -1217,7 +1366,10 @@ def main(argv=None) -> int:
     log(f"formula {formula.name}: {len(formula.components)} components, "
         f"horizon {formula.horizon}, {formula.free_parameters} free parameters")
 
-    span = (start, end)
+    # Discovery never extends into the holdout, whatever --end says: with
+    # --period both the panel covers 2016-2025, and using (start, end) here
+    # handed the walk-forward, the sweeps and t_bonf the validation years.
+    span = (start, min(end, DISCOVERY[1]))
     discovery = analyse(panel, features, formula, span, top_k=args.top_k, horizons=horizons)
     wf = walk_forward(panel, features, formula, span, folds=args.walk_forward)
     sweeps: List[dict] = []
@@ -1225,9 +1377,12 @@ def main(argv=None) -> int:
         sweeps.append(
             parameter_sweep(
                 panel, features, parameter, span,
-                metric_horizon=formula.horizon, top_k=args.top_k,
+                metric_horizon=formula.horizon, top_k=args.top_k, mask=prod,
             )
         )
+    if formula.name in HORIZON_SWEEPS:
+        sweeps.append(horizon_sweep(panel, formula, span, HORIZON_SWEEPS[formula.name], prod,
+                                    top_k=args.top_k))
 
     scores = F.compose_scores(formula, prod)
     part = max_participation(
@@ -1262,7 +1417,7 @@ def main(argv=None) -> int:
               "note": "too few complete series to estimate N_eff from the "
               "correlation matrix; falling back to the component count"}
     )
-    t_bonf = M.bonferroni_t(n_eff_info["n_eff"], df=1000)
+    t_bonf = M.bonferroni_t(max(n_eff_info["n_eff"], args.family_size or 0), df=1000)
     log(f"N_eff = {n_eff_info['n_eff']:.2f} from {n_eff_info['n_series']} components "
         f"-> t_bonf = {t_bonf:.3f}")
 
@@ -1281,13 +1436,41 @@ def main(argv=None) -> int:
                 "Skipping -- the holdout is read once, on purpose (plan.md R1)."
             )
 
+    baseline_net = excess = holdout_excess = None
+    if validation is not None:
+        v_span = VALIDATION
+        excess = _excess(panel, features, formula, v_span, prod, top_k=args.top_k)
+        base_formula = _REGISTRY["production"](panel, features)
+        base_formula = F.Formula(base_formula.name, base_formula.components, formula.horizon, args.top_k)
+        base_scores = F.compose_scores(base_formula, prod)
+        base_pf = M.build_portfolio(
+            base_scores, P.forward_returns(panel, formula.horizon), prod,
+            horizon=formula.horizon, top_k=args.top_k,
+            as_of=_span_periods(panel, v_span, formula.horizon),
+        )
+        baseline_net = base_pf.annualised(base_pf.net(M.COST_SCENARIOS["base"]), formula.horizon)
+        if end >= HOLDOUT_START:
+            holdout_excess = _excess(panel, features, formula, (HOLDOUT_START, end), prod, top_k=args.top_k)
+
     acceptance = judge(
         discovery, validation,
         t_bonf=t_bonf,
         walk_forward_result=wf,
         sweeps=sweeps,
+        baseline=baseline_net,
         participation_max=part,
+        excess=excess,
+        holdout_excess=holdout_excess,
     )
+    if excess is not None and formula.name in COMPLETE_CASE:
+        # Disclosure only: the same picks against the FULL eligible universe.
+        full = P.eligible_mask(panel, features, min_adv20_usd=P.MIN_ADV20_USD)
+        fwd_h = P.forward_returns(panel, formula.horizon)
+        pf_v = M.build_portfolio(
+            F.compose_scores(F.Formula(formula.name, formula.components, formula.horizon, args.top_k), prod),
+            fwd_h, prod, horizon=formula.horizon, top_k=args.top_k,
+            as_of=_span_periods(panel, VALIDATION, formula.horizon))
+        acceptance["disclosure_excess_vs_full_eligible"] = M.equal_weight_excess(pf_v, fwd_h, full, formula.horizon)
     search_cost = {
         "components": len(formula.components),
         "free_parameters": formula.free_parameters,
@@ -1333,7 +1516,7 @@ def main(argv=None) -> int:
         sweeps=sweeps,
         acceptance=acceptance,
         participation_max=part,
-        baseline_net=None,
+        baseline_net=baseline_net,
         search_cost=search_cost,
     )
     print()

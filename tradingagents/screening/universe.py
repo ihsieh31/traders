@@ -39,7 +39,7 @@ class UniverseError(RuntimeError):
 _NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks"
 _NASDAQ_REQUEST_TIMEOUT_SECONDS = 20
 _NASDAQ_MAX_RESPONSE_BYTES = 20_000_000
-_NASDAQ_CACHE_VERSION = 1
+_NASDAQ_CACHE_VERSION = 2
 _LOG = logging.getLogger(__name__)
 
 
@@ -175,6 +175,8 @@ def _market_caps_from_nasdaq_payload(payload: dict) -> tuple[dict[str, float], i
         symbol = normalize_symbol(row.get("symbol"))
         market_cap = _parse_market_cap(row.get("marketCap"))
         if symbol and market_cap is not None:
+            if symbol in market_caps and market_caps[symbol] != market_cap:
+                raise ValueError("Nasdaq screener contains conflicting market caps for one symbol")
             market_caps[symbol] = market_cap
     if not market_caps:
         raise ValueError("Nasdaq screener response contained no valid market caps")
@@ -284,23 +286,31 @@ def fetch_us_equity_universe(broker: Optional[Any] = None) -> List[dict]:
         raise UniverseError(f"Alpaca ACTIVE US_EQUITY asset list unavailable: {sanitize_for_log(str(exc))}") from exc
 
     universe: List[dict] = []
-    seen = set()
+    seen = {}
     for asset in assets:
         symbol = normalize_symbol(asset_field(asset, "symbol", ""))
         status = enum_value(asset_field(asset, "status", ""))
         asset_class = enum_value(asset_field(asset, "asset_class", ""))
-        if not symbol or symbol in seen:
+        if not symbol:
             continue
         if status != "active" or asset_class != AssetClass.US_EQUITY.value:
             continue
         if asset_field(asset, "tradable", False) is not True:
             continue
-        seen.add(symbol)
+        identity = (str(asset_field(asset, "id", "") or ""), status, asset_class,
+                    enum_value(asset_field(asset, "exchange", "")))
+        if symbol in seen:
+            if seen[symbol] != identity:
+                raise UniverseError("Conflicting asset identities for one symbol; refusing an ambiguous universe")
+            continue
+        seen[symbol] = identity
         universe.append(
             {
                 "symbol": symbol,
                 "name": asset_field(asset, "name", "") or symbol,
                 "exchange": enum_value(asset_field(asset, "exchange", "")),
+                "asset_id": identity[0], "identity_source": "alpaca_assets",
+                "asset_class": asset_class, "asset_status": status, "tradable": True,
             }
         )
     if not universe:
@@ -309,4 +319,5 @@ def fetch_us_equity_universe(broker: Optional[Any] = None) -> List[dict]:
     market_caps = fetch_nasdaq_market_caps()
     for item in universe:
         item["market_cap"] = market_caps.get(item["symbol"])
+        item["market_cap_source"] = "nasdaq_screener"
     return universe

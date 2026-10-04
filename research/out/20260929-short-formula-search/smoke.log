@@ -1,0 +1,23 @@
+========================================================================
+Foundation self-test (synthetic, no credentials, no network)
+========================================================================
+
+-- spearman --
+
+-- newey_west --
+
+-- nw_lag_units --
+  nw_lag is computed in sampling units (ceil(horizon / date_step))
+
+-- fast_vs_slow_rank --
+  spearman_fast == spearman_ic: 200 cases, max diff 5.55e-17
+
+-- calendar_cache --
+[     0.0s] cached calendar covers 2024-12-18..2025-09-23, need 2024-12-18..2026-06-30; refetching
+[     0.0s] fetching trading calendar 2024-12-18..2026-06-30 (single call)
+  stale calendar cache is rejected, not silently reused
+
+-- bars_cache --
+  bars cache round-trip: 50 rows, max diff 2.22e-16
+========================================================================
+SELF-TEST PASSED

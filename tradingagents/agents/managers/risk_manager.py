@@ -32,6 +32,7 @@ from tradingagents.execution.context import (
 from tradingagents.prompts import render_prompt
 
 from tradingagents.prompt_capture import capture_agent_prompt
+from tradingagents.screening.context import render_screening_context
 
 
 def create_risk_manager(llm, memory, config=None):
@@ -175,6 +176,9 @@ def create_risk_manager(llm, memory, config=None):
         claim_matrix = context_bundle.get("decision_claim_matrix", "")
         risk_debate_digest = build_debate_digest(risk_debate_state, "risk", config=config)
         all_reports_text = context_bundle.get("all_reports_text", "")
+        screening_context = render_screening_context(config, company_name, state.get("trade_date"))
+        if screening_context:
+            all_reports_text = screening_context + "\n\n" + all_reports_text
 
         curr_situation = context_bundle["memory_context"]
         past_memories = memory.get_memories(curr_situation, n_matches=2, as_of=state.get("trade_date"))

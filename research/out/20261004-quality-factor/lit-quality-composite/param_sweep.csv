@@ -1,0 +1,4 @@
+parameter,value,annualised_net,n_periods,verdict,run_length
+horizon,5,0.1957380375164132,251,PLATEAU,3
+horizon,10,0.19818422671246588,125,PLATEAU,3
+horizon,20,0.21568935628865593,62,PLATEAU,3

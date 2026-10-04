@@ -1,0 +1,58 @@
+[     0.7s] building panel for 2016-01-04 .. 2026-09-08 (needs credentials)
+[     0.7s] panel window 2015-09-29 .. 2026-09-08 (2751 sessions; 66 of them are leading history)
+[     0.7s] symbol filter: 4804 symbols from research/out/20261004-screen-diagnosis/stock_symbols.txt
+[     0.7s] reading bars cache (this takes a couple of minutes for 275 MB)...
+[     8.7s] panel: 4804 symbols x 2751 sessions to scatter
+[     9.7s] 2751 sessions x 4804 symbols (2015-09-29 .. 2026-09-08), 8,215,470 finite closes (62.2% density)
+[    11.3s] eligible per session: wide median 2754, production median 1267
+[    11.5s] formula lit-high-proximity: 1 components, horizon 20, 2 free parameters
+[    17.4s] N_eff = 1.00 from 1 components -> t_bonf = 2.398
+
+========================================================================
+ROUND VERDICT: REJECTED
+  4 failed / 12 decided of 13 checks
+========================================================================
+  [FAIL]  1. validation |t_NW| >= t_bonf
+          validation NW t = 0.428, t_bonf = 2.398
+  [PASS]  2. discovery and validation same sign
+          discovery net annualised 0.11931195899563664, validation 0.023343444691437773
+  [PASS]  3. validation net annualised > 0
+          0.023343444691437773
+  [PASS]  4. validation net annualised > 0 at 2.0x cost
+          0.011982557594663578
+  [FAIL]  5. beats the production baseline
+          validation: formula 0.023343444691437773 vs production score 0.02776130657779443 (net annualised, same period, universe and holding period)
+  [PASS]  6. holds in both universes
+          wide 0.12901409468726255, production 0.11931195899563664
+  [????]  7. walk-forward >= 3/4 folds same sign
+          UNDECIDABLE: agreement = 3/4 but a fold holds only 6 non-overlapping periods, below the floor of 8. A 20-day horizon over 4 folds of 5 years leaves too few test periods to measure sign agreement (process.md S-6)
+  [PASS]  8. every parameter +/- 1 cell same sign
+          swept ['lit_hi_window']; spikes: none
+  [PASS]  9. same sign in >= 2 regimes
+          3 regimes agree, out of 4 with any data: bull_high_vol(n=12), bull_low_vol(n=32), bear_high_vol(n=13), bear_low_vol(n=4)
+  [PASS] 10. same sign after dropping best 5% of periods
+          dropped 3 periods, mean 0.004532182211479405, sign_flipped=False
+  [PASS] 11. order size <= 0.1% of ADV20
+          worst-case participation = 0.0250% of ADV20
+  [FAIL] 12. validation excess over same-universe equal weight is significant
+          annualised excess -0.06434774311176447, NW t -0.9063186439567549 (needs >= 2.398), 3-period block bootstrap 95% CI per period [-0.01727422897843341, 0.005118652759714976] (needs low > 0); same-universe equal weight, same as-of grid, zero cost
+  [FAIL] 13. untouched holdout excess has the validation sign
+          holdout mean excess/period 0.0036360905164880726 over 8 periods (sign check only; too few periods for a t)
+
+  [NOTE] sample sufficiency (DISCLOSURE, not a pass condition)
+          CI width / |mean period return| = 3.402337179603973 (n=56)
+          -> the direction may be right but the magnitude is not trustworthy; do not quote the point estimate
+
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/portfolio.json
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/ic.csv
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/walkforward.csv
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/param_sweep.csv
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/regimes.csv
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/robustness.json
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/correlation.json
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/acceptance.json
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/formula.md
+[    20.8s] wrote out/20261004-literature-candidates/lit-high-proximity/report.md
+
+[    20.8s] artefacts in /Users/zongen/Downloads/codex/tradingBuffett/research/out/20261004-literature-candidates/lit-high-proximity
+[    20.8s] now add one concise entry to history.md pointing at this directory

@@ -439,6 +439,136 @@ def _d55_momentum(panel: P.Panel, features: P.FeatureSet) -> F.Formula:
     )
 
 
+# --------------------------------------------------------------------------
+# F-20261004-10: literature-anchored candidates, pre-registered in
+# out/20261004-literature-candidates/PREREGISTRATION.md before any run.
+# --------------------------------------------------------------------------
+
+
+def _reversal_values(panel: P.Panel, window: int) -> np.ndarray:
+    """``close[t] / close[t-window] - 1`` (production's r-definition)."""
+    return S._momentum(panel, window)
+
+
+def _high_proximity_values(panel: P.Panel, window: int) -> np.ndarray:
+    """``close / max(close over the trailing window)``; NaN unless complete.
+
+    George & Hwang (2004) use 52 weeks. The bars start on 2016-01-04, so a
+    252-session window is undefined for all of 2016; 120 was declared
+    instead, before any result.
+    """
+    from numpy.lib.stride_tricks import sliding_window_view
+
+    close = panel.close
+    out = np.full(close.shape, np.nan, dtype=np.float64)
+    if close.shape[0] >= window:
+        # max over a window containing a NaN is NaN: an incomplete window
+        # is undefined, never a max over fewer sessions.
+        peak = sliding_window_view(close, window, axis=0).max(axis=2)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out[window - 1:] = close[window - 1:] / peak
+    return out
+
+
+def _dollar_volume_values(panel: P.Panel, window: int) -> np.ndarray:
+    """Mean of close*volume over the trailing window; NaN unless complete."""
+    from numpy.lib.stride_tricks import sliding_window_view
+
+    dollar = panel.close * panel.volume
+    out = np.full(dollar.shape, np.nan, dtype=np.float64)
+    if dollar.shape[0] >= window:
+        out[window - 1:] = sliding_window_view(dollar, window, axis=0).mean(axis=2)
+    return out
+
+
+S.EXTRA_SWEEPS.update({
+    "lit_rev": (_reversal_values, (3, 5, 10)),
+    "lit_hi": (_high_proximity_values, (60, 120, 180)),
+    "lit_adv": (_dollar_volume_values, (5, 20, 60)),
+})
+
+
+def _lit_reversal(panel: P.Panel, features: P.FeatureSet) -> F.Formula:
+    """K1: buy the 20 largest 5-session losers, hold 5 sessions."""
+    return F.Formula(
+        name="lit-reversal",
+        components=[F.Component("lit_rev", _reversal_values(panel, 5), -1, 5)],
+        horizon=5, top_k=20, free_parameters=2,
+        notes="-r5. Direction from F-20260927-03 (read 2021+); Jegadeesh 1990, Lehmann 1990.",
+    )
+
+
+def _lit_high_proximity(panel: P.Panel, features: P.FeatureSet) -> F.Formula:
+    """K2: buy the 20 names closest to their trailing 120-session high, hold 20."""
+    return F.Formula(
+        name="lit-high-proximity",
+        components=[F.Component("lit_hi", _high_proximity_values(panel, 120), +1, 120)],
+        horizon=20, top_k=20, free_parameters=2,
+        notes="close / max(close, 120). George & Hwang 2004 (52-week high), window shortened to fit the data.",
+    )
+
+
+def _lit_liquidity(panel: P.Panel, features: P.FeatureSet) -> F.Formula:
+    """K3: buy the 20 highest 20-session dollar volumes, hold 20."""
+    return F.Formula(
+        name="lit-liquidity",
+        components=[F.Component("lit_adv", _dollar_volume_values(panel, 20), +1, 20)],
+        horizon=20, top_k=20, free_parameters=2,
+        notes="ADV20. Direction from F-20260927-03 (read 2021+); a large-cap tilt, disclosed as such.",
+    )
+
+
+# --------------------------------------------------------------------------
+# F-20261004-11: fundamental quality, pre-registered in
+# out/20261004-quality-factor/PREREGISTRATION.md before any panel was built.
+# --------------------------------------------------------------------------
+
+_RATIO_CACHE: dict = {}
+
+
+def _quality_ratios(panel: P.Panel) -> dict:
+    key = (id(panel), len(panel.sessions), len(panel.symbols))
+    if key not in _RATIO_CACHE:
+        from research.src import fundamentals as FD
+
+        fp = FD.fundamental_panel(panel.sessions, panel.symbols)
+        print(f"fundamental coverage (any session): {fp.coverage}", flush=True)
+        _RATIO_CACHE.clear()
+        _RATIO_CACHE[key] = FD.ratios(fp)
+    return _RATIO_CACHE[key]
+
+
+def _lit_gross_profitability(panel: P.Panel, features: P.FeatureSet) -> F.Formula:
+    """Q1: Novy-Marx gross profits / total assets, latest 10-K, 10-day hold."""
+    r = _quality_ratios(panel)
+    return F.Formula(
+        name="lit-gross-profitability",
+        components=[F.Component("gpa", r["gpa"], +1, 0)],
+        horizon=10, top_k=20, free_parameters=2,
+        notes="GP/A from the newest 10-K accepted before the session (Novy-Marx 2013).",
+    )
+
+
+def _lit_quality_composite(panel: P.Panel, features: P.FeatureSet) -> F.Formula:
+    """Q2: equal-weight GP/A, CFO/A and low Liabilities/A, 10-day hold."""
+    r = _quality_ratios(panel)
+    return F.Formula(
+        name="lit-quality-composite",
+        components=[
+            F.Component("gpa", r["gpa"], +1, 0),
+            F.Component("cfoa", r["cfoa"], +1, 0),
+            F.Component("lev", r["lev"], -1, 0),
+        ],
+        horizon=10, top_k=20, free_parameters=4,
+        notes="screen-alternatives 2026-09-29 proposal, cross-sectional instead of sector percentiles.",
+    )
+
+
+for _name in ("lit-gross-profitability", "lit-quality-composite"):
+    S.COMPLETE_CASE.add(_name)
+    S.HORIZON_SWEEPS[_name] = (5, 10, 20)
+
+
 def register_all() -> None:
     for builder in (
         _long_baseline,
@@ -458,6 +588,11 @@ def register_all() -> None:
         _d70_production,
         _d55_production,
         _d55_momentum,
+        _lit_reversal,
+        _lit_high_proximity,
+        _lit_liquidity,
+        _lit_gross_profitability,
+        _lit_quality_composite,
     ):
         S.register(builder.__name__.lstrip("_").replace("_", "-"), builder)
 

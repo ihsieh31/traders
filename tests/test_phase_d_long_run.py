@@ -1561,3 +1561,46 @@ class FinalReportMathTest(IsolatedTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExclusionRoundResumeTest(IsolatedTest):
+    def test_partial_round_reuses_frozen_pool_and_sends_factors_to_graph(self):
+        from tradingagents.screening.metrics import SymbolFeatures
+        from tradingagents.screening.selection_store import SelectionStore
+        cfg = _valid_cfg(screening_provider=None, screening_model=None)
+        runtime = lr.build_runtime_config(cfg)
+        journal = lr.new_round_journal(SESSION_A, ['AAA'])
+        journal['status'] = 'RUNNING'
+        factor = SymbolFeatures('AAA', 100, 30_000_000, .01, .03, .1, .2, 1, .02).factor_row()
+        context = {'as_of': SESSION_A, 'method': 'exclusion', 'rows': {'AAA': factor}}
+        journal['screening'] = {'method': 'exclusion', 'deep_analysis_set': ['AAA'],
+                                'config_fingerprint': SelectionStore.config_fingerprint(runtime, None),
+                                'factor_context': context}
+        lr.save_round_journal('frozen-exclusion', journal)
+        captured = []
+        deps, _, graph = _deps(symbols=('AAA',),
+                              screening_fn=lambda *_a, **_k: self.fail('resume must not rescan or add candidates'))
+        deps.graph_factory = lambda config: captured.append(config) or graph
+        result = lr.run_daily_round(run_id='frozen-exclusion', session_date=SESSION_A,
+                                    long_cfg=cfg, runtime=runtime, deps=deps)
+        self.assertEqual(result['status'], 'COMPLETED')
+        self.assertEqual(graph.calls, [('AAA', SESSION_A)])
+        self.assertEqual(captured[0]['_screening_context'], context)
+        self.assertEqual(list(result['symbols']), ['AAA'])
+
+    def test_frozen_round_cannot_resume_above_stock_budget(self):
+        from tradingagents.screening.selection_store import SelectionStore
+        cfg = _valid_cfg()
+        runtime = lr.build_runtime_config(cfg)
+        names = [f'T{i:02d}' for i in range(21)]
+        journal = lr.new_round_journal(SESSION_A, names)
+        journal['status'] = 'RUNNING'
+        journal['screening'] = {'method': 'exclusion', 'deep_analysis_set': names,
+                                'config_fingerprint': SelectionStore.config_fingerprint(runtime, None)}
+        lr.save_round_journal('too-many', journal)
+        deps, _, graph = _deps(symbols=names)
+        with self.assertRaises(lr.LongRunStop) as error:
+            lr.run_daily_round(run_id='too-many', session_date=SESSION_A,
+                               long_cfg=cfg, runtime=runtime, deps=deps)
+        self.assertEqual(error.exception.code, 'STATE_CORRUPT')
+        self.assertEqual(graph.calls, [])

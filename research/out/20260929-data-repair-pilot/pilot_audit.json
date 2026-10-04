@@ -1,0 +1,2561 @@
+[
+  {
+    "adsh": "0001437749-18-001990",
+    "symbol": "ULBI",
+    "cik": "875657",
+    "accepted": "2018-02-08 07:32:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:LongTermDebt",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:LongTermDebt",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "BusinessAcquisitionsProFormaRevenue": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "ResearchAndDevelopmentRevenue": "0001437749-18-001990"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0000062996-18-000015",
+    "symbol": "MAS",
+    "cik": "62996",
+    "accepted": "2018-02-08 16:47:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4",
+      "LongTermDebt|20161231|0",
+      "LongTermDebt|20171231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2016",
+      "Depreciation": "us-gaap/2016",
+      "DepreciationDepletionAndAmortization": "us-gaap/2016",
+      "IncreaseDecreaseInReceivables": "us-gaap/2016",
+      "LongTermDebt": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2016",
+      "LongTermDebtNoncurrent": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2016",
+      "OtherLongTermDebt": "us-gaap/2016",
+      "ReceivablesNetCurrent": "us-gaap/2016",
+      "RepaymentsOfLongTermDebt": "us-gaap/2016",
+      "SalesRevenueNet": "us-gaap/2016",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2016",
+      "AllowancesAccountsReceivableCurrent": "0000062996-18-000015",
+      "DepreciationDepletionAndAmortizationExcludingDiscontinuedOperations": "0000062996-18-000015"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 116000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 112114,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 116000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 124000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 112115,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 124000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 116000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 112116,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 116000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20161231|0": {
+        "value": 2997000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 210613,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2016",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 2997000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20171231|0": {
+        "value": 3085000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 210614,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2016",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 3085000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001058090-18-000018",
+    "symbol": "CMG",
+    "cik": "1058090",
+    "accepted": "2018-02-08 17:18:00.0",
+    "before_status": "unavailable",
+    "before_reason": "no_comparable_previous_year",
+    "after_status": "unavailable",
+    "after_reason": "no_comparable_previous_year",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "DeferredRevenue": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "FoodAndBeverageRevenue": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesPayableNetOfIncomeTaxesReceivable": "us-gaap/2017",
+      "RevenueRecognizedGiftCardBreakage": "0001058090-18-000018"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001193125-18-045748",
+    "symbol": "MD",
+    "cik": "893949",
+    "accepted": "2018-02-14 16:55:00.0",
+    "before_status": "unavailable",
+    "before_reason": "no_comparable_previous_year",
+    "after_status": "unavailable",
+    "after_reason": "no_comparable_previous_year",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4",
+      "LongTermDebt|20161231|0",
+      "LongTermDebt|20171231|0",
+      "LongTermDebtCurrent|20161231|0",
+      "LongTermDebtNoncurrent|20161231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableGrossCurrent": "us-gaap/2017",
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "HealthCareOrganizationRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "InsuranceSettlementsReceivable": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent": "us-gaap/2017",
+      "LongTermDebtCurrent": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "ProceedsFromIssuanceOfSeniorLongTermDebt": "us-gaap/2017",
+      "HealthOrganizationRevenueGross": "0001193125-18-045748",
+      "HospitalContractAdministrativeFees": "0001193125-18-045748",
+      "LongTermDebtAndCapitalLeaseObligationsExcludingLongTermLineOfCredit": "0001193125-18-045748"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 22200000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1094451,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 22200000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 29000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1094452,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 29000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 33900000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1094453,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 33900000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20161231|0": {
+        "value": 1698744000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1794822,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 1698744000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20171231|0": {
+        "value": 1846133000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1794823,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 1846133000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebtCurrent|20161231|0": {
+        "value": 20000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1807175,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "LongTermDebtCurrent",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 20000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebtNoncurrent|20161231|0": {
+        "value": 1678744000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1818900,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "LongTermDebtNoncurrent",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 1678744000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0000833640-18-000067",
+    "symbol": "POWI",
+    "cik": "833640",
+    "accepted": "2018-02-14 17:24:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableGrossCurrent": "us-gaap/2016",
+      "AccountsReceivableNetCurrent": "us-gaap/2016",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivablePeriodIncreaseDecrease": "us-gaap/2016",
+      "CostOfRevenue": "us-gaap/2016",
+      "Depreciation": "us-gaap/2016",
+      "GeneralAndAdministrativeExpense": "us-gaap/2016",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2016",
+      "InterestReceivableCurrent": "us-gaap/2016",
+      "SalesRevenueNet": "us-gaap/2016",
+      "SellingAndMarketingExpense": "us-gaap/2016"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001320461-18-000004",
+    "symbol": "CPS",
+    "cik": "1320461",
+    "accepted": "2018-02-20 09:31:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:LongTermDebt",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:LongTermDebt",
+    "added_keys": [
+      "Revenues|20151231|4",
+      "Revenues|20161231|4",
+      "Revenues|20171231|4"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "GainLossOnSaleOfAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtFairValue": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "RevenueFromRelatedParties": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SalesRevenueGoodsNet": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "AmountOfAccountReceivableFactoringWithoutRecourse": "0001320461-18-000004",
+      "AmountOfAccountReceivableFactoringWithRecourse": "0001320461-18-000004",
+      "LossOnSaleOfAccountsReceivableWithoutRecourse": "0001320461-18-000004",
+      "LossOnSaleOfAccountsReceivableWithRecourse": "0001320461-18-000004",
+      "ToolingReceivableCurrent": "0001320461-18-000004"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Revenues|20151231|4": {
+        "value": 0.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 2636360,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Revenues",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 0.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Revenues|20161231|4": {
+        "value": 0.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 2636366,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Revenues",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 0.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Revenues|20171231|4": {
+        "value": 0.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 2636372,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Revenues",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 0.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001280058-18-000007",
+    "symbol": "BLKB",
+    "cik": "1280058",
+    "accepted": "2018-02-20 17:11:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4",
+      "LongTermDebt|20171231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "DeferredRevenue": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DeferredRevenueNoncurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "LongTermDebtCurrent": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalRemainderOfFiscalYear": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "MaintenanceRevenue": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SellingAndMarketingExpense": "us-gaap/2017",
+      "SubscriptionRevenue": "us-gaap/2017",
+      "TechnologyServicesRevenue": "us-gaap/2017",
+      "ChangeInCustomerFundsReceivable": "0001280058-18-000007",
+      "TaxesPrepaidAndReceivableCurrentAndLongTerm": "0001280058-18-000007"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 18500000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1091778,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 18500000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 19800000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1091779,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 19800000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 17800000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1091780,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 17800000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20171231|0": {
+        "value": 440326000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1801182,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 440326000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001558370-18-000999",
+    "symbol": "ECL",
+    "cik": "31462",
+    "accepted": "2018-02-23 08:46:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:LongTermDebt",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:LongTermDebt",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2016",
+      "AccountsReceivableGross": "us-gaap/2016",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2016",
+      "Depreciation": "us-gaap/2016",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2016",
+      "IncomeTaxesReceivable": "us-gaap/2016",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2016",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2016",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2016",
+      "RepaymentsOfLongTermDebt": "us-gaap/2016",
+      "SalesRevenueNet": "us-gaap/2016",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2016"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001193125-18-055956",
+    "symbol": "GRC",
+    "cik": "42682",
+    "accepted": "2018-02-23 16:11:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:LongTermDebt",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInReceivables": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "DeferredTaxLiabilitiesDepreciationAndAmortization": "0001193125-18-055956"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 13800000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1092931,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 13800000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 13800000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1092932,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 13800000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 13500000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1092933,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 13500000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001493152-18-002569",
+    "symbol": "NEPH",
+    "cik": "1196298",
+    "accepted": "2018-02-26 07:31:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:LongTermDebt",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:LongTermDebt",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableWriteOffs": "us-gaap/2017",
+      "CapitalLeasesFutureMinimumPaymentsReceivable": "us-gaap/2017",
+      "CapitalLeasesFutureMinimumPaymentsReceivableCurrent": "us-gaap/2017",
+      "CapitalLeasesFutureMinimumPaymentsReceivableInThreeYears": "us-gaap/2017",
+      "CapitalLeasesFutureMinimumPaymentsReceivableInTwoYears": "us-gaap/2017",
+      "DeferredRevenue": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DeferredRevenueNoncurrent": "us-gaap/2017",
+      "DeferredRevenueRevenueRecognized1": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "LicensesRevenue": "us-gaap/2017",
+      "SalesRevenueGoodsNet": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "UnsecuredLongTermDebt": "us-gaap/2017",
+      "NoncashInvestmentInLeaseReceivableNet": "0001493152-18-002569"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001164863-18-000009",
+    "symbol": "NPO",
+    "cik": "1164863",
+    "accepted": "2018-02-26 16:46:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "added_keys": [
+      "LongTermDebt|20161231|0",
+      "LongTermDebt|20171231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsAndNotesReceivableNet": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "BusinessAcquisitionsProFormaRevenue": "us-gaap/2017",
+      "BusinessCombinationRecognizedIdentifiableAssetsAcquiredAndLiabilitiesAssumedCurrentAssetsReceivables": "us-gaap/2017",
+      "ContractReceivableRetainageDueAfterOneYear": "us-gaap/2017",
+      "ContractReceivableRetainageDueOneYearOrLess": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "DisposalGroupIncludingDiscontinuedOperationRevenue": "us-gaap/2017",
+      "IncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "LongTermDebtCurrent": "us-gaap/2017",
+      "LongTermDebtFairValue": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "LossContingencyReceivableProceeds": "us-gaap/2017",
+      "PostconfirmationReceivablesNet": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "DeferredTaxAssetDeferredIncomeTaxesandIncomeTaxReceivable": "0001164863-18-000009",
+      "DeferredTaxLiabilitiesDepreciationAndAmortization": "0001164863-18-000009",
+      "InsurancePolicyLimitAndReceivablesRemainingAmount": "0001164863-18-000009"
+    },
+    "mscore": null,
+    "added_facts": {
+      "LongTermDebt|20161231|0": {
+        "value": 425000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1792419,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 425000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20171231|0": {
+        "value": 618500000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1792422,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 618500000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001620533-18-000015",
+    "symbol": "SHAK",
+    "cik": "1620533",
+    "accepted": "2018-02-26 17:20:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {},
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001581990-18-000005",
+    "symbol": "PAGP",
+    "cik": "1581990",
+    "accepted": "2018-02-26 19:54:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "EquityMethodInvestmentSummarizedFinancialInformationRevenue": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsAndOtherReceivables": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "OtherLongTermDebtNoncurrent": "us-gaap/2017",
+      "ProceedsFromIssuanceOfSeniorLongTermDebt": "us-gaap/2017",
+      "ReceivablesNetCurrent": "us-gaap/2017",
+      "RecordedThirdPartyEnvironmentalRecoveriesReceivable": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "CashReceivedRelatedToSalesOfLinefillAndBaseGas": "0001581990-18-000005",
+      "DepreciationAndAmortizationOfUnconsolidatedEntities": "0001581990-18-000005",
+      "NetCashPaidReceivedForTerminatedHedgingInstruments": "0001581990-18-000005",
+      "PipelineTariffActivitiesTruckingAndRelatedRevenues": "0001581990-18-000005",
+      "SalesAndRelatedRevenues": "0001581990-18-000005",
+      "StandbyLettersOfCreditReceived": "0001581990-18-000005",
+      "StorageTerminallingProcessingAndRelatedRevenues": "0001581990-18-000005"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 381000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1095359,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 381000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 471000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1095360,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 471000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 465000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1095361,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 465000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001144204-18-011155",
+    "symbol": "STLD",
+    "cik": "1022671",
+    "accepted": "2018-02-27 14:41:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_or_conflicting:NetIncomeLoss",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4",
+      "LongTermDebt|20161231|0",
+      "LongTermDebt|20171231|0",
+      "SellingGeneralAndAdministrativeExpense|20151231|4",
+      "SellingGeneralAndAdministrativeExpense|20161231|4",
+      "SellingGeneralAndAdministrativeExpense|20171231|4"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2016",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2016",
+      "Depreciation": "us-gaap/2016",
+      "DepreciationDepletionAndAmortization": "us-gaap/2016",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2016",
+      "IncreaseDecreaseInIncomeTaxesPayableNetOfIncomeTaxesReceivable": "us-gaap/2016",
+      "LongTermDebtFairValue": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2016",
+      "LongTermDebt": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2016",
+      "LongTermDebtNoncurrent": "us-gaap/2016",
+      "LongTermDebtCurrent": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2016",
+      "OtherSellingGeneralAndAdministrativeExpense": "us-gaap/2016",
+      "RevenueFromRelatedParties": "us-gaap/2016",
+      "SalesRevenueGoodsNet": "us-gaap/2016",
+      "SalesRevenueNet": "us-gaap/2016",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2016",
+      "AccountsReceivableNetCurrentIncludingRelatedPartyReceivables": "0001144204-18-011155"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 263200000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 112438,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 263200000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 260600000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 112439,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 260600000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 263700000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 112440,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 263700000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20161231|0": {
+        "value": 2356826000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 211458,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2016",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 2356826000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20171231|0": {
+        "value": 2381940000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 211459,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2016",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 2381940000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "SellingGeneralAndAdministrativeExpense|20151231|4": {
+        "value": 376002000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 328423,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "SellingGeneralAndAdministrativeExpense",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 376002000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "SellingGeneralAndAdministrativeExpense|20161231|4": {
+        "value": 474059000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 328428,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "SellingGeneralAndAdministrativeExpense",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 474059000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "SellingGeneralAndAdministrativeExpense|20171231|4": {
+        "value": 515133000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 328433,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "SellingGeneralAndAdministrativeExpense",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 515133000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0000920148-18-000024",
+    "symbol": "LH",
+    "cik": "920148",
+    "accepted": "2018-02-27 15:06:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:Depreciation",
+    "added_keys": [
+      "LongTermDebt|20171231|0",
+      "LongTermDebtCurrent|20171231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableGrossCurrent": "us-gaap/2017",
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "BusinessCombinationRecognizedIdentifiableAssetsAcquiredAndLiabilitiesAssumedCurrentAssetsReceivables": "us-gaap/2017",
+      "BusinessCombinationRecognizedIdentifiableAssetsAcquiredAndLiabilitiesAssumedCurrentLiabilitiesDeferredRevenue": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "EquityMethodInvestmentSummarizedFinancialInformationRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInUnbilledReceivables": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "LongTermDebtCurrent": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextRollingTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "OtherLongTermDebt": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "ProceedsFromIssuanceOfOtherLongTermDebt": "us-gaap/2017",
+      "ReimbursementRevenue": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "UnbilledContractsReceivable": "us-gaap/2017",
+      "UnbilledReceivablesCurrent": "us-gaap/2017",
+      "ConcentrationRiskAccountsReceivableMedicareAndMedicaid": "0000920148-18-000024",
+      "DepreciationandAmortizationofIntangibleAssets": "0000920148-18-000024",
+      "DepreciationAndAmortizationOfLeasedAssets": "0000920148-18-000024",
+      "SoftwareDepreciation": "0000920148-18-000024"
+    },
+    "mscore": null,
+    "added_facts": {
+      "LongTermDebt|20171231|0": {
+        "value": 6696000000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1793428,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 6696000000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebtCurrent|20171231|0": {
+        "value": 409200000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 1805409,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebtCurrent",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 409200000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001628280-18-002457",
+    "symbol": "WKC",
+    "cik": "789460",
+    "accepted": "2018-02-28 14:48:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4"
+    ],
+    "conflicting_keys": [
+      "AccountsReceivableNetCurrent|20171231|0",
+      "AccountsReceivableNetCurrent|20161231|0"
+    ],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "ConsiderationReceivedForBeneficialInterestObtainedForTransferringFinancialAsset": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "TradeReceivablesHeldForSaleReconciliationToCashFlowDeductionsFromHeldForSale": "us-gaap/2017",
+      "FeesAndInterestPaidUnderReceivablesPurchaseAgreements": "0001628280-18-002457",
+      "RestructuringChargesWriteDownOfReceivables": "0001628280-18-002457",
+      "TradeReceivablesCashCollectedUnderAgreementAmount": "0001628280-18-002457",
+      "TradeReceivableSoldUnderAgreementAmount": "0001628280-18-002457"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 35100000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 4676433,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 35100000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 42500000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 4676434,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 42500000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 44100000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 4676435,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 44100000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {
+      "AccountsReceivableNetCurrent|20171231|0": [
+        {
+          "source": "face",
+          "file": "num.txt",
+          "line": 995545,
+          "raw_date": "20171231",
+          "value": 2705600000.0
+        },
+        {
+          "source": "notes",
+          "file": "num.tsv",
+          "line": 3982501,
+          "raw_date": "20171231",
+          "actual_date": "20171231",
+          "tag": "AccountsReceivableNetCurrent",
+          "version": "us-gaap/2017",
+          "qtrs": "0",
+          "uom": "USD",
+          "dimh": "0x00000000",
+          "dimn": "0",
+          "coreg": "",
+          "durp": "0.0",
+          "datp": "0.0",
+          "value": 2705600000.0,
+          "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+        },
+        {
+          "source": "notes",
+          "file": "num.tsv",
+          "line": 3982502,
+          "raw_date": "20171231",
+          "actual_date": "20171231",
+          "tag": "AccountsReceivableNetCurrent",
+          "version": "us-gaap/2017",
+          "qtrs": "0",
+          "uom": "USD",
+          "dimh": "0x00000000",
+          "dimn": "0",
+          "coreg": "",
+          "durp": "0.0",
+          "datp": "0.0",
+          "value": 2705600000.0,
+          "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+        },
+        {
+          "source": "notes",
+          "file": "num.tsv",
+          "line": 3982503,
+          "raw_date": "20171231",
+          "actual_date": "20171231",
+          "tag": "AccountsReceivableNetCurrent",
+          "version": "us-gaap/2017",
+          "qtrs": "0",
+          "uom": "USD",
+          "dimh": "0x00000000",
+          "dimn": "0",
+          "coreg": "",
+          "durp": "0.0",
+          "datp": "0.0",
+          "value": 2700000000.0,
+          "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+        }
+      ],
+      "AccountsReceivableNetCurrent|20161231|0": [
+        {
+          "source": "face",
+          "file": "num.txt",
+          "line": 1395765,
+          "raw_date": "20161231",
+          "value": 2344000000.0
+        },
+        {
+          "source": "notes",
+          "file": "num.tsv",
+          "line": 3982498,
+          "raw_date": "20161231",
+          "actual_date": "20161231",
+          "tag": "AccountsReceivableNetCurrent",
+          "version": "us-gaap/2017",
+          "qtrs": "0",
+          "uom": "USD",
+          "dimh": "0x00000000",
+          "dimn": "0",
+          "coreg": "",
+          "durp": "0.0",
+          "datp": "0.0",
+          "value": 2344000000.0,
+          "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+        },
+        {
+          "source": "notes",
+          "file": "num.tsv",
+          "line": 3982499,
+          "raw_date": "20161231",
+          "actual_date": "20161231",
+          "tag": "AccountsReceivableNetCurrent",
+          "version": "us-gaap/2017",
+          "qtrs": "0",
+          "uom": "USD",
+          "dimh": "0x00000000",
+          "dimn": "0",
+          "coreg": "",
+          "durp": "0.0",
+          "datp": "0.0",
+          "value": 2344000000.0,
+          "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+        },
+        {
+          "source": "notes",
+          "file": "num.tsv",
+          "line": 3982500,
+          "raw_date": "20161231",
+          "actual_date": "20161231",
+          "tag": "AccountsReceivableNetCurrent",
+          "version": "us-gaap/2017",
+          "qtrs": "0",
+          "uom": "USD",
+          "dimh": "0x00000000",
+          "dimn": "0",
+          "coreg": "",
+          "durp": "0.0",
+          "datp": "0.0",
+          "value": 2300000000.0,
+          "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+        }
+      ]
+    }
+  },
+  {
+    "adsh": "0001552000-18-000020",
+    "symbol": "MPLX",
+    "cik": "1552000",
+    "accepted": "2018-02-28 15:43:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccountsReceivableRelatedPartiesCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "BusinessAcquisitionsProFormaRevenue": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DeferredRevenueNoncurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "EquityMethodInvestmentSummarizedFinancialInformationRevenue": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivable": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivableCurrent": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivableInFiveYears": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivableInFourYears": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivableInThreeYears": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivableInTwoYears": "us-gaap/2017",
+      "OperatingLeasesFutureMinimumPaymentsReceivableThereafter": "us-gaap/2017",
+      "OperatingLeasesIncomeStatementLeaseRevenue": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "PropertySubjectToOrAvailableForOperatingLeaseAccumulatedDepreciation": "us-gaap/2017",
+      "RelatedPartyTransactionOtherRevenuesFromTransactionsWithRelatedParty": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "RevenueFromRelatedParties": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SalesRevenueGoodsNet": "us-gaap/2017",
+      "SalesRevenueServicesNet": "us-gaap/2017",
+      "DeferredRevenueCurrentRelatedParties": "0001552000-18-000020",
+      "DeferredRevenueNoncurrentRelatedParties": "0001552000-18-000020",
+      "OperatingLeaseIncomeStatementLeaseRevenueRelatedParties": "0001552000-18-000020",
+      "OperatingLeasesOfLessorContingentRentalsReceived": "0001552000-18-000020",
+      "SalesRevenueGoodsRelatedParties": "0001552000-18-000020",
+      "SalesRevenueServicesfromRelatedParties": "0001552000-18-000020"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0000874015-18-000047",
+    "symbol": "IONS",
+    "cik": "874015",
+    "accepted": "2018-02-28 16:27:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DeferredRevenueNoncurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesPayableNetOfIncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesReceivable": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent": "us-gaap/2017",
+      "ReceivablesLongTermContractsOrPrograms": "us-gaap/2017",
+      "RepaymentsOfLongTermDebtAndCapitalSecurities": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "RoyaltyRevenue": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInContractsReceivableNet": "0000874015-18-000047",
+      "LicensingAndOtherRoyaltyRevenue": "0000874015-18-000047",
+      "LicensingAndRoyaltyRevenue": "0000874015-18-000047",
+      "LongTermDebtAndOtherObligations": "0000874015-18-000047",
+      "LongTermDebtAndOtherObligationsNoncurrent": "0000874015-18-000047",
+      "ResearchAndDevelopmentRevenueUnderCollaborativeAgreements": "0000874015-18-000047"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001193125-18-067229",
+    "symbol": "WSO",
+    "cik": "105016",
+    "accepted": "2018-03-01 16:23:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:Depreciation",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent": "us-gaap/2017",
+      "OtherLongTermDebtNoncurrent": "us-gaap/2017",
+      "ProceedsFromRepaymentsOfOtherLongTermDebt": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001437749-18-003668",
+    "symbol": "CABO",
+    "cik": "1632127",
+    "accepted": "2018-03-01 17:03:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:CostOfGoodsAndServicesSold/CostOfRevenue/CostOfGoodsSold",
+    "added_keys": [
+      "AccountsReceivableNetCurrent|20161231|0",
+      "AccountsReceivableNetCurrent|20171231|0",
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4",
+      "LongTermDebt|20171231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsAndOtherReceivablesNetCurrent": "us-gaap/2017",
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AdvertisingRevenue": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableWriteOffs": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "IncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesReceivable": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligations": "us-gaap/2017",
+      "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities": "us-gaap/2017",
+      "LongTermDebtCurrent": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "OtherReceivablesNetCurrent": "us-gaap/2017",
+      "OtherSalesRevenueNet": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "OperatingExpensesExcludingDepreciationAndAmortization": "0001437749-18-003668"
+    },
+    "mscore": null,
+    "added_facts": {
+      "AccountsReceivableNetCurrent|20161231|0": {
+        "value": 29447000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 3982915,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "AccountsReceivableNetCurrent",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 29447000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "AccountsReceivableNetCurrent|20171231|0": {
+        "value": 47404000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 3982916,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "AccountsReceivableNetCurrent",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 47404000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20151231|4": {
+        "value": 144400000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 4677552,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 144400000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 147700000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 4677553,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 147700000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 173600000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 4677554,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 173600000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "LongTermDebt|20171231|0": {
+        "value": 1194642000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 5508616,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 1194642000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0000108985-18-000032",
+    "symbol": "YORW",
+    "cik": "108985",
+    "accepted": "2018-03-06 14:25:00.0",
+    "before_status": "unavailable",
+    "before_reason": "no_comparable_previous_year",
+    "after_status": "unavailable",
+    "after_reason": "no_comparable_previous_year",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsAndOtherReceivables": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInNotesReceivables": "us-gaap/2017",
+      "LongTermDebtCurrent": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "NotesAndLoansReceivableNetNoncurrent": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "PublicUtilitiesPropertyPlantAndEquipmentAccumulatedDepreciation": "us-gaap/2017",
+      "RegulatedOperatingRevenue": "us-gaap/2017",
+      "RegulatedOperatingRevenueOther": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "UnbilledReceivablesCurrent": "us-gaap/2017",
+      "UtilitiesOperatingExpenseDepreciationAndAmortization": "us-gaap/2017",
+      "DeferredTaxAssetsRevenueGrossUpToReturnTemporaryDifferenceInRates": "0000108985-18-000032",
+      "DeferredTaxLiabilitiesRevenueGrossUpToRecoverTemporaryDifferenceInRates": "0000108985-18-000032",
+      "ExcessAccumulatedDeferredIncomeTaxesOnAcceleratedDepreciation": "0000108985-18-000032",
+      "InterestIncomeOnNotesReceivable": "0000108985-18-000032",
+      "RegulatedOperatingRevenueCommercialAndIndustrial": "0000108985-18-000032",
+      "RegulatedOperatingRevenueResidential": "0000108985-18-000032"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001144204-18-013053",
+    "symbol": "PLX",
+    "cik": "1006281",
+    "accepted": "2018-03-06 16:08:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:LongTermDebt",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:LongTermDebt",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DeferredRevenueNoncurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DisposalGroupIncludingDiscontinuedOperationGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "DisposalGroupIncludingDiscontinuedOperationRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "DisposalGroupIncludingDiscontinuedOperationGrantsAndReimbursementsReceivedOrReceivable": "0001144204-18-013053",
+      "GrantsAndReimbursementsReceivedOrReceivable": "0001144204-18-013053"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001437749-18-004044",
+    "symbol": "TCX",
+    "cik": "909494",
+    "accepted": "2018-03-06 17:04:00.0",
+    "before_status": "unavailable",
+    "before_reason": "no_comparable_previous_year",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [
+      "LongTermDebt|20171231|0",
+      "SalesRevenueNet|20171231|4",
+      "SalesRevenueNet|20161231|4",
+      "SalesRevenueNet|20151231|4"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "CostOfServicesDepreciation": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "DeferredRevenueNoncurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesReceivable": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2017",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2017",
+      "OtherLongTermDebtCurrent": "us-gaap/2017",
+      "RevenueFromRelatedParties": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SalesRevenueServicesNet": "us-gaap/2017",
+      "SellingAndMarketingExpense": "us-gaap/2017",
+      "PropertyPlantAndEquipmentFullyDepreciatedWritedown": "0001437749-18-004044",
+      "SharesReceivedInConnectionWithSharebasedCompensationPricePerShare": "0001437749-18-004044",
+      "SharesReceivedInConnectionWithShareBasedCompensationValue": "0001437749-18-004044"
+    },
+    "mscore": null,
+    "added_facts": {
+      "LongTermDebt|20171231|0": {
+        "value": 77753638.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 5508191,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2017",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 77753638.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "SalesRevenueNet|20171231|4": {
+        "value": 329420741.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 6276091,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "SalesRevenueNet",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 329420741.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "SalesRevenueNet|20161231|4": {
+        "value": 189818932.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 6276094,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "SalesRevenueNet",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 189818932.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "SalesRevenueNet|20151231|4": {
+        "value": 171686779.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 6276097,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "SalesRevenueNet",
+            "version": "us-gaap/2017",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 171686779.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001564590-18-004568",
+    "symbol": "BBSI",
+    "cik": "902791",
+    "accepted": "2018-03-06 17:25:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:Depreciation",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableWriteOffs": "us-gaap/2017",
+      "CostOfRevenue": "us-gaap/2017",
+      "DepreciationAndAmortization": "us-gaap/2017",
+      "IncomeTaxesReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInIncomeTaxesReceivable": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "StaffingServicesRevenue": "0001564590-18-004568"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001709164-18-000011",
+    "symbol": "HBB",
+    "cik": "1709164",
+    "accepted": "2018-03-07 17:15:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:Depreciation",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNet": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "LongTermDebtNoncurrent": "us-gaap/2017",
+      "Revenues": "us-gaap/2017",
+      "SellingGeneralAndAdministrativeExpense": "us-gaap/2017",
+      "DepreciationDepletionAndAmortizationProduction": "0001709164-18-000011"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0000034067-18-000009",
+    "symbol": "BOOM",
+    "cik": "34067",
+    "accepted": "2018-03-08 17:01:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingExpense": "us-gaap/2017"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001558370-18-002060",
+    "symbol": "ACLS",
+    "cik": "1113232",
+    "accepted": "2018-03-14 16:32:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [
+      "Depreciation|20151231|4",
+      "Depreciation|20161231|4",
+      "Depreciation|20171231|4"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableGrossCurrent": "us-gaap/2016",
+      "AccountsReceivableNetCurrent": "us-gaap/2016",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2016",
+      "DeferredRevenueNoncurrent": "us-gaap/2016",
+      "DeferredRevenueCurrent": "us-gaap/2016",
+      "DefinedBenefitPlanAdministrationExpenses": "us-gaap/2016",
+      "Depreciation": "us-gaap/2016",
+      "DepreciationDepletionAndAmortization": "us-gaap/2016",
+      "GeneralAndAdministrativeExpense": "us-gaap/2016",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2016",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2016",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2016",
+      "RepaymentsOfLongTermDebt": "us-gaap/2016",
+      "SalesRevenueGoodsNet": "us-gaap/2016",
+      "SalesRevenueServicesNet": "us-gaap/2016",
+      "SalesRevenueNet": "us-gaap/2016",
+      "SellingAndMarketingExpense": "us-gaap/2016"
+    },
+    "mscore": null,
+    "added_facts": {
+      "Depreciation|20151231|4": {
+        "value": 2400000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 3701872,
+            "raw_date": "20151231",
+            "actual_date": "20151231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 2400000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20161231|4": {
+        "value": 1800000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 3701874,
+            "raw_date": "20161231",
+            "actual_date": "20161231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 1800000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      },
+      "Depreciation|20171231|4": {
+        "value": 2200000.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 3701876,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "Depreciation",
+            "version": "us-gaap/2016",
+            "qtrs": "4",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.01095891",
+            "datp": "0.0",
+            "value": 2200000.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001130713-18-000019",
+    "symbol": "NXH",
+    "cik": "1130713",
+    "accepted": "2018-03-15 16:14:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:SellingGeneralAndAdministrativeExpense",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableGrossCurrent": "us-gaap/2017",
+      "AccountsReceivableNetCurrent": "us-gaap/2017",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2017",
+      "AllowanceForDoubtfulAccountsReceivableCurrent": "us-gaap/2017",
+      "DeferredRevenueCurrent": "us-gaap/2017",
+      "Depreciation": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2017",
+      "LongTermDebt": "us-gaap/2017",
+      "OtherLongTermDebtCurrent": "us-gaap/2017",
+      "OtherLongTermDebtNoncurrent": "us-gaap/2017",
+      "PaymentsForProceedsFromLoansReceivable": "us-gaap/2017",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2017",
+      "ProceedsFromRepaymentsOfOtherLongTermDebt": "us-gaap/2017",
+      "RepaymentsOfLongTermDebt": "us-gaap/2017",
+      "RepaymentsOfOtherLongTermDebt": "us-gaap/2017",
+      "SalesRevenueNet": "us-gaap/2017",
+      "SellingAndMarketingExpense": "us-gaap/2017",
+      "OtherDepreciationAndAmortizationExpense": "0001130713-18-000019",
+      "PropertyPlantandEquipmentWriteoffofFullyDepreciatedAssets": "0001130713-18-000019",
+      "RetailDepreciationAndAmortizationExpense": "0001130713-18-000019"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001279569-18-000460",
+    "symbol": "THM",
+    "cik": "1134115",
+    "accepted": "2018-03-16 16:15:00.0",
+    "before_status": "unavailable",
+    "before_reason": "no_comparable_previous_year",
+    "after_status": "unavailable",
+    "after_reason": "no_comparable_previous_year",
+    "added_keys": [],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "DepreciationDepletionAndAmortization": "us-gaap/2017",
+      "GeneralAndAdministrativeExpense": "us-gaap/2017",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2017"
+    },
+    "mscore": null,
+    "added_facts": {},
+    "conflicting_facts": {}
+  },
+  {
+    "adsh": "0001606909-18-000033",
+    "symbol": "PANL",
+    "cik": "1606909",
+    "accepted": "2018-03-21 16:18:00.0",
+    "before_status": "unavailable",
+    "before_reason": "missing_pair:Depreciation",
+    "after_status": "unavailable",
+    "after_reason": "missing_pair:Depreciation",
+    "added_keys": [
+      "LongTermDebt|20171231|0"
+    ],
+    "conflicting_keys": [],
+    "available_related_tags": {
+      "AccountsReceivableNetCurrent": "us-gaap/2016",
+      "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivable": "us-gaap/2016",
+      "AllowanceForDoubtfulAccountsReceivableWriteOffs": "us-gaap/2016",
+      "CostOfServicesDepreciationAndAmortization": "us-gaap/2016",
+      "DeferredRevenueCurrent": "us-gaap/2016",
+      "DepreciationDepletionAndAmortization": "us-gaap/2016",
+      "GeneralAndAdministrativeExpense": "us-gaap/2016",
+      "IncreaseDecreaseInAccountsReceivable": "us-gaap/2016",
+      "IncreaseDecreaseInDeferredRevenue": "us-gaap/2016",
+      "LongTermDebtFairValue": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": "us-gaap/2016",
+      "LongTermDebt": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": "us-gaap/2016",
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": "us-gaap/2016",
+      "OtherLongTermDebtCurrent": "us-gaap/2016",
+      "ProceedsFromIssuanceOfLongTermDebt": "us-gaap/2016",
+      "RepaymentsOfLongTermDebt": "us-gaap/2016",
+      "Revenues": "us-gaap/2016",
+      "SecuredLongTermDebt": "us-gaap/2016",
+      "AccruedReceivable": "0001606909-18-000033",
+      "AccumulatedDepreciationDepletionAndAmortizationVesselImprovements": "0001606909-18-000033",
+      "CharterRevenue": "0001606909-18-000033",
+      "VoyageRevenue": "0001606909-18-000033"
+    },
+    "mscore": null,
+    "added_facts": {
+      "LongTermDebt|20171231|0": {
+        "value": 138464749.0,
+        "sources": [
+          {
+            "source": "notes",
+            "file": "num.tsv",
+            "line": 3812312,
+            "raw_date": "20171231",
+            "actual_date": "20171231",
+            "tag": "LongTermDebt",
+            "version": "us-gaap/2016",
+            "qtrs": "0",
+            "uom": "USD",
+            "dimh": "0x00000000",
+            "dimn": "0",
+            "coreg": "",
+            "durp": "0.0",
+            "datp": "0.0",
+            "value": 138464749.0,
+            "source_sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+          }
+        ]
+      }
+    },
+    "conflicting_facts": {}
+  }
+]

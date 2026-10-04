@@ -1,0 +1,19 @@
+{
+  "kind": "synthetic; not a live-market scan",
+  "input_symbols": 15,
+  "selected": 9,
+  "held_review_symbols": 3,
+  "deep_analysis_symbols": 12,
+  "llm_requests": 0,
+  "counts": {
+    "data_error": 3,
+    "data_gap": 2,
+    "risk_policy": 1,
+    "usable": 9
+  },
+  "shortfall": 11,
+  "cache_revalidated": true,
+  "frozen_ab_revalidated": true,
+  "selected_raw_price_windows": 9,
+  "snapshot": "/Users/zongen/Downloads/codex/tradingBuffett/research/out/20260929-data-trust/demo_cache/screening_snapshots/2026-09-04-e9b5d7f1059156212ba6e2dc60e09256d042e9288e19017ffe0a513722dcb11a.json"
+}

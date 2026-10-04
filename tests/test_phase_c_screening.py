@@ -108,7 +108,7 @@ def _base_config(**overrides):
     config = dict(DEFAULT_CONFIG)
     config.update(
         {
-            "auto_screening_enabled": True,
+            "auto_screening_enabled": True, "screening_method": "legacy",
             "screening_provider": "openai",
             "screening_model": "screen-fake",
             "screening_backend_url": None,
@@ -138,10 +138,13 @@ def _bars_df(sessions, closes, volumes):
                     session.year, session.month, session.day, 5, 0, tz="UTC"
                 ),
                 "close": close,
+                "open": close, "high": close, "low": close,
                 "volume": volume,
             }
         )
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    frame.attrs.update(source="fixture_bars", feed="sip", adjustment="split")
+    return frame
 
 
 def _session_closes(sessions, start=100.0, step=1.0):
@@ -156,7 +159,9 @@ def _healthy_bars(as_of=_AS_OF, n=61, start=100.0, step=1.0, volume=250_000.0):
 def _universe(symbols):
     return [
         {"symbol": s, "name": f"Company {s}", "exchange": "NASDAQ",
-         "market_cap": 1_000_000_000.0} for s in symbols
+         "market_cap": 1_000_000_000.0, "market_cap_source": "fixture_caps",
+         "asset_id": f"fixture-{s}", "identity_source": "fixture_assets",
+         "asset_class": "us_equity", "asset_status": "active", "tradable": True} for s in symbols
     ]
 
 
@@ -228,8 +233,7 @@ def _two_sided_screening_world():
             else:
                 closes = [100.0 + 2.5 * j for j in range(41)] + mixed_tail
                 volume = 250_000.0
-            universe.append({"symbol": symbol, "name": symbol, "exchange": "NASDAQ",
-                             "market_cap": 1_000_000_000.0})
+            universe.extend(_universe([symbol]))
             bars[symbol] = _bars_df(sessions, closes, volume)
     return universe, bars
 
@@ -352,7 +356,7 @@ class ScreeningRoleConfigTests(unittest.TestCase):
             {"screening_provider": "openai"},
             {"screening_provider": "", "screening_model": "m"},
         ):
-            config = {"auto_screening_enabled": True, **missing}
+            config = {"auto_screening_enabled": True, "screening_method": "legacy", **missing}
             with self.assertRaises(ScreeningConfigError):
                 resolve_screening_config(config)
 
@@ -360,7 +364,7 @@ class ScreeningRoleConfigTests(unittest.TestCase):
         with self.assertRaises(ScreeningConfigError):
             resolve_screening_config(
                 {
-                    "auto_screening_enabled": True,
+                    "auto_screening_enabled": True, "screening_method": "legacy",
                     "screening_provider": "not-a-vendor",
                     "screening_model": "m",
                 }
@@ -375,7 +379,7 @@ class ScreeningRoleConfigTests(unittest.TestCase):
             "decision_provider": "anthropic",
             "decision_model": "decision-model",
             "decision_backend_url": "https://decision.example/v1",
-            "auto_screening_enabled": True,
+            "auto_screening_enabled": True, "screening_method": "legacy",
             "screening_provider": "google",
             "screening_model": "screening-model",
             "screening_backend_url": None,
@@ -393,7 +397,7 @@ class ScreeningRoleConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {"TRADINGBUFFETT_SCREENING_GOOGLE_API_KEY": "screen-key"}):
             resolved = resolve_screening_config(
                 {
-                    "auto_screening_enabled": True,
+                    "auto_screening_enabled": True, "screening_method": "legacy",
                     "screening_provider": "google",
                     "screening_model": "m",
                 }
@@ -410,7 +414,7 @@ class ScreeningRoleConfigTests(unittest.TestCase):
                                          "TRADINGBUFFETT_SCREENING_OPENAI_API_KEY": ""}):
                 resolved = resolve_screening_config(
                     {
-                        "auto_screening_enabled": True,
+                        "auto_screening_enabled": True, "screening_method": "legacy",
                         "screening_provider": "openai",
                         "screening_model": "m",
                     }
@@ -430,9 +434,16 @@ class ScreeningRoleConfigTests(unittest.TestCase):
 
 
 class UniverseTests(unittest.TestCase):
+    def setUp(self):
+        cap_patch = patch("tradingagents.screening.universe.fetch_nasdaq_market_caps",
+                          return_value={s:1_000_000_000. for s in ("AAA", "BBB", "CCC")})
+        cap_patch.start()
+        self.addCleanup(cap_patch.stop)
+
     def _asset(self, symbol, *, status="active", asset_class="us_equity", tradable=True):
         return SimpleNamespace(
             symbol=symbol,
+            id=f"fixture-{symbol}",
             name=f"Company {symbol}",
             status=status,
             asset_class=SimpleNamespace(value=asset_class),
@@ -463,6 +474,7 @@ class UniverseTests(unittest.TestCase):
             def _asset(self, symbol):
                 return SimpleNamespace(
                     symbol=symbol, name=symbol, status="active",
+                    id=f"fixture-{symbol}",
                     asset_class=SimpleNamespace(value="us_equity"),
                     tradable=True, exchange="NASDAQ",
                 )
@@ -549,8 +561,11 @@ class EligibilityTests(unittest.TestCase):
                 "volume": 10.0,
             }
         )
+        frame = pd.DataFrame(rows)
+        for column in ("open", "high", "low"):
+            frame[column] = frame["close"]
         window, err = validate_and_clean_bars(
-            "SYM", pd.DataFrame(rows), as_of=_AS_OF, thresholds=EligibilityThresholds(),
+            "SYM", frame, as_of=_AS_OF, thresholds=EligibilityThresholds(),
             calendar_rows=_std_rows(),
         )
         self.assertIsNone(err)
@@ -736,7 +751,7 @@ class RankingFormulaTests(unittest.TestCase):
             "NEGATIVE": -1.0,
         }
         universe = [
-            {"symbol": symbol, "market_cap": cap}
+            {**_universe([symbol])[0], "market_cap": cap}
             for symbol, cap in market_caps.items()
         ]
         bars = {symbol: _healthy_bars() for symbol in market_caps}
@@ -1199,10 +1214,10 @@ class UnionAndHoldingsTests(unittest.TestCase):
         plan = prepare_screening_round(self._config(), deps=deps, now=_NOW)
         self.assertEqual(plan.status, "ok")
         top20 = [e["symbol"] for e in plan.top20]
-        self.assertEqual(len(top20), 20)
-        # Top20 by rank first, extra holdings sorted by symbol, deduped
-        self.assertEqual(plan.deep_analysis_set[:20], top20)
-        self.assertEqual(plan.deep_analysis_set[20:], ["T00", "T04"])
+        self.assertEqual(len(top20), 17)
+        # Three held symbols reserve slots before the Screening invocation.
+        self.assertEqual(plan.deep_analysis_set, top20 + ["T00", "T04"])
+        self.assertLessEqual(len(set(top20) | {"T19", "T00", "T04"}), 20)
         self.assertEqual(len(set(plan.deep_analysis_set)), len(plan.deep_analysis_set))
         self.assertEqual(plan.overlap_holdings, ["T19"])
         self.assertEqual(
@@ -1222,8 +1237,9 @@ class UnionAndHoldingsTests(unittest.TestCase):
         plan = prepare_screening_round(config, deps=deps, now=_NOW)
         self.assertEqual(plan.status, "ok", plan.detail)
         top20_symbols = [entry["symbol"] for entry in plan.top20]
-        self.assertEqual(plan.deep_analysis_set[:20], top20_symbols)
-        self.assertEqual(plan.deep_analysis_set[20:], ["HLD"])
+        self.assertEqual(len(top20_symbols), 18)
+        self.assertEqual(plan.deep_analysis_set, top20_symbols + ["HLD"])
+        self.assertLessEqual(len(set(top20_symbols) | {"P00", "HLD"}), 20)
         self.assertEqual(plan.overlap_holdings, ["P00"])
         self.assertEqual(len(plan.deep_analysis_set), len(set(plan.deep_analysis_set)))
 
@@ -1395,12 +1411,12 @@ class SelectionCacheTests(unittest.TestCase):
         self.assertEqual(plan.status, "ok", plan.detail)
         self.assertEqual(asset_calls, [])
         top40 = plan.selection["top40"]
-        self.assertEqual(len(top40), 40)
+        self.assertEqual(len(top40), 20)
         self.assertEqual(
-            sum(row["candidate_lane"] == "positive_trend" for row in top40), 20
+            sum(row["candidate_lane"] == "positive_trend" for row in top40), 10
         )
         self.assertEqual(
-            sum(row["candidate_lane"] == "negative_trend" for row in top40), 20
+            sum(row["candidate_lane"] == "negative_trend" for row in top40), 10
         )
         self.assertEqual(
             [(row["score"], row["symbol"]) for row in top40],
@@ -1415,7 +1431,7 @@ class SelectionCacheTests(unittest.TestCase):
         self.assertEqual(loaded["top40"], top40)
         self.assertEqual(loaded["top20"], plan.selection["top20"])
 
-    def test_short_directional_pool_fails_closed_before_screening(self):
+    def test_short_directional_pool_accepts_shortfall_without_padding(self):
         from tradingagents.screening.metrics import ScanStats
 
         config = _base_config(allow_shorts=True)
@@ -1423,19 +1439,16 @@ class SelectionCacheTests(unittest.TestCase):
             _research_features(positive=10, negative=9, mixed=1)
         )
         invoke_calls = []
-        universe = _universe([f"S{i:02d}" for i in range(20)])
-        deps = _deps(universe, {}, positions=[])
-        deps.bars_fn = lambda symbols, **kw: {}
-        deps.screening_invoke_fn = lambda *args, **kw: invoke_calls.append(1)
-        with patch(
-            "tradingagents.screening.pipeline.scan_universe",
-            return_value=(scored, ScanStats(universe_total=20, eligible=20)),
-        ):
-            plan = prepare_screening_round(config, deps=deps, now=_NOW)
-        self.assertTrue(plan.stopped)
-        self.assertEqual(plan.reason, "INSUFFICIENT_CANDIDATES")
+        universe = _universe([f.symbol for f in scored])
+        bars = {f.symbol:_healthy_bars(start=300,step=1 if f.symbol.startswith("P") else -1 if f.symbol.startswith("N") else 0)
+                for f in scored}
+        deps = _deps(universe, bars, positions=[])
+        deps.screening_invoke_fn = _fake_llm_invoke(None, counter={"screening": 0})
+        plan = prepare_screening_round(config, deps=deps, now=_NOW)
+        self.assertFalse(plan.stopped, plan.detail)
+        self.assertEqual(len(plan.top20), 19)
+        self.assertEqual(plan.scan_stats["selection_shortfall"], 1)
         self.assertEqual(plan.scan_stats["eligible"], 20)
-        self.assertEqual(invoke_calls, [])
 
     def test_corrupted_and_future_dated_cache_invalid(self):
         config = _base_config()
@@ -1488,8 +1501,7 @@ class SelectionCacheTests(unittest.TestCase):
         top40_extras = [
             row["symbol"] for row in data["top40"] if row["symbol"] not in top20_symbols
         ]
-        self.assertTrue(top40_extras)  # 25 eligible > 20 selected
-        data["top20"][3]["symbol"] = top40_extras[0]
+        data["top20"][3]["short_reason"] = "edited but otherwise valid"
         path.write_text(json.dumps(data), encoding="utf-8")
         self.assertIsNone(store.load_valid(config, now=_NOW))
 
@@ -1821,8 +1833,8 @@ class SchedulerIntegrationTests(unittest.TestCase):
         )
         plan = prepare_screening_round(config, deps=deps, now=_NOW)
         self.assertEqual(plan.status, "ok", plan.detail)
-        self.assertEqual(len(plan.selection["top40"]), 25)
-        self.assertEqual(len(plan.top20), 20)
+        self.assertEqual(len(plan.selection["top40"]), 19)
+        self.assertEqual(len(plan.top20), 19)
         self.assertEqual(plan.extra_holdings, ["T04"])
         self.assertEqual(plan.deep_analysis_set, [e["symbol"] for e in plan.top20] + ["T04"])
 

@@ -1,0 +1,150 @@
+{
+  "round_id": "F-20260928-08",
+  "slug": "20260928-risk-reframe",
+  "written": "2026-09-28",
+  "status": "REJECTED",
+  "kind": "diagnostic (no new formula proposed)",
+  "data_boundary": {
+    "start": "2016-01-04",
+    "end": "2020-12-31",
+    "sessions": 1325,
+    "symbols": 5104,
+    "trusted_set_size": 9753,
+    "max_symbols_used": false,
+    "read_2021_plus": false
+  },
+  "universe": {
+    "name": "production",
+    "rule": "price >= 5.0 and ADV20 >= $20M",
+    "eligible_median": 1306
+  },
+  "horizon": 20,
+  "non_overlapping_periods": 66,
+  "common_held_days": 1180,
+  "search_cost": {
+    "diagnostic_variants": 6,
+    "grid_variants": 25,
+    "cumulative_trial_note": "+26 variants plus 6 pre-declared comparisons; see report.md section 9"
+  },
+  "findings": {
+    "score_predicts_forward_return": {
+      "ic": -0.0102,
+      "nw_t": -1.51,
+      "n": 1179,
+      "verdict": "none"
+    },
+    "score_predicts_forward_volatility": {
+      "ic": -0.2249,
+      "nw_t": -34.71,
+      "same_sign_ratio": 0.064,
+      "n": 1178,
+      "verdict": "strong and usable at the per-name level"
+    },
+    "score_predicts_worst_day": {
+      "ic": 0.1670,
+      "nw_t": 28.73,
+      "same_sign_ratio": 0.898,
+      "n": 1178
+    },
+    "volatility_signal_transmits_to_portfolio": {
+      "top20_ann_vol": 0.200,
+      "universe_ann_vol": 0.200,
+      "verdict": "NO -- identical"
+    },
+    "survivorship": {
+      "pass_eligibility": 62,
+      "of_total": 162,
+      "pass_rate": 0.383,
+      "evaluated_in_window": 29,
+      "reached_top20": 16,
+      "top20_rate": 0.55,
+      "rank_1_count": 4,
+      "median_adv20_at_death_usd": 124000000,
+      "adv20_floor_multiple": 6.2,
+      "over_100m_adv_count": 9,
+      "direct_pnl_contribution": 0.0009,
+      "acquisition_like_deaths": 14,
+      "distress_like_deaths": 2,
+      "verdict": "does not touch the portfolio; no filter warranted"
+    },
+    "diversification": {
+      "baseline_effective_positions": 2.92,
+      "best_effective_positions": 4.80,
+      "baseline_corr": 0.308,
+      "best_corr": 0.166,
+      "baseline_ann_vol": 0.200,
+      "best_ann_vol": 0.173,
+      "baseline_sharpe": 0.34,
+      "best_sharpe": 0.23,
+      "variants_tested": 25,
+      "max_nw_t": 1.41,
+      "verdict": "REJECTED -- diversification works mechanically, Sharpe gets worse"
+    },
+    "drawdown": {
+      "top20_max_dd": -0.287,
+      "universe_equal_weight_max_dd": -0.399,
+      "observed_diff_pp": 11.2,
+      "bootstrap_ci_pp": [-10.4, 21.7],
+      "p_not_better": 0.279,
+      "block": 20,
+      "n_boot": 2000,
+      "verdict": "NOT ESTABLISHED"
+    },
+    "drawdown_by_regime_pp": {
+      "bull_high_vol": -4.3,
+      "bull_low_vol": -0.5,
+      "bear_high_vol": 10.3,
+      "bear_low_vol": 2.1
+    },
+    "quintile_spread": {
+      "q5_minus_q1_annualised_pp": 10.9,
+      "nw_t": 1.71,
+      "ci_width_over_effect": 2.65,
+      "verdict": "NOT REFERENCEABLE per R16-Q1"
+    },
+    "benchmarks_same_window": {
+      "equal_weight_mean_all_eligible": 0.151,
+      "equal_weight_median_all_eligible": 0.059,
+      "crsp_mkt_minus_rf_cap_weighted": 0.160,
+      "top20_cost_net": 0.097,
+      "stock_picking_contribution_pp": -5.4,
+      "note": "not directly subtractable; see S-55 and report.md section 3"
+    },
+    "turnover_per_20_day_period": 0.890
+  },
+  "crsp_factor_census": {
+    "window_2016_2020": {
+      "Mom": {"ann": -0.018, "t": -0.22},
+      "HML": {"ann": -0.089, "t": -1.41},
+      "SMB": {"ann": 0.014, "t": 0.32},
+      "Mkt-RF": {"ann": 0.160, "t": 1.84}
+    },
+    "window_2016_2026": {
+      "Mom": {"ann": 0.021, "t": 0.38},
+      "HML": {"ann": 0.001, "t": 0.02},
+      "SMB": {"ann": -0.015, "t": -0.46},
+      "Mkt-RF": {"ann": 0.135, "t": 2.40}
+    },
+    "momentum_20yr_block_sharpe": {
+      "1950-1969": 1.4317,
+      "1970-1989": 1.0347,
+      "1990-2009": 0.5277,
+      "2010-2026": 0.2581
+    }
+  },
+  "diagnosis": {
+    "effective_positions": 2.92,
+    "portfolio_vol_equals_universe": true,
+    "turnover": 0.890,
+    "long_only_single_market": true,
+    "conclusion": "The binding constraint is the 20-stock fully-long single-market structure, not the score. Risk can only be reduced by market exposure and position-level constraints, which plan.md R14/8.2 assigns to the main project."
+  },
+  "new_process_entries": ["S-53", "S-54", "S-55"],
+  "process_entries_validated": ["S-7", "S-44"],
+  "unanswered": [
+    "The $300M market-cap gate cannot be verified in research: needs historical share counts, blocked by S-35.",
+    "How the harness handles a position whose symbol delists mid-hold (P&L hole) -- NOT CHECKED in this round.",
+    "Whether the volatility signal is usable under a different portfolio structure (long-short, capped weights, beta-neutral) -- a portfolio-layer decision per plan.md R19.",
+    "Whether a beta-neutralised score changes the conclusion -- a portfolio-layer decision."
+  ]
+}

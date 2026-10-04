@@ -1,0 +1,85 @@
+{
+  "symbol": "CVNA",
+  "adsh": "0001690820-20-000052",
+  "filing_url": "https://www.sec.gov/Archives/edgar/data/1690820/000169082020000052/cvna-20191231.htm",
+  "original": {
+    "net_income": {
+      "value": -114659000.0,
+      "unit": "USD",
+      "qtrs": 4,
+      "period_end": "2019-12-31",
+      "available_at": "2020-02-26 17:16:00.0",
+      "scope": "shareholder_attributable",
+      "source_tag": "NetIncomeLoss",
+      "source": "2020q1.zip:num.txt:2452176",
+      "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+    },
+    "operating_cash_flow": {
+      "value": -757134000.0,
+      "unit": "USD",
+      "qtrs": 4,
+      "period_end": "2019-12-31",
+      "available_at": "2020-02-26 17:16:00.0",
+      "scope": "consolidated",
+      "source_tag": "NetCashProvidedByUsedInOperatingActivities",
+      "source": "2020q1.zip:num.txt:2712297",
+      "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+    },
+    "assets": {
+      "value": 2057748000.0,
+      "unit": "USD",
+      "qtrs": 0,
+      "period_end": "2019-12-31",
+      "available_at": "2020-02-26 17:16:00.0",
+      "scope": "consolidated",
+      "source_tag": "Assets",
+      "source": "2020q1.zip:num.txt:2889710",
+      "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+    }
+  },
+  "canonical": {
+    "net_income": {
+      "value": -364639000.0,
+      "unit": "USD",
+      "qtrs": 4,
+      "period_end": "2019-12-31",
+      "available_at": "2020-02-26 17:16:00.0",
+      "scope": "consolidated",
+      "source_tag": "ProfitLoss",
+      "source": "2020q1.zip:num.txt:2528353",
+      "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+    },
+    "operating_cash_flow": {
+      "value": -757134000.0,
+      "unit": "USD",
+      "qtrs": 4,
+      "period_end": "2019-12-31",
+      "available_at": "2020-02-26 17:16:00.0",
+      "scope": "consolidated",
+      "source_tag": "NetCashProvidedByUsedInOperatingActivities",
+      "source": "2020q1.zip:num.txt:2712297",
+      "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+    },
+    "assets": {
+      "value": 2057748000.0,
+      "unit": "USD",
+      "qtrs": 0,
+      "period_end": "2019-12-31",
+      "available_at": "2020-02-26 17:16:00.0",
+      "scope": "consolidated",
+      "source_tag": "Assets",
+      "source": "2020q1.zip:num.txt:2889710",
+      "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+    }
+  },
+  "before": {
+    "status": "invalid",
+    "reason": "scope_mismatch"
+  },
+  "after": {
+    "status": "usable",
+    "reason": null
+  },
+  "mapping_scope": "Only this reviewed 2019 filing; never a global NetIncomeLoss/ProfitLoss alias",
+  "effect": "Separate canonical data example. Prior formulas, selections and returns are unchanged."
+}

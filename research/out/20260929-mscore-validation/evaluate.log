@@ -1,0 +1,11 @@
+[     2.4s] read 20/136 cache batches; 637,357 in-window bars
+[     4.7s] read 40/136 cache batches; 1,479,695 in-window bars
+[     7.2s] read 60/136 cache batches; 2,399,815 in-window bars
+[     9.4s] read 80/136 cache batches; 3,202,782 in-window bars
+[    11.6s] read 100/136 cache batches; 3,953,867 in-window bars
+[    13.8s] read 120/136 cache batches; 4,722,205 in-window bars
+[    15.7s] in-window panel ready
+price_matched active 46 full20 3 names 362 net5 {'mean': -0.005443540249089377, 'ci95': [-0.0151905693071129, 0.003410039329550868], 'n': 59, 'unknown_periods': 0, 'nw_lag1_t': -1.0477109289164932}
+m_only_raw active 23 full20 0 names 32 net5 {'mean': -0.0009858026817001079, 'ci95': [-0.0023919395468673067, 3.175650986109127e-05], 'n': 59, 'unknown_periods': 0, 'nw_lag1_t': -1.5385963678616457}
+m_weak_raw active 7 full20 0 names 9 net5 {'mean': -0.000518204282191428, 'ci95': [-0.0013419521191671265, 1.3514217135774025e-05], 'n': 59, 'unknown_periods': 0, 'nw_lag1_t': -1.3489189927936012}
+m_weak_winsor active 7 full20 0 names 9 net5 {'mean': -0.000518204282191428, 'ci95': [-0.0013419521191671265, 1.3514217135774025e-05], 'n': 59, 'unknown_periods': 0, 'nw_lag1_t': -1.3489189927936012}

@@ -1,0 +1,21 @@
+{
+  "financial_sources": {
+    "filings": 2765,
+    "quarters": 23,
+    "source_references": 8295,
+    "max_ratio_error": 0.0
+  },
+  "universe_rows": 26946,
+  "periods": 590,
+  "observations": 7024,
+  "unique_signal_factors": 3158,
+  "unique_forward_bars": 63160,
+  "max_factor_absolute_error": 9.72747802734375e-05,
+  "max_factor_scaled_error": 7.91651957662752e-14,
+  "max_single_pnl_error": 2.220446049250313e-16,
+  "filing_timing_and_latest_missing_rejection": true,
+  "independent_pool_ranking": true,
+  "all_cost_scenarios_and_high_events": true,
+  "summary_means_match": true,
+  "method_sha256": "ac76dac2d3d89db48ebd34872010c4b8c3cbe1a940314a050b746215a3f45180"
+}

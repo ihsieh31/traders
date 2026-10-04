@@ -1,0 +1,11 @@
+{
+  "diversification": {
+    "n_periods_measured": 119,
+    "basis": "daily log returns inside each 10-session window",
+    "mean_pairwise_corr": 0.2817307274877629,
+    "median_positions_per_period": 20.0,
+    "effective_positions": 3.1481765698119637,
+    "note": "20 names is not 20 independent bets; see process.md S-39"
+  },
+  "note": "20 names is not 20 independent bets (process.md S-39)"
+}

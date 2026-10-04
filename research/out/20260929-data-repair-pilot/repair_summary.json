@@ -1,0 +1,35 @@
+{
+  "sample_n": 30,
+  "sample_complete": 0,
+  "sample_transitions": {
+    "missing_pair:LongTermDebt -> missing_pair:LongTermDebt": 5,
+    "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet -> missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet": 4,
+    "no_comparable_previous_year -> no_comparable_previous_year": 4,
+    "missing_pair:SellingGeneralAndAdministrativeExpense -> missing_pair:SellingGeneralAndAdministrativeExpense": 5,
+    "missing_pair:Depreciation -> missing_pair:SellingGeneralAndAdministrativeExpense": 2,
+    "missing_pair:Depreciation -> missing_pair:LongTermDebt": 1,
+    "missing_pair:Depreciation -> missing_or_conflicting:NetIncomeLoss": 1,
+    "missing_pair:Depreciation -> missing_pair:Depreciation": 5,
+    "missing_pair:Depreciation -> missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet": 1,
+    "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet -> missing_pair:CostOfGoodsAndServicesSold/CostOfRevenue/CostOfGoodsSold": 1,
+    "no_comparable_previous_year -> missing_pair:SellingGeneralAndAdministrativeExpense": 1
+  },
+  "quarter_records": 964,
+  "quarter_complete_before": 28,
+  "quarter_complete_after": 94,
+  "newly_complete": 67,
+  "lost_complete": 1,
+  "all_records": 7889,
+  "all_complete": 248,
+  "ignored_notes_rows": {
+    "unrecoverable_date_offset": 40580
+  },
+  "method_sha256": "aafcc85846270917f5c709cea8755093769251c8cd6c52e73a59a556aee01a48",
+  "sample_sha256": "0d26d1b7ca5085c4eb85b508bfe328240f93cc3f4b52ba951dd26f08b6b71020",
+  "source": {
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-notes-data-sets/2018q1_notes.zip?download=1",
+    "sha256": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383",
+    "bytes": 508544155,
+    "quarter": "2018q1"
+  }
+}

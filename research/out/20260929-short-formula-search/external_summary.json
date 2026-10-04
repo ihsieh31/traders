@@ -1,0 +1,19 @@
+{
+  "sample_symbols": [
+    "W",
+    "CVNA",
+    "ADM",
+    "SPGI"
+  ],
+  "source_status": {
+    "W": "received",
+    "CVNA": "received",
+    "ADM": "received",
+    "SPGI": "received"
+  },
+  "checked_observations": 58,
+  "distinct_pairs": 37,
+  "direction_matches": 58,
+  "max_return_difference": 0.00319177888402411,
+  "scope": "Two observed loss cases plus two hash-picked main-method symbols; not whole-panel validation"
+}

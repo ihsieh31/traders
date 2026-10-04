@@ -1,0 +1,76 @@
+[     2.6s] read 20/136 cache batches; 637,357 in-window bars
+[     4.9s] read 40/136 cache batches; 1,479,695 in-window bars
+[     7.3s] read 60/136 cache batches; 2,399,815 in-window bars
+[     9.6s] read 80/136 cache batches; 3,202,782 in-window bars
+[    11.7s] read 100/136 cache batches; 3,953,867 in-window bars
+[    13.9s] read 120/136 cache batches; 4,722,205 in-window bars
+[    15.8s] in-window panel ready
+2016-03-31 complete_company_pool 307
+2016-04-28 complete_company_pool 305
+2016-05-26 complete_company_pool 311
+2016-06-24 complete_company_pool 309
+2016-07-25 complete_company_pool 308
+2016-08-22 complete_company_pool 322
+2016-09-20 complete_company_pool 310
+2016-10-18 complete_company_pool 305
+2016-11-15 complete_company_pool 326
+2016-12-14 complete_company_pool 326
+2017-01-13 complete_company_pool 316
+2017-02-13 complete_company_pool 322
+2017-03-14 complete_company_pool 336
+2017-04-11 complete_company_pool 343
+2017-05-10 complete_company_pool 342
+2017-06-08 complete_company_pool 336
+2017-07-07 complete_company_pool 339
+2017-08-04 complete_company_pool 338
+2017-09-01 complete_company_pool 328
+2017-10-02 complete_company_pool 351
+2017-10-30 complete_company_pool 341
+2017-11-28 complete_company_pool 368
+2017-12-27 complete_company_pool 374
+2018-01-26 complete_company_pool 371
+2018-02-26 complete_company_pool 413
+2018-03-26 complete_company_pool 449
+2018-04-24 complete_company_pool 432
+2018-05-22 complete_company_pool 449
+2018-06-20 complete_company_pool 452
+2018-07-19 complete_company_pool 461
+2018-08-16 complete_company_pool 459
+2018-09-14 complete_company_pool 448
+2018-10-12 complete_company_pool 480
+2018-11-09 complete_company_pool 486
+2018-12-11 complete_company_pool 466
+2019-01-10 complete_company_pool 473
+2019-02-08 complete_company_pool 470
+2019-03-11 complete_company_pool 558
+2019-04-08 complete_company_pool 559
+2019-05-07 complete_company_pool 551
+2019-06-05 complete_company_pool 550
+2019-07-03 complete_company_pool 578
+2019-08-01 complete_company_pool 549
+2019-08-29 complete_company_pool 555
+2019-09-27 complete_company_pool 584
+2019-10-25 complete_company_pool 538
+2019-11-22 complete_company_pool 571
+2019-12-23 complete_company_pool 581
+2020-01-23 complete_company_pool 550
+2020-02-21 complete_company_pool 596
+2020-03-20 complete_company_pool 666
+2020-04-20 complete_company_pool 618
+2020-05-18 complete_company_pool 630
+2020-06-16 complete_company_pool 649
+2020-07-15 complete_company_pool 659
+2020-08-12 complete_company_pool 631
+2020-09-10 complete_company_pool 616
+2020-10-08 complete_company_pool 653
+2020-11-05 complete_company_pool 632
+20 price_weak active 59 companies 355 net5 {'mean': -0.024678478267929998, 'ci95': [-0.04351961437317642, -0.00983666708213233], 'n': 59}
+20 accrual_weak active 59 companies 195 net5 {'mean': -0.028026508417770393, 'ci95': [-0.05122074468485489, -0.009066116726767713], 'n': 59}
+20 cashburn_weak active 58 companies 83 net5 {'mean': -0.044391895264881714, 'ci95': [-0.07654886831664855, -0.017555342382235176], 'n': 58}
+20 cashburn_rebound active 37 companies 54 net5 {'mean': -0.02895621403444156, 'ci95': [-0.07351989955112274, 0.007383647768994276], 'n': 37}
+20 residual_rally active 59 companies 483 net5 {'mean': -0.02539753117826869, 'ci95': [-0.046275774075992766, -0.006867605148555821], 'n': 59}
+5 price_weak active 59 companies 355 net5 {'mean': -0.00938128042274808, 'ci95': [-0.02181518110417936, -0.00025144596922280893], 'n': 59}
+5 accrual_weak active 59 companies 195 net5 {'mean': -0.005639223573549778, 'ci95': [-0.01592463922296646, 0.002709214026637522], 'n': 59}
+5 cashburn_weak active 58 companies 83 net5 {'mean': -0.010377055188143271, 'ci95': [-0.021789500894357435, 0.0008954935531610842], 'n': 58}
+5 cashburn_rebound active 37 companies 54 net5 {'mean': -0.0055285762601302605, 'ci95': [-0.017491581049125526, 0.007317366950142907], 'n': 37}
+5 residual_rally active 59 companies 483 net5 {'mean': -0.004953723497110272, 'ci95': [-0.014987124480860883, 0.0039484716870324555], 'n': 59}

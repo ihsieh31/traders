@@ -115,7 +115,7 @@ Traders 的用途是**研究、驗證與記錄一套交易決策流程**，而�
 flowchart TD
     A[市場行情、新聞、社群、基本面、SEC/IR、總經濟] --> B[資料介面與交易日曆]
     B --> C[Deterministic Screening]
-    C --> D[Top40 → LLM Screening → Top20]
+    C --> D[風險門檻 → 存活池公式排序 → 最多20隻]
     D --> E[Analysis Roles]
     E --> F[Bull / Bear / Research Manager]
     F --> G[Trader Proposal]
@@ -170,7 +170,7 @@ flowchart TD
 - 可使用 yfinance 作為部分資料 fallback。
 - 手動 watchlist 或全市場 US equity auto-screening。
 - 以完整交易日、價格、成交額、報酬、波動、量能與市值做確定性 gate。
-- 對 Top40 使用獨立 Screening role，輸出嚴格驗證的 Top20 schema。
+- 做多預設使用報告的剔除門檻與公式，直接產生最多 20 隻；可切回 Top40 → Screening LLM 的舊模式。
 - 當日 selection cache 以日期、設定 fingerprint 與 SHA-256 seal 驗證完整性。
 
 ### Durable execution 與 recovery
@@ -421,9 +421,13 @@ Auto-screening 不是「自動買入清單」，而是決定研究資源優先�
 - 價格至少 US$5。
 - 20 日平均成交額至少 US$20M。
 - 市值門檻預設 US$300M；缺少或無效市值時 fail closed。
-- 先以流動性、報酬、波動與量能等確定性因子產生 Top40。
-- 再由獨立 Screening role 從 Top40 產生嚴格 Top20。
-- 既有持倉即使跌出 Top20，仍可加入研究集合，以檢查企業論點是否失效。
+- 做多預設再要求 `vol20 <= 0.28`、`trend > 0`、`r60 >= -0.25`。
+- 對存活股票計算 `100 * (0.50*p(trend) + 0.30*p(r60) + 0.20*(1-p(vol20)))`，由高到低選最多 20 隻。百分位只在存活池內計算；同值平均排名，同分按 ticker 排列。
+- 合格候選或產業容量不足時允許少於 20 隻，不放寬門檻補數；零候選時只審查持倉。
+- 既有可安全分析的美股持倉優先占用 20 隻的分析預算，再用候選補滿。超過 20 隻持倉則明確停止，不靜默遺漏持倉；被擠出的候選記為 deferred。
+- 做多公式的篩選階段不呼叫 LLM。每輪保存的分析集合在重啟時凍結恢復，波動等數值隨 as-of 日期送入 Risk Manager。
+- `screening_method="legacy"` 保留舊價格公式與 Screening LLM；`auto` 在 `allow_shorts=True` 時使用雙向候選。兩者都先為持倉預留名額，篩選 LLM 與深度分析每帳戶每輪共用最多 20 檔；候選不足允許少選。明確指定 `exclusion` 加做空會拒絕啟動。
+- 詳細設定、快取相容性與驗證見 [公式接入說明](docs/EXCLUSION_SCREENING.md)。
 - 當日 selection cache 會綁定日期、設定 fingerprint、資料 feed 與完整性 seal；不合法或過期時拒絕沿用。
 
 這些規則可以降低資料與流程風險，但不能自動證明某個標的具有未來報酬。

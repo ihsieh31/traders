@@ -133,6 +133,8 @@ def run_symbol_work(
     if phase not in {"all", "analysis", "execution"}:
         raise ValueError(f"unknown symbol-work phase: {phase!r}")
     graph_config = _build_graph_config(runtime, long_cfg, run_id=run_id)
+    # Reuse the frozen round context on resume; do not rescan during analysis.
+    graph_config["_screening_context"] = (journal.get("screening") or {}).get("factor_context")
     notional = float(long_cfg.get("base_trade_notional_usd") or 0)
     graph = None
     stop_reason: Optional[str] = None

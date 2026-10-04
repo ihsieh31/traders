@@ -1,0 +1,21 @@
+{
+  "financial_scale": true,
+  "missing_rejected": true,
+  "same_day_excluded": true,
+  "future_filing_invariant": true,
+  "latest_missing_no_fallback": true,
+  "beta_oracle": true,
+  "price_prefix_invariant": true,
+  "flat_market_rejected": true,
+  "tie_break": true,
+  "short_pnl": {
+    "short_pnl": true,
+    "unbounded_loss": true,
+    "daily_high_risk": true,
+    "missing_exit_unknown": true,
+    "prefix_invariance": true,
+    "legacy_production_equivalence": true,
+    "budget_and_ties": true,
+    "network": "blocked"
+  }
+}

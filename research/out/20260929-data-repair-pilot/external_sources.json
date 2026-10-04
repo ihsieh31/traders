@@ -1,0 +1,23 @@
+[
+  {
+    "symbol": "FAST",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/FAST?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "sha256": "2f23bf4e9d0ab927710522b2434e0b8177d9be7b84335f2bea8b7b396d75d4ab",
+    "analyzed_dates": "2016-01-04 to 2020-12-31",
+    "use": "quote OHLC only; current meta not used"
+  },
+  {
+    "symbol": "GPN",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/GPN?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "sha256": "ca985e6f8041c2446c37a3f58f3bda4c55b574af3f1dd0729ae5750e0931aff0",
+    "analyzed_dates": "2016-01-04 to 2020-12-31",
+    "use": "quote OHLC only; current meta not used"
+  },
+  {
+    "symbol": "TUSK",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/TUSK?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "sha256": "e1a3064eb8b6db0f176476f7ba8ab2354a1724501971af7e8d55d9e8c8e3e69d",
+    "analyzed_dates": "2016-01-04 to 2020-12-31",
+    "use": "quote OHLC only; current meta not used"
+  }
+]

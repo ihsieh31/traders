@@ -1,0 +1,30 @@
+{
+  "adsh": "0001690820-20-000052",
+  "symbol": "CVNA",
+  "year": 2019,
+  "source_archive": "2020q1.zip",
+  "source_sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67",
+  "filing_url": "https://www.sec.gov/Archives/edgar/data/1690820/000169082020000052/cvna-20191231.htm",
+  "facts": [
+    {
+      "tag": "NetIncomeLoss",
+      "line": 2452176,
+      "value": -114659000
+    },
+    {
+      "tag": "ProfitLoss",
+      "line": 2528353,
+      "value": -364639000
+    },
+    {
+      "tag": "NetCashProvidedByUsedInOperatingActivities",
+      "line": 2712297,
+      "value": -757134000
+    }
+  ],
+  "frozen_ac": 0.3122223906911828,
+  "alternative_consolidated_ac": 0.19074007118461542,
+  "issue": "NetIncomeLoss is shareholder-attributable earnings in this filing; CFO is consolidated. Numeric extraction is correct, economic scope differs.",
+  "action": "Frozen results preserved; no after-result alias or reranking. Original-context mapping needs separate preregistered correction.",
+  "scope": "One identified example; not a completed semantic audit of all companies."
+}

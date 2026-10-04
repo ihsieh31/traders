@@ -391,6 +391,161 @@ def test_nan_picks_are_dropped_not_zeroed() -> None:
     )
 
 
+def test_per_name_contribution_stays_with_its_symbol() -> None:
+    """A missing pick must not shift later returns onto the wrong symbol.
+
+    Picks are [29, 28, 27]; 29 has no return, so 28 earned 0.02 and 27
+    earned 0.04. Zipping the filtered returns against the unfiltered picks
+    once credited 29 with 28's return and 28 with 27's.
+    """
+    n_sym = 30
+    mask = np.ones((40, n_sym), dtype=bool)
+    scores = np.tile(np.arange(n_sym, dtype=float), (40, 1))
+    fwd = np.full((40, n_sym), 0.0)
+    fwd[10, 29] = np.nan
+    fwd[10, 28] = 0.02
+    fwd[10, 27] = 0.04
+    pf = M.build_portfolio(scores, fwd, mask, horizon=5, top_k=3, as_of=[10])
+    assert 29 not in pf.per_name, f"missing pick was credited: {pf.per_name}"
+    assert abs(pf.per_name[28] - 0.01) < 1e-12, pf.per_name
+    assert abs(pf.per_name[27] - 0.02) < 1e-12, pf.per_name
+    assert abs(sum(pf.per_name.values()) - pf.gross[0]) < 1e-12
+
+
+def test_turnover_with_short_selection_and_flat_period() -> None:
+    """Turnover uses the weights actually held, and a flat period resets.
+
+    t=10 and t=15 each have only two eligible names {29, 28} (min_n=2),
+    held at 1/2 each: the book did not change, so turnover is 0 (the old
+    ``(top_k - overlap) / top_k`` reported 1/3). t=20 has too few eligible
+    names, so the book is flat; t=25 is then a full rebuild (1.0), not a
+    diff against the stale t=15 set.
+    """
+    n_sym = 30
+    mask = np.ones((40, n_sym), dtype=bool)
+    mask[10, :28] = False
+    mask[15, :28] = False
+    mask[20, :] = False
+    mask[20, 29] = True
+    scores = np.tile(np.arange(n_sym, dtype=float), (40, 1))
+    fwd = np.full((40, n_sym), 0.01)
+    pf = M.build_portfolio(scores, fwd, mask, horizon=5, top_k=3,
+                           as_of=[10, 15, 20, 25], min_n=2)
+    assert pf.names[1] == [29, 28], pf.names[1]
+    assert pf.turnover[1] == 0.0, pf.turnover[1]
+    assert pf.names[2] == [] and np.isnan(pf.turnover[2])
+    assert pf.turnover[3] == 1.0, pf.turnover[3]
+
+
+def test_delisted_exit_uses_last_trade_only_for_departures() -> None:
+    """``delisted_exit`` fills a departed symbol, never a halted one.
+
+    Symbol 0 stops trading after row 102 (leaves the panel). Symbol 1 is
+    halted at row 105 only and trades again. Entry is open[101], exit row
+    105 for t=100, horizon=5.
+    """
+    panel = synthetic_panel()
+    panel.close[103:, 0] = np.nan
+    panel.open[103:, 0] = np.nan
+    panel.close[105, 1] = np.nan
+    plain = P.forward_returns(panel, 5)
+    filled = P.forward_returns(panel, 5, delisted_exit=True)
+    assert np.isnan(plain[100, 0]), "the default must keep the hole visible"
+    want = panel.close[102, 0] / panel.open[101, 0] - 1.0
+    assert filled[100, 0] == want, (filled[100, 0], want)
+    assert np.isnan(filled[100, 1]), "a halt is not a delisting"
+    # Entered after the last trade: there is no position to close.
+    assert np.isnan(filled[102, 0])
+    others = np.ones(panel.close.shape[1], dtype=bool)
+    others[[0, 1]] = False
+    assert np.array_equal(plain[:, others], filled[:, others], equal_nan=True)
+
+
+def test_study_grid_starts_at_the_study_start() -> None:
+    """The as-of grid begins at ``start``, never inside the leading history.
+
+    ``np.flatnonzero(valid_as_of(...))[::h]`` began at index 1 -- inside the
+    66-session buffer that belongs to the previous period -- because
+    flatnonzero treats the index array as a mask and drops index 0.
+    """
+    panel = synthetic_panel()
+    start = panel.sessions[66]
+    grid = P.study_as_of(panel, 20, start)
+    assert grid[0] == 66, grid[:3]
+    assert np.all(np.diff(grid) == 20)
+    assert grid[-1] + 20 <= len(panel.sessions) - 1, "forward window left the panel"
+    old = np.flatnonzero(P.valid_as_of(panel, 20))[::20]
+    assert old[0] == 1, "the replaced idiom is documented as starting at index 1"
+    # A start between sessions snaps forward to the next session.
+    assert P.study_as_of(panel, 20, panel.sessions[65] + timedelta(days=1))[0] == 66
+
+
+def test_equal_weight_excess_is_paired_and_charges_only_the_formula() -> None:
+    """Excess = formula net - same-universe equal-weight gross, per period.
+
+    Ten eligible names; the top 3 earn 0.04, the rest 0.01. EW gross is
+    (3*0.04 + 7*0.01)/10 = 0.019. Period 1 funds the book (turnover 1.0):
+    net 0.04 - 0.001 = 0.039, excess 0.020. Period 2 holds the same names
+    (turnover 0): excess 0.021.
+    """
+    n_sym = 10
+    mask = np.ones((40, n_sym), dtype=bool)
+    scores = np.tile(np.arange(n_sym, dtype=float), (40, 1))
+    fwd = np.full((40, n_sym), 0.01)
+    fwd[:, 7:] = 0.04
+    pf = M.build_portfolio(scores, fwd, mask, horizon=5, top_k=3, as_of=[10, 15], min_n=3)
+    ex = M.equal_weight_excess(pf, fwd, mask, 5, cost=0.001, n_resamples=50)
+    assert ex["n_periods"] == 2
+    assert abs(ex["mean_excess_per_period"] - (0.020 + 0.021) / 2) < 1e-12, ex
+    assert abs(ex["annualised_equal_weight"] - 0.019 * M.PERIODS_PER_YEAR / 5) < 1e-9
+
+
+def test_fundamentals_are_point_in_time() -> None:
+    """F-11 spec: newest 10-K accepted STRICTLY before the session, at most
+    456 days after its period end, never replaced by an older filing, and
+    financial SICs excluded."""
+    import pandas as pd
+    from research.src import fundamentals as FD
+
+    assert FD.derive_fields({"Revenues": 100.0, "CostOfRevenue": 60.0}, {"Assets": 50.0})["gross_profit"] == 40.0
+    # A contradictory (None) GrossProfit is missing; it does not fall back to R - COGS.
+    assert FD.derive_fields({"GrossProfit": None, "Revenues": 100.0, "CostOfRevenue": 60.0}, {})["gross_profit"] is None
+    assert FD.derive_fields({}, {"Assets": 0.0})["assets"] is None
+
+    aapl = 320193  # AAPL in the cached SEC ticker map
+    rows = [
+        dict(adsh="a1", cik=aapl, sic="3571", period="20191231", accepted="2020-02-10",
+             revenue=1.0, gross_profit=10.0, assets=100.0, cfo=5.0, liabilities=50.0),
+        dict(adsh="a2", cik=aapl, sic="3571", period="20201231", accepted="2021-02-10",
+             revenue=1.0, gross_profit=None, assets=100.0, cfo=5.0, liabilities=50.0),
+        dict(adsh="b1", cik=1, sic="6022", period="20191231", accepted="2020-02-10",
+             revenue=1.0, gross_profit=10.0, assets=100.0, cfo=5.0, liabilities=50.0),
+    ]
+    sessions = [date(2020, 2, 10), date(2020, 2, 11), date(2021, 2, 10), date(2021, 2, 11), date(2022, 6, 1)]
+    fp = FD.fundamental_panel(sessions, ["AAPL"], pd.DataFrame(rows))
+    gp = fp.values["gross_profit"][:, 0]
+    assert np.isnan(gp[0]), "a filing accepted on the session day is not yet usable"
+    assert gp[1] == 10.0 and gp[2] == 10.0
+    assert np.isnan(gp[3]), "an incomplete newest filing must not fall back to the older one"
+    assert fp.values["assets"][3, 0] == 100.0
+    assert np.isnan(fp.values["assets"][4, 0]), "period end > 456 days before the session is stale"
+
+
+def test_missing_values_are_never_ranked_first() -> None:
+    """S-61: NaN used to get percentile 1.0 -- the best long, the first short."""
+    from research.src.common import percentiles_fast
+
+    p = percentiles_fast(np.array([3.0, np.nan, 1.0, 2.0]))
+    assert np.isnan(p[1]) and list(p[[2, 3, 0]]) == [0.0, 0.5, 1.0], p
+    n_sym = 30
+    mask = np.ones((40, n_sym), dtype=bool)
+    values = np.tile(np.arange(n_sym, dtype=float), (40, 1))
+    values[:, 29] = np.nan  # would have been the top pick
+    scores = F.compose_scores(F.Formula("x", [F.Component("v", values, 1)], 5, 3), mask)
+    pf = M.build_portfolio(scores, np.full((40, n_sym), 0.01), mask, horizon=5, top_k=3, as_of=[10])
+    assert pf.names[0] == [28, 27, 26], pf.names[0]
+
+
 def test_nan_factor_does_not_shrink_the_cross_section() -> None:
     """One undefined component must not remove that name from every other
     component's IC on the same date."""
@@ -426,6 +581,11 @@ def test_platform_versus_spike_classification() -> None:
     assert spiked["verdict"] == "SPIKE", spiked
     flipped = classify_curve(grid, [0.10, 0.11, -0.30, 0.10, 0.11])
     assert flipped["verdict"] == "SPIKE", flipped
+    # A plateau whose best cell is in the middle or at the end is still a
+    # plateau; the old rightward-only count called these SPIKE (S-60).
+    assert classify_curve([3, 5, 10], [0.20, 0.23, 0.21])["verdict"] == "PLATEAU"
+    assert classify_curve([5, 20, 60], [0.22, 0.23, 0.28])["verdict"] == "PLATEAU"
+    assert classify_curve([60, 120, 180], [0.0845, 0.0746, 0.1499])["verdict"] == "SPIKE"
 
 
 def test_parameter_budget_is_enforced() -> None:
@@ -558,6 +718,13 @@ def main() -> int:
             ("initial turnover is 1.0", test_initial_turnover_is_one),
             ("turnover matches definition", test_turnover_matches_definition),
             ("NaN picks dropped, not zeroed", test_nan_picks_are_dropped_not_zeroed),
+            ("per-name contribution keeps its symbol", test_per_name_contribution_stays_with_its_symbol),
+            ("turnover: short selection, flat period", test_turnover_with_short_selection_and_flat_period),
+            ("delisted exit fills departures only", test_delisted_exit_uses_last_trade_only_for_departures),
+            ("study grid starts at the study start", test_study_grid_starts_at_the_study_start),
+            ("equal-weight excess is paired", test_equal_weight_excess_is_paired_and_charges_only_the_formula),
+            ("fundamentals are point-in-time", test_fundamentals_are_point_in_time),
+            ("missing values never ranked first", test_missing_values_are_never_ranked_first),
             ("NaN factor keeps the cross-section", test_nan_factor_does_not_shrink_the_cross_section),
             ("cost scenarios ordered", test_cost_scenarios_are_ordered),
             ("plateau vs spike", test_platform_versus_spike_classification),

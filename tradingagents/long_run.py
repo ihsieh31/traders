@@ -1242,7 +1242,23 @@ def run_daily_round(
         and not needs_new_llm_work
     )
 
-    if resume_without_new_llm:
+    from tradingagents.screening.policy import screening_method
+    from tradingagents.screening.selection_store import SelectionStore, default_selection_cache_path
+    frozen_screen = (journal or {}).get("screening") or {}
+    if needs_new_llm_work and frozen_screen and frozen_screen.get("method") != screening_method(runtime):
+        raise LongRunStop("STATE_CORRUPT", "frozen screening policy is missing or incompatible; new analysis requires a new observation")
+    resume_frozen_policy = (
+        frozen_screen.get("method") == screening_method(runtime)
+    )
+    if resume_frozen_policy:
+        expected_fp = SelectionStore.config_fingerprint(runtime, None)
+        names = frozen_screen.get("deep_analysis_set")
+        if (frozen_screen.get("config_fingerprint") != expected_fp or not isinstance(names, list)
+                or len(names) > runtime.get("screening_analysis_limit", 20)
+                or len(set(names)) != len(names) or set(names) != set(journal.get("symbols") or {})):
+            raise LongRunStop("STATE_CORRUPT", "frozen round policy or analysis pool changed")
+
+    if resume_without_new_llm or resume_frozen_policy:
         plan = None
     elif screening_plan is not None:
         plan = screening_plan
@@ -1299,6 +1315,8 @@ def run_daily_round(
         # Step 4 — persist screening summary (metadata only, no second cache).
         top20 = getattr(plan, "top20", []) or []
         screening_summary = {
+            "method": screening_method(runtime),
+            "config_fingerprint": (getattr(plan, "selection", None) or {}).get("config_fingerprint") or SelectionStore.config_fingerprint(runtime, None),
             "selection_date": getattr(plan, "selection_date", None),
             "as_of": getattr(plan, "as_of", None),
             "cached": bool(getattr(plan, "cached", False)),
@@ -1311,8 +1329,15 @@ def run_daily_round(
             "extra_holdings": list(getattr(plan, "extra_holdings", []) or []),
             "blocked_holdings": list(getattr(plan, "blocked_holdings", []) or []),
             "deep_analysis_set": list(getattr(plan, "deep_analysis_set", []) or []),
+            "deferred_candidates": list(getattr(plan, "deferred_candidates", []) or []),
             "description": sanitize_for_log(getattr(plan, "screening_description", "")),
         }
+        from tradingagents.screening.context import screening_context_from_selection
+        screening_summary["factor_context"] = screening_context_from_selection(getattr(plan, "selection", None))
+        if getattr(plan, "selection", None):
+            quality = plan.selection.get("data_quality") or {}
+            screening_summary["data_quality"] = {k: quality.get(k) for k in ("version", "counts", "financials", "business_quality")}
+            screening_summary["input_snapshot"] = str(SelectionStore(default_selection_cache_path(runtime)).snapshot_path(plan.selection))
         if ab_mode:
             screening_summary.update({
                 "selection_hash": getattr(plan, "selection_hash", None),
@@ -1325,6 +1350,8 @@ def run_daily_round(
                 "status": SYMBOL_PENDING, "analysis_run_ref": None, "signal": None,
                 "trade_intent": None, "execution_result_summary": None,
             })
+        if len(journal["symbols"]) > runtime.get("screening_analysis_limit", 20):
+            raise LongRunStop("SCREENING_STOPPED", "persisted round exceeds the stock analysis limit")
         save_round_journal(run_id, journal)
         log_event(run_id, "round_screening",
                   {"session": session_date, "cached": journal["screening"]["cached"],
@@ -1407,6 +1434,7 @@ def _ab_selection_artifact_path(run_id: str, root: str | Path, session_date: str
 def _read_ab_selection_artifact(
     path: Path, *, session_date: str, expected_config_fingerprint: Optional[str] = None,
     expected_top20_count: int = 20,
+    screening_config: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     payload = read_json(path)
     if payload is None:
@@ -1442,7 +1470,13 @@ def _read_ab_selection_artifact(
         raise LongRunStop("STATE_CORRUPT", "shared A/B selection data feed changed")
     top40 = selection.get("top40")
     top20 = selection.get("top20")
-    if not isinstance(top40, list) or not isinstance(top20, list) or len(top20) != expected_top20_count:
+    from tradingagents.screening.selection_store import selection_rows_valid, SCHEMA_VERSION
+    from tradingagents.screening.quality import quality_report_valid
+    rows_valid = selection_rows_valid(selection, screening_config) if screening_config is not None else (
+        isinstance(top40, list) and isinstance(top20, list) and len(top20) == expected_top20_count
+    )
+    if (selection.get("schema_version") != SCHEMA_VERSION or not rows_valid
+            or not quality_report_valid(selection, screening_config or {})):
         raise LongRunStop("STATE_CORRUPT", "shared A/B selection Top40/Top20 is invalid")
     top40_symbols = {
         row.get("symbol") for row in top40
@@ -1529,6 +1563,7 @@ def run_ab_daily_round(
         artifact_path, session_date=session_date,
         expected_config_fingerprint=expected_fingerprint,
         expected_top20_count=int(arm_runtimes["traders"].get("screening_select_n", 20)),
+        screening_config=arm_runtimes["traders"],
     )
     shared_plan = None
     if selection_record is None:
@@ -1692,7 +1727,15 @@ def run_ab_daily_round(
         frozen_symbols = arm_entry.get("candidate_symbols")
         if isinstance(frozen_symbols, list):
             top20_symbols = [str(row.get("symbol")) for row in selection.get("top20", [])]
-            if frozen_symbols[:len(top20_symbols)] != top20_symbols:
+            deferred = arm_entry.get("deferred_candidates") or []
+            blocked = {row["symbol"] for row in arm_entry.get("blocked_holdings") or []}
+            expected_symbols = [s for s in top20_symbols if s not in set(deferred) | blocked] + list(arm_entry.get("extra_holdings") or [])
+            limit = arm_runtimes[backend].get("screening_analysis_limit", 20)
+            valid_pool = (frozen_symbols == expected_symbols and len(set(frozen_symbols)) == len(frozen_symbols)
+                          and len(frozen_symbols) <= limit
+                          and set(deferred).issubset(top20_symbols)
+                          and not set(deferred).intersection(arm_entry.get("overlap_holdings") or []))
+            if not valid_pool:
                 raise LongRunStop("STATE_CORRUPT", f"{backend} frozen candidate pool changed")
             if arm_entry.get("selection_hash") != selection_record["selection_hash"]:
                 raise LongRunStop("STATE_CORRUPT", f"{backend} frozen selection hash changed")
@@ -1707,6 +1750,7 @@ def run_ab_daily_round(
                 extra_holdings=list(arm_entry.get("extra_holdings") or []),
                 blocked_holdings=list(arm_entry.get("blocked_holdings") or []),
                 deep_analysis_set=list(frozen_symbols),
+                deferred_candidates=list(deferred),
                 scan_stats=selection.get("stats"),
                 screening_description="shared A/B screening selection",
                 selection_hash=selection_record["selection_hash"],
@@ -1720,10 +1764,14 @@ def run_ab_daily_round(
             )
         if getattr(arm_plan, "stopped", False):
             raise LongRunStop("SCREENING_STOPPED", f"{backend} held-review plan stopped: {arm_plan.stop_reason_text()}")
+        if (len(arm_plan.deep_analysis_set) > arm_runtimes[backend].get("screening_analysis_limit", 20)
+                or len(set(arm_plan.deep_analysis_set)) != len(arm_plan.deep_analysis_set)):
+            raise LongRunStop("SCREENING_STOPPED", f"{backend} analysis pool exceeds the stock budget or contains duplicates")
         arm_plan.cached = bool(selection_record.get("cached", False))
         if arm_plan.selection_hash != selection_record["selection_hash"]:
             raise LongRunStop("STATE_CORRUPT", f"{backend} arm plan does not match shared selection")
         arm_entry["candidate_symbols"] = list(arm_plan.deep_analysis_set or [])
+        arm_entry["deferred_candidates"] = list(getattr(arm_plan, "deferred_candidates", []) or [])
         arm_entry["overlap_holdings"] = list(arm_plan.overlap_holdings or [])
         arm_entry["extra_holdings"] = list(arm_plan.extra_holdings or [])
         arm_entry["blocked_holdings"] = list(arm_plan.blocked_holdings or [])
@@ -1790,9 +1838,23 @@ def run_ab_daily_round(
         save_round_journal(run_id, journal)
         return sha
 
+    # Holdings may reserve different slot counts in the two accounts. Only
+    # candidates present in BOTH frozen analysis pools form an entry pair.
+    paired_symbols = [s for s in top20_symbols if all(_arm_symbol_entry(b, s) for b in AB_BACKENDS)]
+    journal["budget_unpaired_symbols"] = [s for s in top20_symbols if s not in paired_symbols]
+    for backend, prepared in prepared_arms.items():
+        held = set(arm_plans[backend].overlap_holdings) | set(arm_plans[backend].extra_holdings)
+        for symbol in journal["budget_unpaired_symbols"]:
+            entry = prepared.journal["symbols"].get(symbol)
+            if entry and symbol not in held and entry.get("status") == SYMBOL_PENDING:
+                entry["status"] = SYMBOL_DONE
+                entry["execution_result_summary"] = {"no_trade": True, "error": "AB_ANALYSIS_BUDGET_UNPAIRED"}
+        save_round_journal(prepared.run_id, prepared.journal)
+    save_round_journal(run_id, journal)
+
     # Pair by symbol: both analysis intents are durable before either account
     # executes. Every switch reapplies its arm config and safety guard.
-    for symbol in top20_symbols:
+    for symbol in paired_symbols:
         import hashlib
         first_arm = int.from_bytes(hashlib.sha256(f"{session_date}:{symbol}".encode()).digest()[:8], "big") % 2
         pair_order = AB_BACKENDS if first_arm == 0 else tuple(reversed(AB_BACKENDS))
@@ -1866,13 +1928,16 @@ def run_ab_daily_round(
             if stop_reason:
                 return _yield_ab_round()
 
-    # Positions outside the shared Top20 have no counterpart. Keep their
-    # existing-account management after the paired entry universe.
+    # Account-specific held review also includes held Top20 symbols whose
+    # counterpart deferred them. Never discard held risk review to form pairs.
     for backend in AB_BACKENDS:
         prepared = prepared_arms.get(backend)
         if prepared is None:
             continue
-        for symbol in arm_plans[backend].extra_holdings:
+        held_review = list(arm_plans[backend].extra_holdings) + [
+            s for s in arm_plans[backend].overlap_holdings if s not in paired_symbols
+        ]
+        for symbol in held_review:
             stop_reason = _run_prepared_round_symbols(
                 prepared, phase="analysis", symbols=[symbol], reapply_runtime=True,
             )

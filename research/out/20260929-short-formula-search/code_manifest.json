@@ -1,0 +1,10 @@
+{
+  "research/out/20260929-short-formula-search/METHOD.md": "ac76dac2d3d89db48ebd34872010c4b8c3cbe1a940314a050b746215a3f45180",
+  "research/out/20260929-short-formula-search/prepare.py": "174c8da9c5b87ad734979f5184d8bb5b17425481d1182ce0fc41a0616f6f0468",
+  "research/out/20260929-short-formula-search/compare.py": "50e10778cb5c807e7480165b5953ee6d87848dffc9c8b7a04d835c2cfefa0f62",
+  "research/out/20260929-short-formula-search/verify.py": "a3e8689025ef186434bc08f9d72c41a5a38b6d5fe1e85cc3366771e5c43c1153",
+  "research/out/20260929-short-formula-search/external_check.py": "157fa13dd2ee9f867f67963d108c56a367aec9bda1e48ef6080ee2238541f76c",
+  "research/out/20260929-short-screen/compare.py": "4ae706fc07ec269eef0fe7e7d73b188bc571eee8757b265721d59dcb5afd9e9e",
+  "research/src/panel.py": "274074cc5497a9d08f2e093277a32b1185c413a56e23303a7a7bfccb747e5f2e",
+  "research/src/common.py": "da031b4ed5076b87dc22236050e2c07af706765a28f664ce180dda8990632795"
+}

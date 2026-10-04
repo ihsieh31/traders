@@ -1,0 +1,40 @@
+{
+  "periods_verified": 236,
+  "observations_verified": 486,
+  "unique_forward_bars": 9380,
+  "independent_trace_accessions": 151,
+  "maximum_ratio_error": 5.329070518200751e-15,
+  "maximum_score_error": 1.7763568394002505e-15,
+  "maximum_pnl_error": 5.551115123125783e-17,
+  "raw_main_financials": {
+    "repaired_main_accessions": 1,
+    "repaired_source_audit": {
+      "source_references_verified": 4032,
+      "source_archive_sha256": {
+        "2018q1.zip": "f7f0083d28779ff373cd097ded88d5408eae9cc178f89014ca3ed8b24dc84185",
+        "2018q1_notes.zip": "4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383"
+      },
+      "filing_metadata_verified": 964,
+      "complete_repaired_accessions": 94,
+      "pilot_added_values": 54,
+      "used_and_pilot_added_values_match_source": true,
+      "sample_sha256": "0d26d1b7ca5085c4eb85b508bfe328240f93cc3f4b52ba951dd26f08b6b71020",
+      "method_sha256": "aafcc85846270917f5c709cea8755093769251c8cd6c52e73a59a556aee01a48"
+    },
+    "unchanged": {
+      "accessions": 2,
+      "facts": 44,
+      "quarters": [
+        "2020q1"
+      ],
+      "values_and_metadata_match": true
+    }
+  },
+  "main_external_observations": 6,
+  "external_max_return_difference": 6.103515640121238e-08,
+  "external_direction_matches": 6,
+  "external_gross_mean": -0.07663858402940643,
+  "local_gross_mean": -0.07663858211773282,
+  "method_sha256": "aafcc85846270917f5c709cea8755093769251c8cd6c52e73a59a556aee01a48",
+  "checks": "All arithmetic, cost scenarios, filing timing and OHLC assertions passed. External differences reported, not forced to match."
+}

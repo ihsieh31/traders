@@ -1,0 +1,12 @@
+[     0.6s] panel window 2015-09-29 .. 2019-12-31 (1072 sessions; 66 of them are leading history)
+[     0.6s] symbol filter: 4804 symbols from /Users/zongen/Downloads/codex/tradingBuffett/research/out/20261004-screen-diagnosis/stock_symbols.txt
+[     0.6s] reading bars cache (this takes a couple of minutes for 275 MB)...
+[     8.5s] panel: 2674 symbols x 1072 sessions to scatter
+[     8.8s] 1072 sessions x 2674 symbols (2015-09-29 .. 2019-12-31), 2,420,749 finite closes (84.4% density)
+fundamental coverage (any session): {'revenue': 0.4809274495138369, 'gross_profit': 0.3986537023186238, 'assets': 0.48915482423335827, 'cfo': 0.4655946148092745, 'liabilities': 0.34480179506357517}
+[    13.7s] short-winners          qualified=False checks={'6': False, '7': False, '8': False, '9': True, '10': False} relative ann=-0.0212 t=-0.31 absolute ann=-0.1474
+[    13.7s] short-max              qualified=False checks={'6': False, '7': True, '8': False, '9': False, '10': False} relative ann=-0.0885 t=-1.18 absolute ann=-0.2147
+[    13.7s] short-vol              qualified=False checks={'6': False, '7': False, '8': False, '9': False, '10': False} relative ann=-0.1699 t=-2.07 absolute ann=-0.2961
+[    13.7s] short-far-from-high    qualified=False checks={'6': False, '7': False, '8': False, '9': False, '10': False} relative ann=-0.1401 t=-1.73 absolute ann=-0.2709
+[    13.7s] short-low-gpa          qualified=False checks={'6': True, '7': False, '8': False, '9': True, '10': False} relative ann=0.0028 t=0.05 absolute ann=-0.1478
+[    13.7s] SELECTED: None

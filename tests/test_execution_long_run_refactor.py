@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace as NS
+from unittest.mock import patch
 
 import pytest
 
@@ -48,7 +49,11 @@ UPDATED_CANONICAL_HASHES = {
     "contracts": "af1ef28c11a81f72175753f881a9f3a16639d608eaaafafb747bd31a691f61a5",
     # Missing execution DB is now reported as unavailable without creating
     # a new empty ledger; these are the resulting complete report snapshots.
-    "long_run_fresh": "3437abc6b80e5965ddd94c97925adc16a4863f1b341810edd185357bc3c74b47",
+    # Screening journals include policy identity and deferred candidates.
+    # The fresh snapshot changes only its schema-6 policy fingerprint; the
+    # test below restores schema 5 and proves the previous full hash matches.
+    # Formula exclusion-20261004-1 (trend tolerance) again changes only it.
+    "long_run_fresh": "8ea2dda5c01125900710485fc7ffc09118dba2eedd102d4bb187e8299ce3642f",
     "long_run_resume": "5420793cdcd243437ee3b096cbda23cd351b1c2cd498dbebc44e07b9550ff734",
 }
 
@@ -306,9 +311,21 @@ def test_characterize_long_run_journal_report(fixed, monkeypatch, resume):
     paths = lr.write_final_report(report)
     files = {str(path.relative_to(lr.run_dir(run_id))): path.read_text()
              for path in sorted(lr.run_dir(run_id).rglob("*")) if path.is_file()}
-    evidence("long_run_resume" if resume else "long_run_fresh",
-             {"trace": trace, "journal": out, "report": report, "paths": paths,
-              "files": files, "graph_calls": graph.calls}, fixed)
+    payload = {"trace": trace, "journal": out, "report": report, "paths": paths,
+               "files": files, "graph_calls": graph.calls}
+    if not resume:
+        # Schema 7 / quality policy changes only the fingerprint in this trace. Prove
+        # every execution event and monetary/report field still matches the
+        # previous full snapshot before accepting the new fingerprint hash.
+        from tradingagents.screening.selection_store import SelectionStore
+        current = SelectionStore.config_fingerprint(runtime, None)
+        # The formula-version bump (trend tolerance) is also fingerprint-only.
+        with patch("tradingagents.screening.selection_store.SCHEMA_VERSION", 5), \
+                patch("tradingagents.screening.selection_store.FORMULA_VERSION", "exclusion-20260928-1"):
+            prior = SelectionStore.config_fingerprint(runtime, None)
+        restored = canonical(payload, fixed).replace(current, prior)
+        assert hashlib.sha256(restored.encode()).hexdigest() == "53efc0ed261bb7eb432841d09e4a571aaa51eb4a92d67e3f837bc825db00b751"
+    evidence("long_run_resume" if resume else "long_run_fresh", payload, fixed)
 
 
 def test_characterize_final_report_failure_preserves_active_state(fixed, monkeypatch):

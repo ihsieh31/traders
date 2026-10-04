@@ -1,0 +1,34 @@
+cached bytes 16777216 / 508544155
+cached bytes 33554432 / 508544155
+cached bytes 50331648 / 508544155
+cached bytes 67108864 / 508544155
+cached bytes 83886080 / 508544155
+cached bytes 100663296 / 508544155
+cached bytes 117440512 / 508544155
+cached bytes 134217728 / 508544155
+cached bytes 150994944 / 508544155
+cached bytes 167772160 / 508544155
+cached bytes 184549376 / 508544155
+cached bytes 201326592 / 508544155
+cached bytes 218103808 / 508544155
+cached bytes 234881024 / 508544155
+cached bytes 251658240 / 508544155
+cached bytes 268435456 / 508544155
+cached bytes 285212672 / 508544155
+cached bytes 301989888 / 508544155
+cached bytes 318767104 / 508544155
+cached bytes 335544320 / 508544155
+cached bytes 352321536 / 508544155
+cached bytes 369098752 / 508544155
+cached bytes 385875968 / 508544155
+cached bytes 402653184 / 508544155
+cached bytes 419430400 / 508544155
+cached bytes 436207616 / 508544155
+cached bytes 452984832 / 508544155
+cached bytes 469762048 / 508544155
+cached bytes 486539264 / 508544155
+cached bytes 503316480 / 508544155
+cached bytes 508544155 / 508544155
+num.tsv b'adsh\ttag\tversion\tddate\tqtrs\tuom\tdimh\tiprx\tvalue\tfootnote\tfootlen\tdimn\tcoreg\tdurp\tdatp\tdcml\n'
+sub.tsv b'adsh\tcik\tname\tsic\tcountryba\tstprba\tcityba\tzipba\tbas1\tbas2\tbaph\tcountryma\tstprma\tcityma\tzipma\tmas1\tmas2\tcountryinc\tstprinc\tein\tformer\tchanged\tafs\twksi\tfye\tform\tperiod\tfy\tfp\tfiled\taccepted\tprevrpt\tdetail\tinstance\tnciks\taciks\tpubfloatusd\tfloatdate\tfloataxis\tfloatmems\n'
+source cached 4b57ef7617913452e82e7a3e5b6ef0cf3f4909a131b129ee94902feebb964383
