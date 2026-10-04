@@ -1,0 +1,112 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_______________ test_characterize_long_run_journal_report[False] _______________
+
+fixed = PosixPath('/private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/pytest-of-zongen/pytest-687/test_characterize_long_run_jou0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11e2c6e40>
+resume = False
+
+    @pytest.mark.parametrize("resume", [False, True])
+    def test_characterize_long_run_journal_report(fixed, monkeypatch, resume):
+        from tradingagents.dataflows import config
+        from tradingagents.safety import SafetyGuard
+        monkeypatch.setattr("tradingagents.regime.regime_risk_multiplier", lambda *a, **kw: 1.0)
+        monkeypatch.setattr("tradingagents.portfolio.adjust_new_position_notional", lambda s, a, amount, **kw: amount)
+        guard = SafetyGuard(state_path=fixed / "safety/state.json", kill_switch_path=fixed / "safety/KILL_SWITCH")
+        monkeypatch.setattr("tradingagents.safety.get_safety_guard", lambda: guard)
+        cfg = round_fakes._valid_cfg(daily_llm_token_budget=1000)
+        runtime = lr.build_runtime_config(cfg)
+        runtime.update(results_dir=str(fixed / "results"), data_cache_dir=str(fixed / "cache"), daily_llm_token_budget=1000)
+        trace = []
+        run_id = "refactor-resume" if resume else "refactor-fresh"
+        session = round_fakes.SESSION_A
+        original_save = lr.save_round_journal
+        def save(run_id, journal):
+            original_save(run_id, journal)
+            trace.append(["journal", journal["status"], {s: e["status"] for s, e in journal["symbols"].items()}])
+        monkeypatch.setattr(lr, "save_round_journal", save)
+        original_apply = lr._apply_runtime_config
+        def apply(runtime):
+            original_apply(runtime)
+            trace.append(["runtime", config.get_config()["auto_screening_enabled"]])
+        monkeypatch.setattr(lr, "_apply_runtime_config", apply)
+        class Service(round_fakes.FakeService):
+            def startup_recover(self, can_submit=None):
+                assert config.get_config()["auto_screening_enabled"] is True
+                assert lr.round_path(run_id, session).is_file()
+                trace.append(["recover", can_submit() if can_submit else None])
+                return super().startup_recover(can_submit)
+            def enforce_exit_deadlines(self, can_submit=None):
+                assert lr.load_round_journal(run_id, session)["maintenance_execution"]["recovery"] is not None
+                trace.append(["deadlines", can_submit() if can_submit else None])
+                return super().enforce_exit_deadlines(can_submit)
+            def execute(self, **kwargs):
+                assert lr.load_round_journal(run_id, session)["symbols"]["AAA"]["status"] == "EXECUTING"
+                trace.append(["execute", kwargs["decision_id"], kwargs["dollar_amount"]])
+                return super().execute(**kwargs)
+        service = Service()
+        graph = round_fakes.FakeGraph()
+        def screening(config, refresh=False):
+            assert not resume, "execution-only resume screened"
+            trace.append(["screening", refresh])
+            return round_fakes._fake_plan(("AAA",))
+        def graph_factory(config):
+            assert not resume, "execution-only resume analyzed"
+            trace.append(["graph"])
+            return graph
+        if resume:
+            journal = lr.new_round_journal(session, ["AAA"])
+            journal["status"] = "RUNNING"
+            journal["screening"] = {"selection_date": session, "as_of": session, "cached": False,
+                "top20": [{"symbol": "AAA", "rank": 1}], "deep_analysis_set": ["AAA"],
+                "overlap_holdings": [], "extra_holdings": [], "blocked_holdings": [], "description": "saved"}
+            journal["symbols"]["AAA"].update(status="EXECUTING", signal="BUY", trade_intent=round_fakes._buy_intent("AAA"))
+            lr.save_round_journal(run_id, journal)
+            trace.clear()
+        deps, _, _ = round_fakes._deps(service=service, graph=graph, symbols=("AAA",),
+            screening_fn=screening, graph_factory=graph_factory, now_fn=lambda: STAMP)
+        out = lr.run_daily_round(run_id=run_id, session_date=session, long_cfg=cfg, runtime=runtime, deps=deps)
+        assert out["status"] == "COMPLETED" and len(service.execute_calls) == 1
+        if resume:
+            assert graph.calls == []
+        # Terminal replay returns exactly the journal without recovery or execution.
+        recovery_count = service.recover_calls
+        assert lr.run_daily_round(run_id=run_id, session_date=session, long_cfg=cfg, runtime=runtime, deps=deps) == out
+        assert service.recover_calls == recovery_count
+        state = {"run_id": run_id, "started_at": "2026-09-08T14:00:00+00:00",
+                 "ends_at": "2026-10-08T14:00:00+00:00", "status": "COMPLETED",
+                 "expected_sessions": [session, round_fakes.SESSION_B], "finished_at": STAMP.isoformat()}
+        lr.sweep_missed_sessions(run_id=run_id, expected=state["expected_sessions"], today="2026-09-10")
+        final = lr.capture_account_snapshot(round_fakes.FakeBroker(equity=102000, cash=52000))
+        final["phase"] = "final"
+        lr.append_jsonl(lr.run_dir(run_id) / "account_snapshots.jsonl", final)
+        report = lr.aggregate_final_report(state, cfg, runtime)
+        assert report["coverage"]["completion_rate"] == 0.5
+        paths = lr.write_final_report(report)
+        files = {str(path.relative_to(lr.run_dir(run_id))): path.read_text()
+                 for path in sorted(lr.run_dir(run_id).rglob("*")) if path.is_file()}
+        payload = {"trace": trace, "journal": out, "report": report, "paths": paths,
+                   "files": files, "graph_calls": graph.calls}
+        if not resume:
+            # Schema 6 changes only the policy fingerprint in this trace. Prove
+            # every execution event and monetary/report field still matches the
+            # previous full snapshot before accepting the new fingerprint hash.
+            from tradingagents.screening.selection_store import SelectionStore
+            current = SelectionStore.config_fingerprint(runtime, None)
+>           with patch("tradingagents.screening.selection_store.SCHEMA_VERSION", 5):
+                 ^^^^^
+E           NameError: name 'patch' is not defined
+
+/Users/zongen/Downloads/codex/tradingBuffett/tests/test_execution_long_run_refactor.py:320: NameError
+----------------------------- Captured stdout call -----------------------------
+[RUN_LOG] Started run 2026-09-08_20260908_150000_0123456789 -> /private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/pytest-of-zongen/pytest-687/test_characterize_long_run_jou0/results/__SCREENING__/TradingAgentsStrategy_logs/runs/2026-09-08_20260908_150000_0123456789.json
+[RUN_LOG] Finished run 2026-09-08_20260908_150000_0123456789 (completed) -> /private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/pytest-of-zongen/pytest-687/test_characterize_long_run_jou0/results/__SCREENING__/TradingAgentsStrategy_logs/runs/2026-09-08_20260908_150000_0123456789.json
+=============================== warnings summary ===============================
+.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6
+  /Users/zongen/Downloads/codex/tradingBuffett/.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_execution_long_run_refactor.py::test_characterize_long_run_journal_report[False]
+1 failed, 1 passed, 1 warning in 1.18s

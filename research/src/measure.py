@@ -308,31 +308,44 @@ def build_portfolio(
 
     for i, t in enumerate(as_of):
         cols = np.flatnonzero(mask[t]) if t < n_t else np.empty(0, dtype=int)
+        # An undefined score is not a rank; it can never be picked (S-61).
+        cols = cols[np.isfinite(scores[t][cols])] if cols.size else cols
         if cols.size < min_n:
             picks.append([])
+            # No position this period: the book is flat, so the next
+            # selection is a full rebuild, not a diff against stale names.
+            previous = None
             continue
         vals = scores[t][cols]
         order = np.lexsort((cols, -vals))
         chosen = [int(j) for j in cols[order][:top_k]]
         picks.append(chosen)
 
-        rets = [fwd[t][j] for j in chosen if np.isfinite(fwd[t][j])]
-        n_avail[i] = len(rets)
-        if not rets:
+        # Keep each return paired with ITS symbol. Filtering the returns and
+        # then zipping them against the unfiltered picks shifted every
+        # contribution after the first missing name onto the wrong symbol.
+        held = [(j, float(fwd[t][j])) for j in chosen if np.isfinite(fwd[t][j])]
+        n_avail[i] = len(held)
+        if not held:
             missing += 1
-            previous = set(chosen)
+            previous = None
             continue
-        gross[i] = float(np.mean(rets))
-        for j, r in zip(chosen, rets):
-            per_name[j] = per_name.get(j, 0.0) + float(r) / len(rets)
+        gross[i] = float(np.mean([r for _, r in held]))
+        for j, r in held:
+            per_name[j] = per_name.get(j, 0.0) + r / len(held)
 
         current = set(chosen)
         if previous is None:
             turnover[i] = 1.0  # initial build funds 20 positions (S-21)
         else:
-            weight = 1.0 / top_k
-            overlap = len(current & previous)
-            turnover[i] = 0.5 * (2.0 * (top_k - overlap) * weight)
+            # 0.5 * sum|w_new - w_old| with equal weights 1/len on each
+            # side; a period holding fewer than top_k names is weighted by
+            # what it actually holds, not by top_k.
+            w_new, w_old = 1.0 / len(current), 1.0 / len(previous)
+            turnover[i] = 0.5 * sum(
+                abs((w_new if j in current else 0.0) - (w_old if j in previous else 0.0))
+                for j in current | previous
+            )
         previous = current
 
     return Portfolio(
@@ -372,6 +385,46 @@ def _period_t(returns: np.ndarray, horizon: int) -> Optional[float]:
         return None
     _mean, t = newey_west(clean, nw_lag(horizon, max(1, horizon)))
     return float(t)
+
+
+def equal_weight_excess(
+    portfolio: Portfolio,
+    fwd: np.ndarray,
+    mask: np.ndarray,
+    horizon: int,
+    *,
+    cost: float = COST_SCENARIOS["base"],
+    block: int = 3,
+    n_resamples: int = 2000,
+) -> dict:
+    """Paired per-period excess over the same-universe equal-weight book.
+
+    plan.md R10 condition 12. The benchmark holds every eligible name on the
+    SAME as-of dates with the SAME forward-return convention and is charged
+    NO cost, which is the unfavourable side for the formula. A period the
+    formula skipped (no selection) has no excess, not a zero one.
+    """
+    net = portfolio.net(cost)
+    ew = np.full(len(portfolio), np.nan)
+    for i, t in enumerate(portfolio.as_of):
+        if t < mask.shape[0]:
+            vals = fwd[t][mask[t]]
+            vals = vals[np.isfinite(vals)]
+            if vals.size:
+                ew[i] = float(vals.mean())
+    excess = net - ew
+    clean = excess[np.isfinite(excess)]
+    boot = block_bootstrap(excess, horizon, block=block, n_resamples=n_resamples)
+    return {
+        "n_periods": int(clean.size),
+        "mean_excess_per_period": float(clean.mean()) if clean.size else None,
+        "annualised_excess": float(clean.mean() * (PERIODS_PER_YEAR / horizon)) if clean.size else None,
+        "annualised_equal_weight": float(np.nanmean(ew) * (PERIODS_PER_YEAR / horizon))
+        if np.isfinite(ew).any() else None,
+        "nw_t": _period_t(excess, horizon),
+        "bootstrap": boot,
+        "benchmark": "same-universe equal weight, same as-of grid, zero cost",
+    }
 
 
 # --------------------------------------------------------------------------

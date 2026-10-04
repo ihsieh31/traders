@@ -83,6 +83,7 @@ def _valid_cfg(**overrides):
         "decision_provider": "openai",
         "decision_model": "gpt-fake-decision",
         "screening_provider": "openai",
+        "screening_method": "legacy",
         "screening_model": "gpt-fake-screening",
     })
     cfg.update(overrides)
@@ -873,3 +874,23 @@ class PhaseBEnvIsolationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExclusionPreflightTest(_PreflightTest):
+    def test_formula_mode_probes_only_analysis_and_decision(self):
+        cfg = _valid_cfg(screening_method='auto', screening_provider=None, screening_model=None)
+        runtime = lr.build_runtime_config(cfg)
+        probe = _RecordingProbe()
+        with patch.dict(os.environ, _all_role_keys()):
+            result = lr.run_preflight(cfg, runtime, self._deps(probe))
+        self.assertTrue(result['ok'])
+        self.assertEqual([c['role'] for c in probe.calls], ['analysis', 'decision'])
+        self.assertTrue(any(c['name'] == 'screening_formula' for c in result['checks']))
+        self.assertNotIn('screening_provider', lr.missing_config_fields(cfg))
+
+    def test_policy_settings_survive_long_run_runtime_construction(self):
+        cfg = _valid_cfg(screening_method='exclusion', screening_max_vol20=.3,
+                         screening_min_r60=-.2, screening_analysis_limit=12)
+        runtime = lr.build_runtime_config(cfg)
+        for key in ('screening_method', 'screening_max_vol20', 'screening_min_r60', 'screening_analysis_limit'):
+            self.assertEqual(runtime[key], cfg[key])

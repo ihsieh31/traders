@@ -68,6 +68,7 @@ def _base_config(**overrides):
     config.update(
         {
             "auto_screening_enabled": True,
+            "screening_method": "legacy",
             "screening_provider": "openai",
             "screening_model": "screen-fake",
             "screening_backend_url": None,
@@ -93,10 +94,13 @@ def _bars_df(sessions, closes, volumes):
             {
                 "timestamp": pd.Timestamp(session.year, session.month, session.day, 5, 0, tz="UTC"),
                 "close": close,
+                "open": close, "high": close, "low": close,
                 "volume": volume,
             }
         )
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    frame.attrs.update(source="fixture_bars", feed="sip", adjustment="split")
+    return frame
 
 
 def _healthy_bars(as_of=_AS_OF, n=61, volume=250_000.0, calendar_rows=None):
@@ -121,6 +125,11 @@ def _healthy_bars(as_of=_AS_OF, n=61, volume=250_000.0, calendar_rows=None):
 
 
 class R1EnumTests(unittest.TestCase):
+    def setUp(self):
+        cap_patch = patch("tradingagents.screening.universe.fetch_nasdaq_market_caps", return_value={"AAA":1_000_000_000.})
+        cap_patch.start()
+        self.addCleanup(cap_patch.stop)
+
     def _asset(self, symbol, *, status, asset_class, tradable=True):
         return SimpleNamespace(
             symbol=symbol,
@@ -221,13 +230,16 @@ class R1EnumTests(unittest.TestCase):
         all_dates = sorted(_calendar_date_set(rows))
         # Use 25 symbols so Top20 leaves extras.
         universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ",
-                     "market_cap": 1_000_000_000.0} for i in range(25)]
+                     "market_cap": 1_000_000_000.0, "asset_id": f"fixture-T{i:02d}",
+                     "identity_source": "fixture_assets", "asset_class": "us_equity", "asset_status": "active",
+                     "tradable": True, "market_cap_source": "fixture_caps"} for i in range(25)]
         bars_map = {}
         for i, u in enumerate(universe):
             b, _ = _healthy_bars(calendar_rows=rows)
             # Vary closes slightly for deterministic ranking.
             b = b.copy()
-            b["close"] = b["close"] + i * 0.5
+            for column in ("open", "high", "low", "close"):
+                b[column] = b[column] + i * 0.5
             bars_map[u["symbol"]] = b
         # Extra holding OK1 with real enum ACTIVE.
         def asset_fn(symbol):
@@ -266,7 +278,9 @@ class R1EnumTests(unittest.TestCase):
         config = _base_config()
         rows = config["calendar_rows"]
         universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ",
-                     "market_cap": 1_000_000_000.0} for i in range(25)]
+                     "market_cap": 1_000_000_000.0, "asset_id": f"fixture-T{i:02d}",
+                     "identity_source": "fixture_assets", "asset_class": "us_equity", "asset_status": "active",
+                     "tradable": True, "market_cap_source": "fixture_caps"} for i in range(25)]
         bars_map = {}
         for i, u in enumerate(universe):
             b, _ = _healthy_bars(calendar_rows=rows)
@@ -471,7 +485,9 @@ class R4SipTests(unittest.TestCase):
         as_of_idx = dates.index(_AS_OF)
         sessions = dates[as_of_idx - 60 : as_of_idx + 1]
         universe = [{"symbol": f"T{i:02d}", "name": f"C {i}", "exchange": "NASDAQ",
-                     "market_cap": 1_000_000_000.0} for i in range(n)]
+                     "market_cap": 1_000_000_000.0, "asset_id": f"fixture-T{i:02d}",
+                     "identity_source": "fixture_assets", "asset_class": "us_equity", "asset_status": "active",
+                     "tradable": True, "market_cap_source": "fixture_caps"} for i in range(n)]
         bars = {}
         for i, u in enumerate(universe):
             closes = [100.0 + i + j * 0.5 for j in range(61)]
@@ -717,15 +733,20 @@ def _build_selection_for_symbols(config, rows, symbols_top20, universe_extra=5):
     # Universe must contain Top20 plus extras for ranking.
     all_symbols = list(symbols_top20) + [f"X{i:02d}" for i in range(universe_extra)]
     universe = [{"symbol": s, "name": s, "exchange": "NASDAQ",
-                 "market_cap": 1_000_000_000.0} for s in all_symbols]
+                 "market_cap": 1_000_000_000.0, "asset_id": f"fixture-{s}",
+                 "identity_source": "fixture_assets", "asset_class": "us_equity", "asset_status": "active",
+                 "tradable": True, "market_cap_source": "fixture_caps"} for s in all_symbols]
     dates = sorted([r.date for r in rows])
     as_of_idx = dates.index(_AS_OF)
     sessions = dates[as_of_idx - 60 : as_of_idx + 1]
     bars = {}
     for i, u in enumerate(universe):
         # Rank extras lower by giving Top20 higher drift.
-        base = 200.0 if u["symbol"] in set(symbols_top20) else 50.0
-        closes = [base + j * 0.8 for j in range(61)]
+        wanted = u["symbol"] in set(symbols_top20)
+        # The bounded factor table must itself contain the desired names;
+        # the fake LLM cannot select a name outside that table.
+        base, step = (200.0, .8) if wanted else (200.0, .01)
+        closes = [base + j * step for j in range(61)]
         bars[u["symbol"]] = _bars_df(sessions, closes, 300_000.0)
 
     order = {s: i for i, s in enumerate(symbols_top20)}

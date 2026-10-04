@@ -1,0 +1,17 @@
+{
+  "periods_verified": 236,
+  "selected_observations_verified": 4619,
+  "unique_forward_bars_checked": 59000,
+  "malformed_ohlc_forward_bars": 0,
+  "malformed_samples": [],
+  "production_factor_spots_checked": 240,
+  "factor_spot_dates": [
+    "2016-03-31",
+    "2020-03-20",
+    "2020-11-05"
+  ],
+  "maximum_factor_error": 4.75175454539567e-14,
+  "maximum_pnl_error": 5.551115123125783e-17,
+  "all_returns_costs_and_events_match": true,
+  "network": "blocked"
+}

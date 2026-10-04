@@ -274,6 +274,13 @@ DEFAULT_CONFIG = {
     # Screening client is ever built). True requires the three screening
     # keys below and enables the daily full-market scan + Top20 selection.
     "auto_screening_enabled": False,
+    # auto: report exclusion formula for longs; existing two-sided LLM screen
+    # for shorts. Every mode shares a 20-stock limit with held reviews;
+    # legacy bounds its Screening table before any LLM request.
+    "screening_method": "auto",
+    "screening_max_vol20": 0.28,
+    "screening_min_r60": -0.25,
+    "screening_analysis_limit": 20,
     # Third fixed LLM role. Required (no silent inheritance from Analysis /
     # llm_provider) whenever auto_screening_enabled is true; may use the
     # same vendor with independently configured values.

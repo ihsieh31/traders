@@ -1,0 +1,34 @@
+[
+  {
+    "symbol": "W",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/W?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "use": "2016-2020 quote OHLC only; current meta unused",
+    "status": "received",
+    "sha256": "63c1c6cdb8e5b689137691ee2360b0c47ebdc87957ad7a66c37c6fc2e17f8be5",
+    "bars": 1259
+  },
+  {
+    "symbol": "CVNA",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/CVNA?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "use": "2016-2020 quote OHLC only; current meta unused",
+    "status": "received",
+    "sha256": "b11e2e8290fe7793bb5a319a7ffa9384bf6dd6cf2cdc78c2e9b48b379c3b121a",
+    "bars": 927
+  },
+  {
+    "symbol": "ADM",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/ADM?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "use": "2016-2020 quote OHLC only; current meta unused",
+    "status": "received",
+    "sha256": "448157909082f16b41e8be0274addfee79f0a2f0298c6053222bf885e0238077",
+    "bars": 1259
+  },
+  {
+    "symbol": "SPGI",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/SPGI?period1=1451865600&period2=1609459200&interval=1d&events=div%2Csplits",
+    "use": "2016-2020 quote OHLC only; current meta unused",
+    "status": "received",
+    "sha256": "bf56f46b37b928ca95a6a0abba3628dc40fd9aa65dc1358649055e2a8f095458",
+    "bars": 1259
+  }
+]

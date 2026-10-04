@@ -4,7 +4,8 @@ Screening is a candidate *ranker*: it never forms a TradeIntent, never
 receives a broker credential, and never sees holdings, cash or news.
 Resolution follows the Phase B role pattern but is deliberately stricter:
 
-- The role exists only when ``auto_screening_enabled`` is true; then
+- Deterministic exclusion screening needs no LLM client or credentials.
+- In legacy mode with ``auto_screening_enabled`` true,
   ``screening_provider`` AND ``screening_model`` are required. There is
   no inheritance from ``llm_provider`` / ``deep_think_llm`` and no
   cross-role fallback — a missing value is a startup config error.
@@ -102,16 +103,22 @@ class ScreeningOutput(BaseModel):
 
 
 def resolve_screening_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve the Screening role; strict — no fallback, no inheritance.
+    """Resolve/validate the method; legacy LLM roles never inherit credentials.
 
-    Returns ``{"enabled": False}`` when auto screening is off (callers must
-    not build any client), or ``{"enabled": True, "spec": RoleSpec,
-    "api_key": str}``. Raises :class:`ScreeningConfigError` on any missing
-    or unsupported value while enabled.
+    Disabled or deterministic paths build no clients and resolve no API keys.
+    The spec is None for exclusion mode, and a RoleSpec for legacy mode.
     """
     enabled = bool(config.get("auto_screening_enabled", False))
     if not enabled:
         return {"enabled": False}
+
+    from .policy import validate_screening_policy
+    try:
+        method = validate_screening_policy(config)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ScreeningConfigError(str(exc)) from exc
+    if method == "exclusion":
+        return {"enabled": True, "method": method, "spec": None}
 
     provider = _clean(config.get("screening_provider"))
     if provider is None:
@@ -144,6 +151,7 @@ def resolve_screening_config(config: Dict[str, Any]) -> Dict[str, Any]:
     )
     return {
         "enabled": True,
+        "method": method,
         "spec": spec,
         "api_key": _resolve_provider_key(provider, SCREENING_ROLE),
     }
@@ -159,6 +167,8 @@ def build_screening_llm(resolved: Dict[str, Any], config: Dict[str, Any]) -> Ret
     """
     if not resolved.get("enabled"):
         raise ScreeningConfigError("screening is disabled; no client may be built")
+    if resolved.get("method") == "exclusion":
+        raise ScreeningConfigError("deterministic exclusion screening does not use an LLM")
     spec: RoleSpec = resolved["spec"]
     api_key = resolved.get("api_key") or ""
     if not api_key:
@@ -238,6 +248,8 @@ def build_screening_llm(resolved: Dict[str, Any], config: Dict[str, Any]) -> Ret
 def describe_screening_role(resolved: Dict[str, Any]) -> str:
     if not resolved.get("enabled"):
         return "screening disabled (manual watchlist mode)"
+    if resolved.get("method") == "exclusion":
+        return "Screening=deterministic exclusion formula (no Screening LLM)"
     spec: RoleSpec = resolved["spec"]
     return (
         f"Screening={spec.provider}/{spec.model}"

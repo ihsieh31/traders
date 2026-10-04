@@ -541,8 +541,9 @@ def get_user_selections():
     console.print(
         create_question_box(
             "Step 5c: Auto Screening (optional)",
-            "Enable the daily full-market screen? Screening derives a "
-            "validated Top20 and analyzes Top20 plus current holdings; "
+            "Enable the daily full-market screen? Screening selects "
+            "up to 20 candidates using the report formula; current holdings "
+            "take priority within the 20-stock analysis limit; "
             "leave off to analyze the manual ticker above.",
             "no",
         )
@@ -551,25 +552,18 @@ def get_user_selections():
     if typer.confirm("Enable auto screening?", default=False):
         from tradingagents.screening.llm import resolve_screening_config
 
-        screening_provider = (
-            typer.prompt("Screening provider", default="", show_default=False).strip() or None
-        )
-        screening_model = (
-            typer.prompt("Screening model", default="", show_default=False).strip() or None
-        )
-        screening_url = (
-            typer.prompt(
-                "Screening endpoint override (empty = provider default)",
-                default="",
-                show_default=False,
-            ).strip()
-            or None
-        )
+        legacy = typer.confirm("Use legacy LLM screening instead of the report formula?", default=False)
+        screening_provider = screening_model = screening_url = None
+        if legacy:
+            screening_provider = typer.prompt("Screening provider", default="", show_default=False).strip() or None
+            screening_model = typer.prompt("Screening model", default="", show_default=False).strip() or None
+            screening_url = typer.prompt("Screening endpoint override (empty = provider default)", default="", show_default=False).strip() or None
         screening_refresh = typer.confirm(
             "Refresh: force a new scan even if today's selection exists?", default=False
         )
         screening_settings = {
             "auto_screening_enabled": True,
+            "screening_method": "legacy" if legacy else "auto",
             "screening_provider": screening_provider,
             "screening_model": screening_model,
             "screening_backend_url": screening_url,
@@ -842,6 +836,7 @@ def run_analysis():
         "decision_model",
         "decision_backend_url",
         "auto_screening_enabled",
+        "screening_method",
         "screening_provider",
         "screening_model",
         "screening_backend_url",
@@ -864,6 +859,8 @@ def run_analysis():
             )
             return
         _display_screening_plan(plan)
+        from tradingagents.screening.context import screening_context_from_selection
+        config["_screening_context"] = screening_context_from_selection(plan.selection)
         tickers = plan.deep_analysis_set
     else:
         tickers = [selections["ticker"]]
@@ -883,6 +880,9 @@ def _display_screening_plan(plan):
         f"{'cached' if plan.cached else 'fresh scan'})"
     )
     table = Table(title="Top20 (research priority)")
+    quality = (plan.selection or {}).get("data_quality") or {}
+    if quality:
+        console.print(f"Input quality: {quality.get('counts', {})}; financial/business quality: unknown")
     table.add_column("Rank", justify="right")
     table.add_column("Symbol")
     table.add_column("Score", justify="right")
@@ -895,6 +895,8 @@ def _display_screening_plan(plan):
             str(entry.get("short_reason", ""))[:120],
         )
     console.print(table)
+    if plan.deferred_candidates:
+        console.print("Deferred by the analysis limit: " + ", ".join(plan.deferred_candidates))
     if plan.overlap_holdings:
         console.print(f"Top20 ∩ holdings: {', '.join(plan.overlap_holdings)}")
     if plan.extra_holdings:
@@ -1459,7 +1461,8 @@ def collect_long_run_config(
         cfg[f"{role}_backend_url"] = typer.prompt(
             f"{role} backend URL (required for {provider})").strip()
 
-    for _role in ("analysis", "decision", "screening"):
+    from tradingagents.screening.policy import screening_method
+    for _role in ("analysis", "decision") + (("screening",) if screening_method(cfg) == "legacy" else ()):
         _ask_provider(_role)
         _ask_model(_role)
         _ask_url(_role)
@@ -1582,7 +1585,8 @@ def collect_long_run_config(
     from tradingagents.llm_clients.roles import _resolve_provider_key
 
     seen_providers: dict[str, str] = {}
-    for _role in ("analysis", "decision", "screening"):
+    from tradingagents.screening.policy import screening_method
+    for _role in ("analysis", "decision") + (("screening",) if screening_method(cfg) == "legacy" else ()):
         provider = str(cfg.get(f"{_role}_provider") or "").lower()
         seen_providers.setdefault(provider, _role)
     for provider, _role in seen_providers.items():
@@ -1895,7 +1899,8 @@ def _long_run_single_locked(overrides: dict) -> None:
                   f"| notional ${float(cfg['base_trade_notional_usd']):,.0f}")
     console.print(f"Analysts: {', '.join(cfg['analysts'])} "
                   f"| depth {cfg['research_depth']} | {cfg['output_language']}")
-    for _role in ("analysis", "decision", "screening"):
+    from tradingagents.screening.policy import screening_method
+    for _role in ("analysis", "decision") + (("screening",) if screening_method(cfg) == "legacy" else ()):
         console.print(f"{_role}: {cfg[f'{_role}_provider']}/{cfg[f'{_role}_model']} "
                       f"endpoint={lr.sanitize_url(cfg.get(f'{_role}_backend_url')) or 'provider default'}")
     if cfg.get("analysis_fallback_provider") and cfg.get("analysis_fallback_model"):
@@ -2181,9 +2186,10 @@ def _long_run_ab_locked(overrides: dict, *, resume: str | None = None) -> None:
         console.print(f"[bold red]A/B startup accounts are not comparable: {sanitize_for_log(str(exc))}[/bold red]")
         raise typer.Exit(code=1)
 
+    from tradingagents.screening.policy import screening_method
     console.print("\n[bold]Full-market A/B Paper observation[/bold]")
     console.print(f"Duration: {cfg['duration_calendar_days']} calendar days | daily at {cfg['run_time_et']} ET")
-    console.print(f"Shared screening: US equity universe → Top40 → Top20 | paper notional: ${float(cfg['base_trade_notional_usd']):,.0f}")
+    console.print(f"Shared screening: {screening_method(cfg)} | up to {runtime.get('screening_select_n', 20)} candidates | paper notional: ${float(cfg['base_trade_notional_usd']):,.0f}")
     console.print(f"Traders account A: {account_refs['traders']} | Berkshire account B: {account_refs['berkshire']}")
     console.print("Both arms use the same Trader, risk, sizing, execution, and short policies; only the analysis backend changes.")
     if not typer.confirm("Authorize this full-market A/B PAPER test? The process must stay running; rerun `python -m cli.main long-run --mode ab` after a crash.", default=False):

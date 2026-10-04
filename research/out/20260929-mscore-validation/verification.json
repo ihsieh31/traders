@@ -1,0 +1,25 @@
+{
+  "periods_verified": 236,
+  "observations_verified": 412,
+  "unique_forward_bars": 7720,
+  "independent_trace_accessions": 113,
+  "maximum_ratio_error": 5.329070518200751e-15,
+  "maximum_score_error": 1.7763568394002505e-15,
+  "maximum_pnl_error": 5.551115123125783e-17,
+  "raw_main_financials": {
+    "accessions": 3,
+    "facts": 66,
+    "quarters": [
+      "2018q1",
+      "2020q1"
+    ],
+    "values_and_metadata_match": true
+  },
+  "main_external_observations": 9,
+  "external_max_return_difference": 4.881706413226161e-05,
+  "external_direction_matches": 9,
+  "external_gross_mean": -0.06305868850342515,
+  "local_gross_mean": -0.06306106068184107,
+  "method_sha256": "c5e442c5a8edbf414b41d46c24581f784ce033023ad4e91a3897a60776f5c769",
+  "checks": "All arithmetic, cost scenarios, filing timing and OHLC assertions passed. External differences reported, not forced to match."
+}

@@ -1,0 +1,767 @@
+{
+  "universe_counts": {
+    "Stock": 4804,
+    "ETF": 4842,
+    "unknown": 107
+  },
+  "splits": {
+    "2016-2020": {
+      "E1_mixed_universe": {
+        "periods": 59,
+        "mean_etf_share_of_picks": 0.11694915254237287,
+        "periods_with_any_etf": 32,
+        "mean_etf_share_of_eligible_pool": 0.19561161366813304,
+        "worst_period": {
+          "date": "2020-04-20",
+          "etf": 20,
+          "picks": 20,
+          "symbols": [
+            "BIV",
+            "BLV",
+            "FIXD",
+            "TLT",
+            "VGLT",
+            "SCHZ",
+            "BOND",
+            "FLCB",
+            "SPTL",
+            "IUSB",
+            "AGGY",
+            "BND",
+            "GVI",
+            "AGG",
+            "SLQD",
+            "IEF",
+            "SPIB",
+            "VCSH",
+            "VCIT",
+            "TLH"
+          ]
+        }
+      },
+      "stock_only": {
+        "symbols": 2895,
+        "sessions": 1259,
+        "pool": {
+          "min": 0,
+          "median": 364.0,
+          "days_below_20_after_ready": 68,
+          "days_not_ready": 60
+        },
+        "short_days": [
+          {
+            "date": "2018-02-08",
+            "survivors": 9,
+            "eligible": 1067
+          },
+          {
+            "date": "2018-02-09",
+            "survivors": 15,
+            "eligible": 1069
+          },
+          {
+            "date": "2018-12-17",
+            "survivors": 15,
+            "eligible": 1069
+          },
+          {
+            "date": "2018-12-18",
+            "survivors": 17,
+            "eligible": 1070
+          },
+          {
+            "date": "2018-12-19",
+            "survivors": 10,
+            "eligible": 1073
+          },
+          {
+            "date": "2018-12-20",
+            "survivors": 8,
+            "eligible": 1071
+          },
+          {
+            "date": "2018-12-21",
+            "survivors": 3,
+            "eligible": 1104
+          },
+          {
+            "date": "2018-12-24",
+            "survivors": 1,
+            "eligible": 1107
+          },
+          {
+            "date": "2018-12-26",
+            "survivors": 3,
+            "eligible": 1110
+          },
+          {
+            "date": "2018-12-27",
+            "survivors": 8,
+            "eligible": 1113
+          },
+          {
+            "date": "2018-12-28",
+            "survivors": 13,
+            "eligible": 1103
+          },
+          {
+            "date": "2019-01-02",
+            "survivors": 17,
+            "eligible": 1100
+          },
+          {
+            "date": "2019-01-03",
+            "survivors": 13,
+            "eligible": 1094
+          },
+          {
+            "date": "2020-02-27",
+            "survivors": 8,
+            "eligible": 1185
+          },
+          {
+            "date": "2020-02-28",
+            "survivors": 0,
+            "eligible": 1201
+          },
+          {
+            "date": "2020-03-02",
+            "survivors": 3,
+            "eligible": 1204
+          },
+          {
+            "date": "2020-03-03",
+            "survivors": 2,
+            "eligible": 1207
+          },
+          {
+            "date": "2020-03-04",
+            "survivors": 8,
+            "eligible": 1211
+          },
+          {
+            "date": "2020-03-05",
+            "survivors": 5,
+            "eligible": 1210
+          },
+          {
+            "date": "2020-03-06",
+            "survivors": 3,
+            "eligible": 1216
+          },
+          {
+            "date": "2020-03-09",
+            "survivors": 0,
+            "eligible": 1220
+          },
+          {
+            "date": "2020-03-10",
+            "survivors": 0,
+            "eligible": 1231
+          },
+          {
+            "date": "2020-03-11",
+            "survivors": 0,
+            "eligible": 1232
+          },
+          {
+            "date": "2020-03-12",
+            "survivors": 0,
+            "eligible": 1233
+          },
+          {
+            "date": "2020-03-13",
+            "survivors": 0,
+            "eligible": 1248
+          },
+          {
+            "date": "2020-03-16",
+            "survivors": 0,
+            "eligible": 1244
+          },
+          {
+            "date": "2020-03-17",
+            "survivors": 0,
+            "eligible": 1250
+          },
+          {
+            "date": "2020-03-18",
+            "survivors": 0,
+            "eligible": 1234
+          },
+          {
+            "date": "2020-03-19",
+            "survivors": 0,
+            "eligible": 1247
+          },
+          {
+            "date": "2020-03-20",
+            "survivors": 0,
+            "eligible": 1253
+          },
+          {
+            "date": "2020-03-23",
+            "survivors": 0,
+            "eligible": 1254
+          },
+          {
+            "date": "2020-03-24",
+            "survivors": 0,
+            "eligible": 1258
+          },
+          {
+            "date": "2020-03-25",
+            "survivors": 0,
+            "eligible": 1270
+          },
+          {
+            "date": "2020-03-26",
+            "survivors": 0,
+            "eligible": 1268
+          },
+          {
+            "date": "2020-03-27",
+            "survivors": 0,
+            "eligible": 1256
+          },
+          {
+            "date": "2020-03-30",
+            "survivors": 0,
+            "eligible": 1250
+          },
+          {
+            "date": "2020-03-31",
+            "survivors": 0,
+            "eligible": 1242
+          },
+          {
+            "date": "2020-04-01",
+            "survivors": 0,
+            "eligible": 1230
+          },
+          {
+            "date": "2020-04-02",
+            "survivors": 0,
+            "eligible": 1226
+          },
+          {
+            "date": "2020-04-03",
+            "survivors": 0,
+            "eligible": 1217
+          },
+          {
+            "date": "2020-04-06",
+            "survivors": 0,
+            "eligible": 1219
+          },
+          {
+            "date": "2020-04-07",
+            "survivors": 0,
+            "eligible": 1218
+          },
+          {
+            "date": "2020-04-08",
+            "survivors": 0,
+            "eligible": 1218
+          },
+          {
+            "date": "2020-04-09",
+            "survivors": 0,
+            "eligible": 1214
+          },
+          {
+            "date": "2020-04-13",
+            "survivors": 0,
+            "eligible": 1203
+          },
+          {
+            "date": "2020-04-14",
+            "survivors": 0,
+            "eligible": 1196
+          },
+          {
+            "date": "2020-04-15",
+            "survivors": 0,
+            "eligible": 1184
+          },
+          {
+            "date": "2020-04-16",
+            "survivors": 0,
+            "eligible": 1171
+          },
+          {
+            "date": "2020-04-17",
+            "survivors": 0,
+            "eligible": 1171
+          },
+          {
+            "date": "2020-04-20",
+            "survivors": 0,
+            "eligible": 1155
+          },
+          {
+            "date": "2020-04-21",
+            "survivors": 1,
+            "eligible": 1151
+          },
+          {
+            "date": "2020-04-22",
+            "survivors": 1,
+            "eligible": 1146
+          },
+          {
+            "date": "2020-04-23",
+            "survivors": 3,
+            "eligible": 1129
+          },
+          {
+            "date": "2020-04-24",
+            "survivors": 5,
+            "eligible": 1116
+          },
+          {
+            "date": "2020-04-27",
+            "survivors": 5,
+            "eligible": 1121
+          },
+          {
+            "date": "2020-04-28",
+            "survivors": 6,
+            "eligible": 1121
+          },
+          {
+            "date": "2020-04-29",
+            "survivors": 5,
+            "eligible": 1126
+          },
+          {
+            "date": "2020-04-30",
+            "survivors": 8,
+            "eligible": 1136
+          },
+          {
+            "date": "2020-05-01",
+            "survivors": 8,
+            "eligible": 1135
+          },
+          {
+            "date": "2020-05-04",
+            "survivors": 6,
+            "eligible": 1135
+          },
+          {
+            "date": "2020-05-05",
+            "survivors": 15,
+            "eligible": 1134
+          },
+          {
+            "date": "2020-05-06",
+            "survivors": 13,
+            "eligible": 1123
+          },
+          {
+            "date": "2020-05-07",
+            "survivors": 10,
+            "eligible": 1122
+          },
+          {
+            "date": "2020-05-08",
+            "survivors": 15,
+            "eligible": 1129
+          },
+          {
+            "date": "2020-05-12",
+            "survivors": 19,
+            "eligible": 1127
+          },
+          {
+            "date": "2020-06-12",
+            "survivors": 19,
+            "eligible": 1210
+          },
+          {
+            "date": "2020-06-24",
+            "survivors": 15,
+            "eligible": 1228
+          },
+          {
+            "date": "2020-06-26",
+            "survivors": 19,
+            "eligible": 1240
+          }
+        ],
+        "effective_positions": {
+          "picked": 3.351590061268331,
+          "survivor_random": 3.7300573635746646,
+          "eligible_random": 4.189853475813137
+        },
+        "cohorts": {
+          "eligible": {
+            "n": 61318,
+            "bad_path10_bounds": [
+              0.15605531817737042,
+              0.15605531817737042
+            ],
+            "up_end10_rate": 0.14002413646889983
+          },
+          "keep": {
+            "n": 20734,
+            "bad_path10_bounds": [
+              0.09525417189157905,
+              0.09525417189157905
+            ],
+            "up_end10_rate": 0.06091444005015916
+          },
+          "removed": {
+            "n": 40584,
+            "bad_path10_bounds": [
+              0.18711807608909914,
+              0.18711807608909914
+            ],
+            "up_end10_rate": 0.18044056771141337
+          },
+          "current20": {
+            "n": 1180,
+            "bad_path10_bounds": [
+              0.14067796610169492,
+              0.14067796610169492
+            ],
+            "up_end10_rate": 0.11864406779661017
+          },
+          "report28": {
+            "n": 1140,
+            "bad_path10_bounds": [
+              0.10526315789473684,
+              0.10526315789473684
+            ],
+            "up_end10_rate": 0.07894736842105263
+          },
+          "reuse28": {
+            "n": 1140,
+            "bad_path10_bounds": [
+              0.10263157894736842,
+              0.10263157894736842
+            ],
+            "up_end10_rate": 0.062280701754385964
+          }
+        },
+        "matched_selection_rates": {
+          "current20": {
+            "periods": 57,
+            "bad_path_upper_rate": 0.14035087719298245
+          },
+          "report28": {
+            "periods": 57,
+            "bad_path_upper_rate": 0.10526315789473684
+          },
+          "reuse28": {
+            "periods": 57,
+            "bad_path_upper_rate": 0.10263157894736842
+          }
+        },
+        "paired_bad_path_delta_block3": {
+          "report28_minus_current20": {
+            "delta": -0.03508771929824561,
+            "ci95": [
+              -0.0587719298245614,
+              -0.0043859649122807015
+            ],
+            "block_periods": 3,
+            "paired_periods": 57
+          },
+          "reuse28_minus_current20": {
+            "delta": -0.037719298245614034,
+            "ci95": [
+              -0.05526315789473685,
+              -0.014013157894736956
+            ],
+            "block_periods": 3,
+            "paired_periods": 57
+          },
+          "reuse28_minus_report28": {
+            "delta": -0.0026315789473684223,
+            "ci95": [
+              -0.014912280701754387,
+              0.00967105263157883
+            ],
+            "block_periods": 3,
+            "paired_periods": 57
+          },
+          "keep_minus_removed": {
+            "delta": -0.08413827132056433,
+            "ci95": [
+              -0.10019318699752224,
+              -0.06732464827431348
+            ],
+            "block_periods": 3,
+            "paired_periods": 57
+          }
+        }
+      }
+    },
+    "2021-2025": {
+      "E1_mixed_universe": {
+        "periods": 62,
+        "mean_etf_share_of_picks": 0.15161290322580645,
+        "periods_with_any_etf": 47,
+        "mean_etf_share_of_eligible_pool": 0.2297161904124171,
+        "worst_period": {
+          "date": "2024-07-05",
+          "etf": 13,
+          "picks": 20,
+          "symbols": [
+            "IWY",
+            "MAGS",
+            "SPXL",
+            "TYL",
+            "IWF",
+            "VONG",
+            "UPRO",
+            "SMIN",
+            "IVW",
+            "VTR",
+            "SCHG",
+            "FICO",
+            "SPYG",
+            "GOOG",
+            "GOOGL",
+            "IGM",
+            "GKOS",
+            "ACIW",
+            "IUSG",
+            "QLD"
+          ]
+        }
+      },
+      "stock_only": {
+        "symbols": 4262,
+        "sessions": 1255,
+        "pool": {
+          "min": 3,
+          "median": 319.0,
+          "days_below_20_after_ready": 22,
+          "days_not_ready": 0
+        },
+        "short_days": [
+          {
+            "date": "2022-05-09",
+            "survivors": 16,
+            "eligible": 1387
+          },
+          {
+            "date": "2022-05-10",
+            "survivors": 15,
+            "eligible": 1384
+          },
+          {
+            "date": "2022-05-11",
+            "survivors": 13,
+            "eligible": 1391
+          },
+          {
+            "date": "2022-05-12",
+            "survivors": 16,
+            "eligible": 1393
+          },
+          {
+            "date": "2022-06-13",
+            "survivors": 3,
+            "eligible": 1330
+          },
+          {
+            "date": "2022-06-14",
+            "survivors": 4,
+            "eligible": 1324
+          },
+          {
+            "date": "2022-06-15",
+            "survivors": 6,
+            "eligible": 1330
+          },
+          {
+            "date": "2022-06-16",
+            "survivors": 4,
+            "eligible": 1327
+          },
+          {
+            "date": "2022-06-17",
+            "survivors": 9,
+            "eligible": 1370
+          },
+          {
+            "date": "2022-06-21",
+            "survivors": 18,
+            "eligible": 1379
+          },
+          {
+            "date": "2022-08-31",
+            "survivors": 14,
+            "eligible": 1285
+          },
+          {
+            "date": "2022-09-02",
+            "survivors": 15,
+            "eligible": 1275
+          },
+          {
+            "date": "2022-09-06",
+            "survivors": 16,
+            "eligible": 1272
+          },
+          {
+            "date": "2022-09-23",
+            "survivors": 10,
+            "eligible": 1336
+          },
+          {
+            "date": "2022-09-26",
+            "survivors": 9,
+            "eligible": 1333
+          },
+          {
+            "date": "2022-09-27",
+            "survivors": 8,
+            "eligible": 1336
+          },
+          {
+            "date": "2022-09-29",
+            "survivors": 13,
+            "eligible": 1335
+          },
+          {
+            "date": "2022-09-30",
+            "survivors": 6,
+            "eligible": 1336
+          },
+          {
+            "date": "2025-04-07",
+            "survivors": 8,
+            "eligible": 1572
+          },
+          {
+            "date": "2025-04-08",
+            "survivors": 5,
+            "eligible": 1570
+          },
+          {
+            "date": "2025-04-09",
+            "survivors": 16,
+            "eligible": 1590
+          },
+          {
+            "date": "2025-04-10",
+            "survivors": 19,
+            "eligible": 1587
+          }
+        ],
+        "effective_positions": {
+          "picked": 3.2715507928618464,
+          "survivor_random": 3.3389558259783017,
+          "eligible_random": 3.734597237938558
+        },
+        "cohorts": {
+          "eligible": {
+            "n": 87038,
+            "bad_path10_bounds": [
+              0.22317838185620073,
+              0.22317838185620073
+            ],
+            "up_end10_rate": 0.15072726854936924
+          },
+          "keep": {
+            "n": 19155,
+            "bad_path10_bounds": [
+              0.11714956930305404,
+              0.11714956930305404
+            ],
+            "up_end10_rate": 0.07606369094231272
+          },
+          "removed": {
+            "n": 67883,
+            "bad_path10_bounds": [
+              0.25309724084085855,
+              0.25309724084085855
+            ],
+            "up_end10_rate": 0.1717955894701177
+          },
+          "current20": {
+            "n": 1240,
+            "bad_path10_bounds": [
+              0.1967741935483871,
+              0.1967741935483871
+            ],
+            "up_end10_rate": 0.125
+          },
+          "report28": {
+            "n": 1200,
+            "bad_path10_bounds": [
+              0.11833333333333333,
+              0.11833333333333333
+            ],
+            "up_end10_rate": 0.09083333333333334
+          },
+          "reuse28": {
+            "n": 1200,
+            "bad_path10_bounds": [
+              0.11083333333333334,
+              0.11083333333333334
+            ],
+            "up_end10_rate": 0.09
+          }
+        },
+        "matched_selection_rates": {
+          "current20": {
+            "periods": 60,
+            "bad_path_upper_rate": 0.1958333333333333
+          },
+          "report28": {
+            "periods": 60,
+            "bad_path_upper_rate": 0.11833333333333335
+          },
+          "reuse28": {
+            "periods": 60,
+            "bad_path_upper_rate": 0.11083333333333333
+          }
+        },
+        "paired_bad_path_delta_block3": {
+          "report28_minus_current20": {
+            "delta": -0.0775,
+            "ci95": [
+              -0.11416666666666667,
+              -0.02916666666666667
+            ],
+            "block_periods": 3,
+            "paired_periods": 60
+          },
+          "reuse28_minus_current20": {
+            "delta": -0.08499999999999999,
+            "ci95": [
+              -0.11416666666666667,
+              -0.050833333333333335
+            ],
+            "block_periods": 3,
+            "paired_periods": 60
+          },
+          "reuse28_minus_report28": {
+            "delta": -0.007499999999999996,
+            "ci95": [
+              -0.034166666666666665,
+              0.011666666666666664
+            ],
+            "block_periods": 3,
+            "paired_periods": 60
+          },
+          "keep_minus_removed": {
+            "delta": -0.1298386294702401,
+            "ci95": [
+              -0.15810913224763232,
+              -0.10326310355366831
+            ],
+            "block_periods": 3,
+            "paired_periods": 62
+          }
+        }
+      }
+    }
+  }
+}

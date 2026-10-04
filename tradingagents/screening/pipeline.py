@@ -1,23 +1,11 @@
-"""Phase C screening pipeline: daily scan → Top40 → Screening Top20 →
-deep-analysis set (Top20 ∪ fresh holdings).
+"""Daily production screening, validated caching and account-specific analysis plans.
 
-This is the module the scheduler (WebUI auto mode, CLI auto mode) actually
-calls once per round; it is not a standalone helper. Semantics:
-
-- One full-market scan and one logical Screening invocation per US trading
-  day. Later rounds the same day reuse the validated on-disk selection;
-  holdings are re-fetched every round and never cached with the selection.
-- Non-trading days run held-risk review only: no scan, no Screening call,
-  no new entries (the execution gate blocks openings independently).
-- Manual refresh is an explicit new scan: the existing cache is removed
-  FIRST, so a failed refresh can never fall back to the old list; the
-  round stops and resumption requires an explicitly successful retry.
-- Any screening-stage failure (universe/bars/quarantine unavailable,
-  INSUFFICIENT_CANDIDATES, INSUFFICIENT_SECTOR_CAPACITY, invalid LLM
-  output, provider exhaustion) returns a stopped plan with zero
-  downstream analysis — the caller must halt the round.
-- All external dependencies are injectable so tests run offline; the
-  defaults wire to the real Alpaca clients and the real Screening LLM.
+Long-only auto mode uses the report's deterministic gates and survivor ranking;
+legacy mode retains its price lanes and Screening LLM (also used by auto shorts).
+All modes reserve holdings within the 20-stock analysis limit, including symbols
+seen by the legacy Screening LLM. Non-trading days only review holdings.
+Refresh invalidates the old cache first, and failures stop downstream work.
+External dependencies are injectable for offline tests.
 """
 
 from __future__ import annotations
@@ -28,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date
 import hashlib
 import json
+import math
 from typing import Any, Callable, Dict, List, Optional
 
 from tradingagents.dataflows.alpaca_utils import (
@@ -39,6 +28,7 @@ from tradingagents.screening.gate import check_entry_allowed  # noqa: F401  (re-
 from tradingagents.screening.llm import (
     ScreeningConfigError,
     ScreeningStop,
+    ScreenedCandidate,
     build_screening_llm,
     describe_screening_role,
     resolve_screening_config,
@@ -50,7 +40,12 @@ from tradingagents.screening.metrics import (
     resolve_as_of,
     scan_universe,
     select_research_candidates,
+    score_exclusion_candidates,
+    select_exclusion_candidates,
+    FORMULA_VERSION,
 )
+from .policy import ExclusionThresholds, screening_method
+from .quality import identity_issues, build_quality_report
 from tradingagents.screening.prompt import build_sector_plan, run_screening_invocation
 from tradingagents.screening.selection_store import (
     SCHEMA_VERSION,
@@ -59,6 +54,7 @@ from tradingagents.screening.selection_store import (
     _integrity_digest,
     default_selection_cache_path,
     eastern_timestamp,
+    selection_rows_valid,
 )
 from tradingagents.screening.sessions import (
     current_trading_date_production,
@@ -90,6 +86,7 @@ class RoundPlan:
     scan_stats: Optional[dict] = None
     screening_description: str = ""
     selection_hash: Optional[str] = None
+    deferred_candidates: List[str] = field(default_factory=list)
 
     @property
     def stopped(self) -> bool:
@@ -205,7 +202,7 @@ def _run_scan(
     trading_date: str,
     now=None,
 ) -> RoundPlan:
-    """Full-market scan + one Screening invocation; saves the selection."""
+    """Full-market scan + configured selection method; saves the sealed selection."""
     from tradingagents.dataflows.market_calendar import CalendarError
 
     select_n = int(config.get("screening_select_n", 20))
@@ -213,10 +210,19 @@ def _run_scan(
     max_per_sector = int(config.get("screening_max_per_sector", 5))
     calendar_client, calendar_rows = _resolve_calendar(config, deps)
 
+    # Reserve risk-review names before any Screening LLM sees a factor table.
+    held = _attach_holdings(RoundPlan(), config, deps)
+    if held.stopped:
+        return held
+    held_count = len(held.deep_analysis_set)
+    limit = config.get("screening_analysis_limit", 20)
+
     try:
         universe = (deps.universe_fn or (lambda _cfg: fetch_us_equity_universe()))(config)
     except Exception as exc:
         return _stopped("UNIVERSE_UNAVAILABLE", str(exc))
+    if not isinstance(universe, list) or not universe:
+        return _stopped("UNIVERSE_UNAVAILABLE", "the instrument snapshot is empty or malformed")
 
     try:
         checker = (deps.quarantine_fn or _default_quarantine)(config)
@@ -224,15 +230,16 @@ def _run_scan(
         return _stopped(exc.reason, exc.detail)
 
     try:
+        bar_symbols = [entry["symbol"] for entry, reason in zip(universe, identity_issues(universe)) if reason is None]
         bars_by_symbol = (
             deps.bars_fn
             or fetch_daily_bars_batch
         )(
-            [entry["symbol"] for entry in universe],
+            bar_symbols,
             as_of=as_of,
             adjustment=str(config.get("screening_bar_adjustment", "split")),
             batch_size=int(config.get("screening_bars_batch_size", 100)),
-        )
+        ) if bar_symbols else {}
     except Exception as exc:
         return _stopped("BARS_UNAVAILABLE", str(exc))
 
@@ -247,6 +254,7 @@ def _run_scan(
             quarantine_checker=checker,
             calendar_client=calendar_client,
             calendar_rows=calendar_rows,
+            adjustment_policy=str(config.get("screening_bar_adjustment", "split")),
         )
     except CalendarError as exc:
         return _stopped("CALENDAR_UNAVAILABLE", str(exc))
@@ -256,43 +264,35 @@ def _run_scan(
         "excluded": dict(sorted(stats.excluded.items())),
     }
     allow_shorts = bool(config.get("allow_shorts", False))
-    if not allow_shorts and len(scored) < select_n:
-        return _stopped(
-            "INSUFFICIENT_CANDIDATES",
-            f"only {len(scored)} eligible candidates; {select_n} required "
-            "(unqualified symbols are never padded in); "
-            f"exclusions={scan_stats['excluded']}",
-            scan_stats=scan_stats,
-        )
-    top40 = select_research_candidates(
-        scored, top_k=top_k, allow_shorts=allow_shorts
-    )
-    if allow_shorts and len(top40) < select_n:
-        return _stopped(
-            "INSUFFICIENT_CANDIDATES",
-            f"only {len(top40)} candidates meet the directional research lanes; "
-            f"{select_n} required (eligible={len(scored)}); "
-            f"exclusions={scan_stats['excluded']}",
-            scan_stats=scan_stats,
-        )
-    sector_plan = build_sector_plan(top40, max_per_sector=max_per_sector, select_n=select_n)
-    if sector_plan.get("insufficient_capacity"):
-        return _stopped(
-            "INSUFFICIENT_SECTOR_CAPACITY",
-            "candidate sectors cannot fill the selection under the "
-            f"{max_per_sector}-per-sector cap",
-            scan_stats=scan_stats,
-        )
+    deterministic = resolved["method"] == "exclusion"
+    if deterministic:
+        top40 = score_exclusion_candidates(scored, ExclusionThresholds.from_config(config), stats)
+        scan_stats.update({"survivors": len(top40), "excluded": dict(sorted(stats.excluded.items()))})
+    else:
+        top40 = select_research_candidates(scored, top_k=min(top_k, limit-held_count), allow_shorts=allow_shorts)
+    effective_n = min(select_n, len(top40))
+    sector_plan = build_sector_plan(top40, max_per_sector=max_per_sector, select_n=effective_n)
+    if not deterministic and sector_plan.get("insufficient_capacity"):
+        effective_n = min(effective_n, sum(min(count, max_per_sector) for count in sector_plan["sector_counts"].values()))
+        sector_plan = build_sector_plan(top40, max_per_sector=max_per_sector, select_n=effective_n)
 
     try:
-        if deps.screening_invoke_fn is not None:
+        if not effective_n:
+            candidates = []
+        elif deterministic:
+            selected = select_exclusion_candidates(top40, select_n=select_n, sector_plan=sector_plan)
+            candidates = [ScreenedCandidate(
+                rank=i, symbol=item.symbol, screening_score=item.exclusion_score,
+                short_reason="Passed vol20/trend/r60 gates; survivor-percentile formula priority",
+            ) for i, item in enumerate(selected, 1)]
+        elif deps.screening_invoke_fn is not None:
             candidates = deps.screening_invoke_fn(
-                top40, sector_plan, select_n=select_n, max_per_sector=max_per_sector
+                top40, sector_plan, select_n=effective_n, max_per_sector=max_per_sector
             )
         else:
             invoke = _default_screening_invoke(config, resolved)
             candidates = invoke(
-                top40, sector_plan, select_n=select_n, max_per_sector=max_per_sector
+                top40, sector_plan, select_n=effective_n, max_per_sector=max_per_sector
             )
     except ScreeningStop as exc:
         return _stopped(exc.reason, exc.detail)
@@ -303,6 +303,12 @@ def _run_scan(
     except Exception as exc:
         return _stopped("SCREENING_STAGE_FAILED", f"{type(exc).__name__}: {sanitize_for_log(str(exc))}")
 
+    if not isinstance(candidates, list) or (not deterministic and len(candidates) != effective_n):
+        return _stopped("SCREENING_INVALID_OUTPUT", "Screening response does not match the bounded selection count", scan_stats=scan_stats)
+    scan_stats["selected"] = len(candidates)
+    scan_stats["selection_shortfall"] = select_n - len(candidates)
+    scan_stats["screening_llm_symbols"] = [] if deterministic else [item.symbol for item in top40]
+
     spec = resolved.get("spec")
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -311,10 +317,11 @@ def _run_scan(
         "generated_at": eastern_timestamp(now),
         # R4: bind consolidated-feed semantics so IEX-era caches never validate.
         "data_feed": SCREENING_DATA_FEED,
+        "method": resolved["method"],
         "role": {
-            "provider": spec.provider,
-            "model": spec.model,
-            "endpoint": spec.display_endpoint(),
+            "provider": spec.provider if spec else "deterministic",
+            "model": spec.model if spec else FORMULA_VERSION,
+            "endpoint": spec.display_endpoint() if spec else None,
         },
         "config_fingerprint": store.config_fingerprint(config, spec),
         "adjustment_policy": str(config.get("screening_bar_adjustment", "split")),
@@ -331,11 +338,23 @@ def _run_scan(
                 "symbol": candidate.symbol,
                 "screening_score": float(candidate.screening_score),
                 "short_reason": candidate.short_reason,
+                **next(item.factor_row() for item in top40 if item.symbol == candidate.symbol),
             }
             for candidate in candidates
         ],
     }
-    store.save(payload)
+    payload["data_quality"] = build_quality_report(stats, as_of=as_of,
+        observed_at=payload["generated_at"], adjustment=payload["adjustment_policy"])
+    selected_symbols = {r["symbol"] for r in payload["top20"]}
+    for record in stats.records:
+        if record.get("bars") and record["symbol"] not in selected_symbols:
+            record["bars"].pop("window", None)
+    if not selection_rows_valid(payload, config):
+        return _stopped("SCREENING_INPUT_QUALITY_INVALID", "selection input evidence did not validate", scan_stats=scan_stats)
+    try:
+        store.save(payload)
+    except OSError as exc:
+        return _stopped("SCREENING_SNAPSHOT_UNAVAILABLE", sanitize_for_log(str(exc)), scan_stats=scan_stats)
     # Carry the exact sealed bytes forward so the long-run A/B coordinator
     # can persist and revalidate this same authoritative selection.
     payload = store.load_raw() or payload
@@ -355,6 +374,17 @@ def _attach_holdings(
     """Add only this account's safely reviewable holdings to a frozen Top20."""
     try:
         positions = (deps.positions_fn or _default_positions)()
+        normalized = []
+        for position in positions:
+            qty = position["qty"]
+            if isinstance(qty, bool) or not math.isfinite(float(qty)):
+                raise ValueError("position quantity is unavailable or nonfinite")
+            symbol = normalize_symbol(position["symbol"])
+            if not symbol:
+                raise ValueError("position symbol is unavailable")
+            if float(qty) != 0:
+                normalized.append({**position, "symbol": symbol, "qty": float(qty)})
+        positions = normalized
     except Exception as exc:
         return _stopped(
             "HOLDINGS_UNAVAILABLE",
@@ -376,11 +406,10 @@ def _attach_holdings(
     overlap: List[str] = []
     extras: List[str] = []
     blocked: List[dict] = []
-    seen = set(top20_symbols)
+    seen = set()
     for holding in sorted(us_holdings, key=lambda p: p["symbol"]):
         symbol = holding["symbol"]
         if symbol in seen:
-            overlap.append(symbol)
             continue
         seen.add(symbol)
         reason = checker(symbol)
@@ -401,12 +430,34 @@ def _attach_holdings(
                 "reason": f"not safely analyzable (tradable={tradable}, status={status})",
             })
             continue
-        extras.append(symbol)
+        if symbol in top20_symbols:
+            overlap.append(symbol)
+        else:
+            extras.append(symbol)
 
     plan.overlap_holdings = sorted(overlap)
     plan.extra_holdings = extras
     plan.blocked_holdings = blocked
-    plan.deep_analysis_set = [*top20_symbols, *extras]
+    # Held risk review gets slots first. Keep the shared Top20 selection intact
+    # for A/B and entry validation, but do not invoke analysis on deferred names.
+    safe_top = [s for s in top20_symbols if s not in {b["symbol"] for b in blocked}]
+    limit = config.get("screening_analysis_limit", 20)
+    if len(overlap) + len(extras) > limit:
+        plan.status, plan.reason = "stopped", "HELD_REVIEW_BUDGET_EXCEEDED"
+        plan.detail = f"{len(overlap) + len(extras)} reviewable US holdings exceed the {limit}-stock analysis limit"
+        plan.entry_allowed = False
+        return plan
+    new_slots = limit - len(overlap) - len(extras)
+    if (screening_method(config) == "legacy" and plan.selection is not None and not plan.cached
+            and len({r["symbol"] for r in plan.selection.get("top40", [])} | set(overlap + extras)) > limit):
+        plan.status, plan.reason = "stopped", "SCREENING_ANALYSIS_BUDGET_EXCEEDED"
+        plan.detail = "holdings changed after screening; the combined LLM stock budget would be exceeded"
+        plan.entry_allowed = False
+        return plan
+    new_names = [s for s in safe_top if s not in overlap][:new_slots]
+    allowed = set(overlap + new_names)
+    plan.deep_analysis_set = [s for s in safe_top if s in allowed] + extras
+    plan.deferred_candidates = [s for s in safe_top if s not in allowed]
     return plan
 
 
@@ -455,8 +506,8 @@ def prepare_screening_round_from_selection(
     top40 = selection.get("top40")
     if not isinstance(top20, list) or not isinstance(top40, list):
         return _stopped("FROZEN_SELECTION_INVALID", "selection is missing Top40 or Top20")
-    if len(top20) != int(config.get("screening_select_n", 20)):
-        return _stopped("FROZEN_SELECTION_INVALID", "selection Top20 count is invalid")
+    if not selection_rows_valid(selection, config):
+        return _stopped("FROZEN_SELECTION_INVALID", "selection formula, gates or candidate rows are invalid")
     top40_symbols = {
         row.get("symbol") for row in top40 if isinstance(row, dict)
     }
@@ -492,7 +543,7 @@ def prepare_screening_round(
     deps: Optional[ScreeningDeps] = None,
     now=None,
 ) -> RoundPlan:
-    """Prepare one auto-screening round (scan-or-cache + holdings union).
+    """Prepare one auto-screening round (scan-or-cache + bounded held review).
 
     The public scheduler entry. Never raises for expected screening
     failures — it returns a stopped plan; configuration errors raise
@@ -597,8 +648,6 @@ def prepare_screening_round(
         plan.scan_stats = selection.get("stats")
         plan.entry_allowed = True
         plan.top20 = list(selection.get("top20", []))
-
-    top20_symbols = [entry["symbol"] for entry in plan.top20]
 
     if plan.selection is not None:
         plan.selection_hash = hashlib.sha256(

@@ -29,7 +29,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from research.src.common import log, require_credentials
+from research.src.common import log
 
 #: Production ``EligibilityThresholds.required_bars``. The factor window is
 #: exactly this long, so no factor can look further back.
@@ -137,7 +137,8 @@ def build_panel(
     """
     from research.src import common
 
-    require_credentials()
+    # Credentials are checked by load_calendar_rows only if it must fetch;
+    # the bars themselves always come from the local cache.
     # Fetch wide enough to cover the buffer, then clip to the buffer.
     fetch_start = start - timedelta(days=int(buffer_sessions * 1.6) + 14)
     calendar_rows = common.load_calendar_rows(fetch_start, end)
@@ -445,7 +446,7 @@ def cross_sections(
 # --------------------------------------------------------------------------
 
 
-def forward_returns(panel: Panel, horizon: int) -> np.ndarray:
+def forward_returns(panel: Panel, horizon: int, *, delisted_exit: bool = False) -> np.ndarray:
     """Next-open entry, same-day-out exit, the plan.md R6 convention.
 
     ``fwd[t, j] = close[t + horizon] / open[t + 1] - 1``
@@ -458,6 +459,16 @@ def forward_returns(panel: Panel, horizon: int) -> np.ndarray:
     There is deliberately no ``horizon == 1`` special case. Such a branch is
     where the off-by-one that flipped a sign once lived; at ``horizon == 1``
     this general form already reduces to ``close[t+1] / open[t+1] - 1``.
+
+    ``delisted_exit=True`` closes a position whose symbol never trades again
+    at or after the exit session (it left the panel mid-hold) at its last
+    available close inside the holding window. With the default ``False``
+    that position has no return and ``build_portfolio`` drops it, which is
+    the "delisting P&L hole" (plan.md §7 note 3). A temporary halt -- data
+    resumes after the exit session -- stays NaN under both settings: the
+    position still exists and its exit price is genuinely unknown. The last
+    trade approximates a cash merger well and a bankruptcy optimistically
+    (the delisting return itself is not in the bars).
     """
     if horizon < 1:
         raise ValueError("horizon must be >= 1")
@@ -469,6 +480,23 @@ def forward_returns(panel: Panel, horizon: int) -> np.ndarray:
         entry = panel.open[1 : n_t - horizon + 1]
         exit_ = panel.close[horizon:n_t]
         out[: n_t - horizon] = exit_ / entry - 1.0
+    if delisted_exit:
+        close = panel.close
+        rows = np.arange(n_t)[:, None]
+        # Row index of the most recent finite close at or before each row.
+        last_seen = np.maximum.accumulate(np.where(np.isfinite(close), rows, -1), axis=0)
+        final = last_seen[-1]  # the symbol's last session in the panel
+        exit_rows = np.arange(horizon, n_t)[:, None]
+        last_in_window = last_seen[horizon:n_t]
+        gone = (
+            ~np.isfinite(exit_)
+            & (final[None, :] < exit_rows)                      # never trades again
+            & (last_in_window >= exit_rows - horizon + 1)       # traded after entry
+            & np.isfinite(entry)
+        )
+        t_idx, s_idx = np.nonzero(gone)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out[t_idx, s_idx] = close[last_in_window[t_idx, s_idx], s_idx] / entry[t_idx, s_idx] - 1.0
     return out
 
 
@@ -478,6 +506,22 @@ def valid_as_of(panel: Panel, horizon: int) -> np.ndarray:
     if n_t < horizon + 1:
         return np.empty(0, dtype=int)
     return np.arange(n_t - horizon, dtype=int)
+
+
+def study_as_of(panel: Panel, horizon: int, start: date) -> np.ndarray:
+    """Non-overlapping as-of grid: every ``horizon`` sessions from the first
+    session on or after ``start``, keeping the forward window inside the panel.
+
+    The panel carries ~66 sessions of leading history before ``start`` so the
+    first factor window is complete; those sessions belong to the PREVIOUS
+    period and must never be sampled. The idiom this replaces,
+    ``np.flatnonzero(valid_as_of(panel, h))[::h]``, sampled from inside that
+    buffer (the 2021-2025 split's first date was 2020-12-24) and, because
+    ``flatnonzero`` treats the index array as a mask, also dropped index 0
+    and shifted the whole grid by one session.
+    """
+    first = next((i for i, d in enumerate(panel.sessions) if d >= start), len(panel.sessions))
+    return np.arange(first, len(panel.sessions) - horizon, horizon, dtype=int)
 
 
 # --------------------------------------------------------------------------

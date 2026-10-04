@@ -1,0 +1,105 @@
+........................................................................ [  3%]
+....................................................................................................................................... [ 10%]
+........................................................................ [ 14%]
+.............................................................. [ 17%]
+.................................................................... [ 20%]
+............................................................................................. [ 25%]
+........................................................................ [ 29%]
+...........................................F............................ [ 32%]
+........................................................................ [ 36%]
+........................................................................ [ 40%]
+.......................................................................................................... [ 45%]
+............................................................... [ 48%]
+...................................................... [ 51%]
+........................................................................ [ 55%]
+........................................................................ [ 58%]
+.............................................. [ 61%]
+................................................................. [ 64%]
+.........FFFFF.......................................................... [ 68%]
+........................................................................ [ 71%]
+............................................................. [ 74%]
+................................................................................................ [ 79%]
+........................................................................ [ 83%]
+.................................................................... [ 86%]
+........................................................... [ 89%]
+............................................................. [ 92%]
+........................................................................ [ 96%]
+.................................................................... [100%]
+=================================== FAILURES ===================================
+_______________ test_characterize_long_run_journal_report[False] _______________
+/Users/zongen/Downloads/codex/tradingBuffett/tests/test_execution_long_run_refactor.py:312: in test_characterize_long_run_journal_report
+    evidence("long_run_resume" if resume else "long_run_fresh",
+/Users/zongen/Downloads/codex/tradingBuffett/tests/test_execution_long_run_refactor.py:119: in evidence
+    assert digest == expected, f"original/final difference: {output / (name + '.json')}"
+E   AssertionError: original/final difference: /private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/pytest-of-zongen/pytest-685/test_characterize_long_run_jou0/characterization/long_run_fresh.json
+E   assert '074320ea9497...4c030efcf2ba0' == '53efc0ed261b...bc825db00b751'
+E     
+E     - 53efc0ed261bb7eb432841d09e4a571aaa51eb4a92d67e3f837bc825db00b751
+E     + 074320ea94973dacdacd63861b1efcfa45dbbedb87b62f581fd4c030efcf2ba0
+----------------------------- Captured stdout call -----------------------------
+[RUN_LOG] Started run 2026-09-08_20260908_150000_0123456789 -> /private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/pytest-of-zongen/pytest-685/test_characterize_long_run_jou0/results/__SCREENING__/TradingAgentsStrategy_logs/runs/2026-09-08_20260908_150000_0123456789.json
+[RUN_LOG] Finished run 2026-09-08_20260908_150000_0123456789 (completed) -> /private/var/folders/46/3vjy25x94rvgpv7dj_1h3snm0000gn/T/pytest-of-zongen/pytest-685/test_characterize_long_run_jou0/results/__SCREENING__/TradingAgentsStrategy_logs/runs/2026-09-08_20260908_150000_0123456789.json
+________ R2RecoveryGateTests.test_broker_existing_adopted_no_duplicate _________
+tests/test_phase_c_remediation.py:868: in test_broker_existing_adopted_no_duplicate
+    _build_selection_for_symbols(config, rows, top20)
+tests/test_phase_c_remediation.py:752: in _build_selection_for_symbols
+    assert plan.status == "ok", plan.detail
+E   AssertionError: KeyError: 'M15'
+E   assert 'stopped' == 'ok'
+E     
+E     - ok
+E     + stopped
+________________ R2RecoveryGateTests.test_current_top20_allowed ________________
+tests/test_phase_c_remediation.py:851: in test_current_top20_allowed
+    _build_selection_for_symbols(config, rows, top20)
+tests/test_phase_c_remediation.py:752: in _build_selection_for_symbols
+    assert plan.status == "ok", plan.detail
+E   AssertionError: KeyError: 'M15'
+E   assert 'stopped' == 'ok'
+E     
+E     - ok
+E     + stopped
+_______________ R2RecoveryGateTests.test_non_trading_day_blocked _______________
+tests/test_phase_c_remediation.py:834: in test_non_trading_day_blocked
+    _build_selection_for_symbols(config, rows, top20)
+tests/test_phase_c_remediation.py:752: in _build_selection_for_symbols
+    assert plan.status == "ok", plan.detail
+E   AssertionError: KeyError: 'M15'
+E   assert 'stopped' == 'ok'
+E     
+E     - ok
+E     + stopped
+___________ R2RecoveryGateTests.test_out_of_top20_blocked_zero_posts ___________
+tests/test_phase_c_remediation.py:811: in test_out_of_top20_blocked_zero_posts
+    _build_selection_for_symbols(config, rows, top20)
+tests/test_phase_c_remediation.py:752: in _build_selection_for_symbols
+    assert plan.status == "ok", plan.detail
+E   AssertionError: KeyError: 'M15'
+E   assert 'stopped' == 'ok'
+E     
+E     - ok
+E     + stopped
+_________ R2RecoveryGateTests.test_reducing_exit_allowed_outside_top20 _________
+tests/test_phase_c_remediation.py:902: in test_reducing_exit_allowed_outside_top20
+    _build_selection_for_symbols(config, rows, top20)
+tests/test_phase_c_remediation.py:752: in _build_selection_for_symbols
+    assert plan.status == "ok", plan.detail
+E   AssertionError: KeyError: 'M15'
+E   assert 'stopped' == 'ok'
+E     
+E     - ok
+E     + stopped
+=============================== warnings summary ===============================
+.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6
+  /Users/zongen/Downloads/codex/tradingBuffett/.venv-p2/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_execution_long_run_refactor.py::test_characterize_long_run_journal_report[False]
+FAILED tests/test_phase_c_remediation.py::R2RecoveryGateTests::test_broker_existing_adopted_no_duplicate
+FAILED tests/test_phase_c_remediation.py::R2RecoveryGateTests::test_current_top20_allowed
+FAILED tests/test_phase_c_remediation.py::R2RecoveryGateTests::test_non_trading_day_blocked
+FAILED tests/test_phase_c_remediation.py::R2RecoveryGateTests::test_out_of_top20_blocked_zero_posts
+FAILED tests/test_phase_c_remediation.py::R2RecoveryGateTests::test_reducing_exit_allowed_outside_top20
+6 failed, 1963 passed, 1 warning, 335 subtests passed in 85.55s (0:01:25)

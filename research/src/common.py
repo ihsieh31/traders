@@ -241,6 +241,8 @@ def load_calendar_rows(start: date, end: date, *, refresh: bool = False) -> List
             )
 
     log(f"fetching trading calendar {start}..{end} (single call)")
+    # Only this branch touches the network; a covering cache needs no keys.
+    require_credentials()
     from tradingagents.dataflows.market_calendar import _calendar_date_set
 
     raw = fetch_trading_calendar(start - timedelta(days=7), end + timedelta(days=7))
@@ -420,6 +422,16 @@ def percentiles_fast(values) -> "object":
     import numpy as np
 
     a = np.asarray(values, dtype=float)
+    # A missing value has no rank. Ranking it anyway put every NaN at the
+    # TOP percentile (1.0), so an undefined component looked like the best
+    # name in a long formula and the first name to short in a short one
+    # (process.md S-61). Rank the finite values among themselves only.
+    finite = np.isfinite(a)
+    if not finite.all():
+        out = np.full(a.shape, np.nan)
+        if finite.any():
+            out[finite] = percentiles_fast(a[finite])
+        return out
     n = a.size
     if n == 1:
         return np.array([0.5])

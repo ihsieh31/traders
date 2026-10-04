@@ -198,6 +198,7 @@ class F08TimeoutTests(_Isolated, unittest.TestCase):
             "auto_screening_enabled": True,
             "screening_provider": "google",
             "screening_model": "gemini-fake-screening",
+            "screening_method": "legacy",
             "llm_request_timeout_seconds": 11,
         }
         resolved = resolve_screening_config(config)
@@ -932,6 +933,14 @@ class F19ExecutionOnlyResumeTests(_ScreeningForbidden, _BudgetRoundFixture,
             "status": "PENDING", "analysis_run_ref": None, "signal": None,
             "trade_intent": None, "execution_result_summary": None,
         }
+        lr.save_round_journal("run-resume-d", journal)
+        # This budget test uses a current, compatible frozen policy. Old
+        # policy-less journals now stop earlier at the data-quality boundary.
+        from tradingagents.screening.policy import screening_method
+        from tradingagents.screening.selection_store import SelectionStore
+        runtime = lr.build_runtime_config(self._cfg())
+        journal["screening"].update(method=screening_method(runtime),
+                                    config_fingerprint=SelectionStore.config_fingerprint(runtime,None))
         lr.save_round_journal("run-resume-d", journal)
         screening_calls = []
 

@@ -1,0 +1,35 @@
+========================================================================
+Harness correctness tests (synthetic, no credentials, no network)
+========================================================================
+
+-- panel primitives --
+  ok    rolling_mean vs naive loop
+  ok    rolling_var vs naive loop
+  ok    trailing_complete anchoring
+  ok    forward returns vs written-out definition
+  ok    prefix invariance (look-ahead)
+
+-- statistics --
+  ok    student-t quantile vs published
+  ok    NW lag in sampling units
+  ok    N_eff extremes
+  ok    NW shrinks autocorrelation
+
+-- portfolio mechanics --
+  ok    initial turnover is 1.0
+  ok    turnover matches definition
+  ok    NaN picks dropped, not zeroed
+  ok    NaN factor keeps the cross-section
+  ok    cost scenarios ordered
+  ok    plateau vs spike
+  ok    parameter budget enforced
+
+-- end-to-end sign recovery --
+  ok    detects a harmful factor
+  ok    sign flips with the injection
+  ok    composition uses the eligible set only
+  ok    top-k deterministic under ties
+========================================================================
+HARNESS TESTS PASSED
+
+Verified: rolling mean and variance against a naive loop; the forward-return definition written out literally (S-14); prefix invariance, i.e. no factor reads the future; the Student-t quantile against published values; the Newey-West lag in sampling units; N_eff at both extremes; initial turnover; NaN handling; the eligible-set-only parent population; and recovery of a planted signal's sign in both directions.

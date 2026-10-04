@@ -1,0 +1,143 @@
+{
+  "t_bonf": 2.398014817581415,
+  "excess_validation": {
+    "n_periods": 62,
+    "mean_excess_per_period": 0.006707857298608228,
+    "annualised_excess": 0.08384821623260284,
+    "annualised_equal_weight": 0.08769118780320224,
+    "nw_t": 1.2268738494472886,
+    "bootstrap": {
+      "n": 62,
+      "block": 3,
+      "n_resamples": 2000,
+      "mean": 0.006707857298608228,
+      "ci_low": -0.002273150234219158,
+      "ci_high": 0.01785484747595279,
+      "crosses_zero": true,
+      "p_positive": 0.9375
+    },
+    "benchmark": "same-universe equal weight, same as-of grid, zero cost",
+    "period": [
+      "2021-01-04",
+      "2025-12-31"
+    ]
+  },
+  "excess_holdout": {
+    "n_periods": 8,
+    "mean_excess_per_period": 0.011743449010020347,
+    "annualised_excess": 0.14679311262525432,
+    "annualised_equal_weight": 0.1827158428732347,
+    "nw_t": 0.3315009692315745,
+    "bootstrap": {
+      "n": 8,
+      "block": 3,
+      "n_resamples": 2000,
+      "mean": 0.011743449010020347,
+      "ci_low": -0.03988185504766367,
+      "ci_high": 0.08858995786850561,
+      "crosses_zero": true,
+      "p_positive": 0.7285
+    },
+    "benchmark": "same-universe equal weight, same as-of grid, zero cost",
+    "period": [
+      "2026-01-02",
+      "2026-09-08"
+    ]
+  },
+  "baseline_validation_net_annualised": 0.02776130657779443,
+  "checks": [
+    {
+      "n": 1,
+      "name": "validation |t_NW| >= t_bonf",
+      "passed": false,
+      "detail": "validation NW t = 1.741, t_bonf = 2.398"
+    },
+    {
+      "n": 2,
+      "name": "discovery and validation same sign",
+      "passed": true,
+      "detail": "discovery net annualised 0.2339263566315837, validation 0.17153940403580503"
+    },
+    {
+      "n": 3,
+      "name": "validation net annualised > 0",
+      "passed": true,
+      "detail": "0.17153940403580503"
+    },
+    {
+      "n": 4,
+      "name": "validation net annualised > 0 at 2.0x cost",
+      "passed": true,
+      "detail": "0.16881762984225662"
+    },
+    {
+      "n": 5,
+      "name": "beats the production baseline",
+      "passed": true,
+      "detail": "validation: formula 0.17153940403580503 vs production score 0.02776130657779443 (net annualised, same period, universe and holding period)"
+    },
+    {
+      "n": 6,
+      "name": "holds in both universes",
+      "passed": true,
+      "detail": "wide 0.2339263566315837, production 0.2339263566315837"
+    },
+    {
+      "n": 7,
+      "name": "walk-forward >= 3/4 folds same sign",
+      "passed": null,
+      "detail": "UNDECIDABLE: agreement = 4/4 but a fold holds only 6 non-overlapping periods, below the floor of 8. A 20-day horizon over 4 folds of 5 years leaves too few test periods to measure sign agreement (process.md S-6)"
+    },
+    {
+      "n": 8,
+      "name": "every parameter +/- 1 cell same sign",
+      "passed": true,
+      "detail": "swept ['lit_adv_window']; spikes: none"
+    },
+    {
+      "n": 9,
+      "name": "same sign in >= 2 regimes",
+      "passed": true,
+      "detail": "3 regimes agree, out of 4 with any data: bull_high_vol(n=12), bull_low_vol(n=32), bear_high_vol(n=13), bear_low_vol(n=4)"
+    },
+    {
+      "n": 10,
+      "name": "same sign after dropping best 5% of periods",
+      "passed": true,
+      "detail": "dropped 3 periods, mean 0.011568524127010102, sign_flipped=False"
+    },
+    {
+      "n": 11,
+      "name": "order size <= 0.1% of ADV20",
+      "passed": true,
+      "detail": "worst-case participation = 0.0006% of ADV20"
+    },
+    {
+      "n": 12,
+      "name": "validation excess over same-universe equal weight is significant",
+      "passed": false,
+      "detail": "annualised excess 0.08384821623260284, NW t 1.2268738494472886 (needs >= 2.398), 3-period block bootstrap 95% CI per period [-0.002273150234219158, 0.01785484747595279] (needs low > 0); same-universe equal weight, same as-of grid, zero cost"
+    },
+    {
+      "n": 13,
+      "name": "untouched holdout excess has the validation sign",
+      "passed": true,
+      "detail": "holdout mean excess/period 0.011743449010020347 over 8 periods (sign check only; too few periods for a t)"
+    }
+  ],
+  "disclosures": [
+    {
+      "name": "sample sufficiency (DISCLOSURE, not a pass condition)",
+      "metric": "CI width / |mean period return|",
+      "value": 1.8154955332264369,
+      "n_periods": 59,
+      "reading": "the direction of the effect is broadly trustworthy",
+      "why_not_a_condition": "The original threshold was CI width < effect. It is mathematically unreachable on this dataset at any holding period -- 404 years of data at 5 days, 30 years at 60. A rule that can only ever say FAIL trains people to ignore the rules, so it was demoted to a mandatory disclosure. See plan.md R16-Q1 and process.md S-45."
+    }
+  ],
+  "n_checks": 13,
+  "n_decided": 12,
+  "n_failed": 2,
+  "verdict": "REJECTED",
+  "note": "passed=None means NOT MEASURED, which is not a pass (plan.md R17). Conditions 1-5 require a validation run; without one the verdict is UNDECIDED, never PASSED."
+}

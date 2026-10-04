@@ -1,12 +1,14 @@
 {
-  "quota_events": [
-    [
-      "10:14:18",
-      0
-    ]
-  ],
-  "kept": 0,
-  "reuse": 0,
-  "absent": 0,
-  "stopped_reason": "time budget"
+  "quota_events": [],
+  "kept": 169,
+  "verified_on_disk": 169,
+  "reuse": 379,
+  "absent": 50,
+  "per_token": {
+    "9cce9de5...": 0,
+    "5ddb999b...": 0
+  },
+  "n_tokens": 2,
+  "bar_dir": "research/out/20260928-external-anchor/tiingo/bars",
+  "stopped_reason": "worklist done"
 }

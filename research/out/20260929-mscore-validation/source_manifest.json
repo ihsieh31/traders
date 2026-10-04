@@ -1,0 +1,170 @@
+[
+  {
+    "quarter": "2015q1",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2015q1.zip",
+    "status": "cached",
+    "bytes": 98944359,
+    "sha256": "baa9e434480b8299593b781e8156f855e0c4548677329f166f495cbae287e52e"
+  },
+  {
+    "quarter": "2015q2",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2015q2.zip",
+    "status": "cached",
+    "bytes": 78908272,
+    "sha256": "d3cac325930af6ef145d26fb7e035d7933e900ce174a11adaabb33abd87fbfa1"
+  },
+  {
+    "quarter": "2015q3",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2015q3.zip",
+    "status": "cached",
+    "bytes": 82751989,
+    "sha256": "9301fa2e346aa6b3a48a36cafab80d1aab5d7970e60bfd168d53ba852a4deca9"
+  },
+  {
+    "quarter": "2015q4",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2015q4.zip",
+    "status": "cached",
+    "bytes": 83007568,
+    "sha256": "1723b41ef2a1d3ea6595f6052ef229a80e03cd183391ca9e297a894f9e589d83"
+  },
+  {
+    "quarter": "2016q1",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2016q1.zip",
+    "status": "cached",
+    "bytes": 95470843,
+    "sha256": "5c89a6badede1b47ab540913c7484795c7fc4c2a4672ac601b34b8c0afe5a698"
+  },
+  {
+    "quarter": "2016q2",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2016q2.zip",
+    "status": "cached",
+    "bytes": 73848835,
+    "sha256": "e91daef1f83ab3a6a7a25425f1f09ac6c100be8e42ac7a54e539e1b0c303449c"
+  },
+  {
+    "quarter": "2016q3",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2016q3.zip",
+    "status": "cached",
+    "bytes": 71116399,
+    "sha256": "4d014b8ee4476887aba067c59bfef967d4b12c905d4b1b3f89e8ff7ff7310156"
+  },
+  {
+    "quarter": "2016q4",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2016q4.zip",
+    "status": "cached",
+    "bytes": 79400707,
+    "sha256": "b8a9550c386ea95eefcc95fc3b3c19f2b1428c0a7f46d5d547a671c3f9284e26"
+  },
+  {
+    "quarter": "2017q1",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2017q1.zip",
+    "status": "cached",
+    "bytes": 92433981,
+    "sha256": "ffb6989983c4c9f87e2f39166b20e4a21f024f0fe1adccc199e08da5fc94a915"
+  },
+  {
+    "quarter": "2017q2",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2017q2.zip",
+    "status": "cached",
+    "bytes": 71429748,
+    "sha256": "63a590d7deaac8f82d22f08cb2ada46f199341ecc7e7a8a0a7d6a181cec1d53b"
+  },
+  {
+    "quarter": "2017q3",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2017q3.zip",
+    "status": "cached",
+    "bytes": 74356472,
+    "sha256": "5aa58d799c4fb3f5f98974eb713696d1aebe747a01a794e7ac58517631b5735d"
+  },
+  {
+    "quarter": "2017q4",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2017q4.zip",
+    "status": "cached",
+    "bytes": 76051784,
+    "sha256": "be03bfd71f356a7f53d82a40ee907bb51aec4f61d6ce97f059f2df785bc37658"
+  },
+  {
+    "quarter": "2018q1",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2018q1.zip",
+    "status": "cached",
+    "bytes": 93176693,
+    "sha256": "f7f0083d28779ff373cd097ded88d5408eae9cc178f89014ca3ed8b24dc84185"
+  },
+  {
+    "quarter": "2018q2",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2018q2.zip",
+    "status": "cached",
+    "bytes": 91972487,
+    "sha256": "99daaf8af1fb1ba94b100613536d9dbee5e9a356f0736190963a3a68af623d54"
+  },
+  {
+    "quarter": "2018q3",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2018q3.zip",
+    "status": "cached",
+    "bytes": 87202498,
+    "sha256": "30030056223c456d5cb7a42722ffa990345fda12deb5cfff723b1ae47dc9bf8d"
+  },
+  {
+    "quarter": "2018q4",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2018q4.zip",
+    "status": "cached",
+    "bytes": 62895777,
+    "sha256": "ecc103d0979dacdf6cfcc7f0b2273f7b6046c41a3aa7f2e2aacfb8ccd45bc122"
+  },
+  {
+    "quarter": "2019q1",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2019q1.zip",
+    "status": "cached",
+    "bytes": 95895180,
+    "sha256": "49f6f0a00b6f1792d22893a3e261f7a329377048eb826079f1a16c7895b76d9d"
+  },
+  {
+    "quarter": "2019q2",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2019q2.zip",
+    "status": "cached",
+    "bytes": 90155728,
+    "sha256": "765e42efd43687b4ac4ea59c83213857a52dca0a4bd5c490034bd5bea2b6fac3"
+  },
+  {
+    "quarter": "2019q3",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2019q3.zip",
+    "status": "cached",
+    "bytes": 89829588,
+    "sha256": "4c57e36f04b54a2b9917537e12974cba68353f765affbf168bd506478780e13e"
+  },
+  {
+    "quarter": "2019q4",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2019q4.zip",
+    "status": "cached",
+    "bytes": 98753299,
+    "sha256": "1f997c123b6d2fe892eeca0a5f12687e718ab5ae031f148b4a5d82f2689daec3"
+  },
+  {
+    "quarter": "2020q1",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2020q1.zip",
+    "status": "cached",
+    "bytes": 96584608,
+    "sha256": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67"
+  },
+  {
+    "quarter": "2020q2",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2020q2.zip",
+    "status": "cached",
+    "bytes": 82008710,
+    "sha256": "bd796ea10c88e21205da013f9c3f6a20b2b14d3de94f0075e9f529e0ef9a3543"
+  },
+  {
+    "quarter": "2020q3",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2020q3.zip",
+    "status": "cached",
+    "bytes": 87582976,
+    "sha256": "6a402070d4b1f12db0d2256533b38705735684ecb58bc12ce53a61dd12abe26e"
+  },
+  {
+    "quarter": "2020q4",
+    "url": "https://www.sec.gov/files/dera/data/financial-statement-data-sets/2020q4.zip",
+    "status": "cached",
+    "bytes": 89811373,
+    "sha256": "7cabec2c9b90511983623e6db3869b24c7a894466bd409f060a8da32790ae68e"
+  }
+]

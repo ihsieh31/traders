@@ -1,0 +1,14 @@
+{
+  "source_and_output_hashes_match": true,
+  "authorized_quote_rows": 82771,
+  "independent_production_rank_dates": 59,
+  "period_rows": 894,
+  "joint_rows": 590,
+  "max_period_absolute_pnl_error": 1.8735013540549517e-16,
+  "all_summary_means_match": true,
+  "joint_unique_budget_20": true,
+  "production_code_sha256": {
+    "tradingagents/screening/metrics.py": "039c9292ec94becfb96658ef7e4b63df634564d16b69fd4d784999c7739fc8ee",
+    "tradingagents/screening/policy.py": "e55f44ce5f84823e45449b82809efdb1af7b1d686c31aa993aa762056ab11f8f"
+  }
+}

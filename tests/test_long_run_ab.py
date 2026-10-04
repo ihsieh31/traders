@@ -52,8 +52,10 @@ def _selection(config, *, session=SESSION, as_of="2026-09-22"):
             "candidate_lane": "positive_trend", "positive_score": 90.0,
             "negative_score": 10.0, "momentum": 1.0, "trend": 1.0,
             "liquidity": 1.0, "quality": 1.0,
+            "price": 100., "adv20": 25_000_000., "r5": .01, "r20": .02, "r60": .1,
+            "vol20": .2, "volume_ratio": 1.,
         }
-        for i in range(40)
+        for i in range(20)
     ]
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -67,7 +69,7 @@ def _selection(config, *, session=SESSION, as_of="2026-09-22"):
         "config_fingerprint": store.config_fingerprint(config, resolved["spec"]),
         "adjustment_policy": "split",
         "sector_mode": {"applied": True, "max_per_sector": 5, "missing_sectors": []},
-        "stats": {"universe_total": 40, "eligible": 40, "excluded": {}},
+        "stats": {"universe_total": 20, "eligible": 20, "excluded": {}},
         "top40": top40,
         "top20": [
             {"rank": i + 1, "symbol": f"T{i:02d}",
@@ -75,6 +77,24 @@ def _selection(config, *, session=SESSION, as_of="2026-09-22"):
             for i in range(20)
         ],
     }
+    from tradingagents.screening.quality import quality_record, build_quality_report, bar_evidence
+    from tradingagents.screening.metrics import ScanStats, FACTOR_KEYS, compute_features, EligibilityThresholds
+    from test_phase_c_screening import _healthy_bars
+    from datetime import date
+    records = []
+    for row in top40:
+        frame = _healthy_bars(as_of=date.fromisoformat(as_of))
+        feature, reason = compute_features(row["symbol"],frame,thresholds=EligibilityThresholds())
+        assert reason is None
+        row.update(feature.factor_row())
+        record = quality_record({"symbol": row["symbol"], "asset_id": "fixture-"+row["symbol"],
+            "identity_source": "fixture_assets", "asset_class": "us_equity", "asset_status": "active",
+            "tradable": True, "market_cap_source": "fixture_caps"})
+        record.update(market_cap=1_000_000_000., factors={k:row[k] for k in ("price",)+FACTOR_KEYS},
+            bars=bar_evidence(frame,frame,as_of=as_of,adjustment="split"))
+        records.append(record)
+    payload["data_quality"] = build_quality_report(ScanStats(universe_total=20, eligible=20, records=records),
+        as_of=as_of, observed_at=payload["generated_at"], adjustment="split")
     store.save(payload)
     return store.load_raw()
 
@@ -89,7 +109,8 @@ def _plan(selection, *, extras=(), cached=False):
         cached=cached,
         entry_allowed=True,
         top20=list(selection["top20"]),
-        deep_analysis_set=[row["symbol"] for row in selection["top20"]] + list(extras),
+        deep_analysis_set=[row["symbol"] for row in selection["top20"][:20-len(extras)]] + list(extras),
+        deferred_candidates=[row["symbol"] for row in selection["top20"][20-len(extras):]],
         overlap_holdings=[],
         extra_holdings=list(extras),
         blocked_holdings=[],
@@ -141,7 +162,8 @@ def test_shared_selection_plan_adds_only_arm_holdings_without_screening(tmp_path
     )
 
     assert not plan.stopped
-    assert plan.deep_analysis_set == [*[row["symbol"] for row in selection["top20"]], "AAPL"]
+    assert plan.deep_analysis_set == [*[row["symbol"] for row in selection["top20"][:19]], "AAPL"]
+    assert plan.deferred_candidates == [selection["top20"][-1]["symbol"]]
     assert plan.selection_hash == lr._ab_selection_hash(selection)
     assert calls == {"screening": 0, "positions": 1}
 
@@ -624,10 +646,21 @@ def _run_interleaved_ab(
     crash_at=None,
     invalid_arm=None,
     mismatched_evidence=False,
+    deferred=None,
+    overlap=None,
 ):
     """Exercise the real A/B coordinator and symbol state machine with fakes."""
     root, config, selection, _initial, _deps = _ab_round_setup(tmp_path)
     initial = _plan(selection, extras=(extras or {}).get("traders", ()), cached=False)
+    deferred, overlap = deferred or {}, overlap or {}
+
+    def bounded_plan(plan, backend):
+        plan.deferred_candidates = list(deferred.get(backend, plan.deferred_candidates))
+        plan.overlap_holdings = list(overlap.get(backend, ()))
+        plan.deep_analysis_set = [s for s in plan.deep_analysis_set if s not in plan.deferred_candidates]
+        return plan
+
+    initial = bounded_plan(initial, "traders")
     events = events if events is not None else []
     clock = clock or [datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc)]
     extras = extras or {"traders": [], "berkshire": []}
@@ -719,7 +752,7 @@ def _run_interleaved_ab(
 
     def make_plan(runtime, _selection, **_kwargs):
         backend = runtime["analysis_backend"]
-        return _plan(selection, extras=extras.get(backend, ()), cached=True)
+        return bounded_plan(_plan(selection, extras=extras.get(backend, ()), cached=True), backend)
 
     def execute(_deps, service, symbol, _intent, _notional, *, run_id, **kwargs):
         backend = service.backend
@@ -1139,3 +1172,29 @@ def test_ab_report_accounts_for_shared_screening_cost_once(tmp_path):
     assert report["comparison"]["berkshire"]["llm_operations"]["totals"]["total_tokens"] == 0
     md_path, _ = lr.write_ab_final_report(report)
     assert "Shared LLM tokens: 123" in Path(md_path).read_text()
+
+
+def test_ab_budget_deferrals_keep_held_review_without_forming_incomplete_pairs(tmp_path):
+    result, events, _ = _run_interleaved_ab(
+        tmp_path, extras={'traders': ['AAPL'], 'berkshire': []},
+        deferred={'traders': ['T19']}, overlap={'berkshire': ['T19']},
+    )
+    assert result['status'] == 'COMPLETED'
+    assert result['budget_unpaired_symbols'] == ['T19']
+    analyses = [(e[1], e[2]) for e in events if e[0] == 'analysis_started']
+    assert ('traders', 'T19') not in analyses
+    assert ('traders', 'AAPL') in analyses
+    assert ('berkshire', 'T19') in analyses  # held review still gets its slot
+    assert all(sum(b == arm for b, _ in analyses) == 20 for arm in lr.AB_BACKENDS)
+    assert 'T19' not in result['pair_evidence']
+
+
+def test_ab_unpaired_new_candidate_uses_no_llm_or_order(tmp_path):
+    result, events, _ = _run_interleaved_ab(
+        tmp_path, extras={'traders': ['AAPL'], 'berkshire': []}, deferred={'traders': ['T19']},
+    )
+    assert result['status'] == 'COMPLETED'
+    assert not any(e[2] == 'T19' for e in events if e[0] in ('analysis_started', 'execution'))
+    with patch.object(lr, 'base_dir', return_value=tmp_path / 'state'):
+        arm = lr.load_round_journal('lr-ab-fixture-berkshire', SESSION)
+    assert arm['symbols']['T19']['execution_result_summary']['error'] == 'AB_ANALYSIS_BUDGET_UNPAIRED'

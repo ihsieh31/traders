@@ -1,0 +1,43 @@
+{
+  "financial_records": 7889,
+  "numeric_complete": 4973,
+  "semantic_before_counts": {
+    "unknown": 7888,
+    "invalid": 1
+  },
+  "semantic_reason_counts": {
+    "missing_or_conflicting_required_fact": 2915,
+    "missing_period_unit_scope_or_source": 4972,
+    "scope_mismatch": 1,
+    "nonpositive_assets": 1
+  },
+  "explicitly_repaired_filings": 1,
+  "existing_numeric_source_verification": "8295 referenced numbers; prior verification.json",
+  "input_readiness": {
+    "historical_instrument_identity": "unknown",
+    "delisting_outcomes": "unknown",
+    "price_adjustments_and_dividends": "unknown",
+    "point_in_time_availability": "partial",
+    "financial_period_unit_scope": "partial",
+    "historical_borrow_availability_and_costs": "unknown"
+  },
+  "research_gate": {
+    "status": "STOPPED",
+    "unverified_requirements": [
+      "historical_instrument_identity",
+      "delisting_outcomes",
+      "price_adjustments_and_dividends",
+      "point_in_time_availability",
+      "financial_period_unit_scope",
+      "historical_borrow_availability_and_costs"
+    ],
+    "meaning": "input readiness only, not profitable strategy validation"
+  },
+  "action": "Freeze prior candidate formulas; no new profit tuning until applicable data requirements are verified.",
+  "source_sha256": {
+    "financials.json": "3a13d4e340f90ec503e62d04fe6d7c58592c59b71d708c26f480a34d53a0f986",
+    "semantic_audit.json": "382e6804d1f83bb83d938c45824ac3a7ddb42f506f7e199ec18310745833d98b",
+    "2020q1.zip": "48ed9834c66d565c21130d087eae941b25770e2d7cc8351d17652612289fcd67",
+    "audit.py": "581082a351776b76a0334888ba825d9434420ad2a3600dede5bd7b972fff9461"
+  }
+}

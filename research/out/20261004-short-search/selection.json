@@ -1,0 +1,651 @@
+{
+  "rule": "PREREGISTRATION.md section 4",
+  "candidates": [
+    {
+      "name": "short-winners",
+      "window": 5,
+      "complete_case": false,
+      "median_universe": 1059.0,
+      "relative": {
+        "n_periods": 119,
+        "mean_per_period": -0.004959170014565888,
+        "annualised": -0.12397925036414721,
+        "nw_t": -1.5594394959844708,
+        "ci_low": -0.01037017484443147,
+        "ci_high": 0.0015981262938230185
+      },
+      "relative_wide": {
+        "n_periods": 119,
+        "mean_per_period": -0.0018361938040775203,
+        "annualised": -0.045904845101938006,
+        "nw_t": -0.4780540134482705,
+        "ci_low": -0.008592900050126917,
+        "ci_high": 0.006366643377382346
+      },
+      "absolute": {
+        "n_periods": 119,
+        "mean_per_period": -0.01152557580840423,
+        "annualised": -0.2881393952101058,
+        "nw_t": -2.1603119913628137,
+        "ci_low": -0.021178298252167677,
+        "ci_high": -0.0005809329260944861
+      },
+      "walk_forward": [
+        {
+          "fold": 1,
+          "test": [
+            "2016-09-30",
+            "2017-03-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.001706923311746682
+        },
+        {
+          "fold": 2,
+          "test": [
+            "2018-01-02",
+            "2018-07-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.002825586730462662
+        },
+        {
+          "fold": 3,
+          "test": [
+            "2019-04-04",
+            "2019-10-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.004535865558903766
+        },
+        {
+          "fold": 4,
+          "test": [
+            "2020-07-06",
+            "2020-12-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.023546189788629723
+        }
+      ],
+      "sweeps": [
+        {
+          "parameter": "window",
+          "grid": [
+            3,
+            5,
+            10
+          ],
+          "curve": [
+            -0.15027941372848408,
+            -0.12397925036414721,
+            -0.14276687752779071
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        },
+        {
+          "parameter": "horizon",
+          "grid": [
+            5,
+            10,
+            20
+          ],
+          "curve": [
+            -0.03630254258816296,
+            -0.12397925036414721,
+            -0.029281960534100614
+          ],
+          "verdict": "SPIKE",
+          "run_length": 1
+        }
+      ],
+      "regimes": {
+        "bull_high_vol": {
+          "n_periods": 32,
+          "mean_relative": -0.009989825214133144
+        },
+        "bull_low_vol": {
+          "n_periods": 58,
+          "mean_relative": -0.0007610169725385099
+        },
+        "bear_high_vol": {
+          "n_periods": 25,
+          "mean_relative": -0.011707898107699632
+        },
+        "bear_low_vol": {
+          "n_periods": 4,
+          "mean_relative": 0.016592403054661087
+        }
+      },
+      "drop_best_5pct": {
+        "dropped": 6,
+        "mean": -0.008314607812780211,
+        "nw_t": -2.742745645394721,
+        "sign_flipped": false
+      },
+      "checks": {
+        "6": false,
+        "7": false,
+        "8": false,
+        "9": false,
+        "10": false
+      },
+      "qualified": false
+    },
+    {
+      "name": "short-max",
+      "window": 20,
+      "complete_case": false,
+      "median_universe": 1059.0,
+      "relative": {
+        "n_periods": 119,
+        "mean_per_period": -0.007329091450978183,
+        "annualised": -0.18322728627445456,
+        "nw_t": -2.0324011451025474,
+        "ci_low": -0.014573842388719465,
+        "ci_high": -0.0004647359469926488
+      },
+      "relative_wide": {
+        "n_periods": 119,
+        "mean_per_period": -0.007979696216536427,
+        "annualised": -0.19949240541341068,
+        "nw_t": -2.0405367045141185,
+        "ci_low": -0.015344383009411591,
+        "ci_high": -0.0006405206722928667
+      },
+      "absolute": {
+        "n_periods": 119,
+        "mean_per_period": -0.013895497244816528,
+        "annualised": -0.3473874311204132,
+        "nw_t": -2.5865533250130803,
+        "ci_low": -0.02416554537418691,
+        "ci_high": -0.003979964782139371
+      },
+      "walk_forward": [
+        {
+          "fold": 1,
+          "test": [
+            "2016-09-30",
+            "2017-03-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.004229197124849204
+        },
+        {
+          "fold": 2,
+          "test": [
+            "2018-01-02",
+            "2018-07-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.010454517093040426
+        },
+        {
+          "fold": 3,
+          "test": [
+            "2019-04-04",
+            "2019-10-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.0033327497627628037
+        },
+        {
+          "fold": 4,
+          "test": [
+            "2020-07-06",
+            "2020-12-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.023878327308431507
+        }
+      ],
+      "sweeps": [
+        {
+          "parameter": "window",
+          "grid": [
+            10,
+            20,
+            60
+          ],
+          "curve": [
+            -0.20056926787339546,
+            -0.18322728627445456,
+            -0.2743617834795883
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        },
+        {
+          "parameter": "horizon",
+          "grid": [
+            5,
+            10,
+            20
+          ],
+          "curve": [
+            -0.14119311514249305,
+            -0.18322728627445456,
+            -0.1644254611798872
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        }
+      ],
+      "regimes": {
+        "bull_high_vol": {
+          "n_periods": 32,
+          "mean_relative": -0.0011511855951211302
+        },
+        "bull_low_vol": {
+          "n_periods": 58,
+          "mean_relative": -0.008234168010902963
+        },
+        "bear_high_vol": {
+          "n_periods": 25,
+          "mean_relative": -0.015804756835230294
+        },
+        "bear_low_vol": {
+          "n_periods": 4,
+          "mean_relative": 0.009344180472650359
+        }
+      },
+      "drop_best_5pct": {
+        "dropped": 6,
+        "mean": -0.011080157858589571,
+        "nw_t": -3.222360919033349,
+        "sign_flipped": false
+      },
+      "checks": {
+        "6": false,
+        "7": false,
+        "8": false,
+        "9": false,
+        "10": false
+      },
+      "qualified": false
+    },
+    {
+      "name": "short-vol",
+      "window": 20,
+      "complete_case": false,
+      "median_universe": 1059.0,
+      "relative": {
+        "n_periods": 119,
+        "mean_per_period": -0.00806750541463767,
+        "annualised": -0.20168763536594175,
+        "nw_t": -2.1811748049342086,
+        "ci_low": -0.013896448489943137,
+        "ci_high": -0.0010611332018140866
+      },
+      "relative_wide": {
+        "n_periods": 119,
+        "mean_per_period": -0.0056374303178263465,
+        "annualised": -0.14093575794565866,
+        "nw_t": -1.196023610089082,
+        "ci_low": -0.013863890952897806,
+        "ci_high": 0.0033200599768437866
+      },
+      "absolute": {
+        "n_periods": 119,
+        "mean_per_period": -0.01463391120847601,
+        "annualised": -0.3658477802119003,
+        "nw_t": -2.535724683129259,
+        "ci_low": -0.0245401181312291,
+        "ci_high": -0.003884797199712254
+      },
+      "walk_forward": [
+        {
+          "fold": 1,
+          "test": [
+            "2016-09-30",
+            "2017-03-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.0013350237951041408
+        },
+        {
+          "fold": 2,
+          "test": [
+            "2018-01-02",
+            "2018-07-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.007271281428559078
+        },
+        {
+          "fold": 3,
+          "test": [
+            "2019-04-04",
+            "2019-10-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.0074612454497681654
+        },
+        {
+          "fold": 4,
+          "test": [
+            "2020-07-06",
+            "2020-12-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.026966329456291762
+        }
+      ],
+      "sweeps": [
+        {
+          "parameter": "window",
+          "grid": [
+            10,
+            20,
+            60
+          ],
+          "curve": [
+            -0.22646402651999847,
+            -0.20168763536594175,
+            -0.27040454734228925
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        },
+        {
+          "parameter": "horizon",
+          "grid": [
+            5,
+            10,
+            20
+          ],
+          "curve": [
+            -0.16918923606831165,
+            -0.20168763536594175,
+            -0.17598122863195295
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        }
+      ],
+      "regimes": {
+        "bull_high_vol": {
+          "n_periods": 32,
+          "mean_relative": 0.003480439796778248
+        },
+        "bull_low_vol": {
+          "n_periods": 58,
+          "mean_relative": -0.009958885476734479
+        },
+        "bear_high_vol": {
+          "n_periods": 25,
+          "mean_relative": -0.01914375782085971
+        },
+        "bear_low_vol": {
+          "n_periods": 4,
+          "mean_relative": -0.0037994786666734944
+        }
+      },
+      "drop_best_5pct": {
+        "dropped": 6,
+        "mean": -0.012704854654470417,
+        "nw_t": -3.6435370592470417,
+        "sign_flipped": false
+      },
+      "checks": {
+        "6": false,
+        "7": false,
+        "8": false,
+        "9": false,
+        "10": false
+      },
+      "qualified": false
+    },
+    {
+      "name": "short-far-from-high",
+      "window": 120,
+      "complete_case": false,
+      "median_universe": 1059.0,
+      "relative": {
+        "n_periods": 113,
+        "mean_per_period": -0.010344672207443258,
+        "annualised": -0.25861680518608143,
+        "nw_t": -2.281961834812801,
+        "ci_low": -0.020071557136176466,
+        "ci_high": -0.0023058752743465513
+      },
+      "relative_wide": {
+        "n_periods": 113,
+        "mean_per_period": -0.007254771743562026,
+        "annualised": -0.18136929358905066,
+        "nw_t": -1.282421893016503,
+        "ci_low": -0.01945258844565238,
+        "ci_high": 0.002519981569579021
+      },
+      "absolute": {
+        "n_periods": 113,
+        "mean_per_period": -0.017134905297968465,
+        "annualised": -0.42837263244921164,
+        "nw_t": -2.2026950143763666,
+        "ci_low": -0.0322656155358465,
+        "ci_high": -0.001867030070673648
+      },
+      "walk_forward": [
+        {
+          "fold": 1,
+          "test": [
+            "2016-09-30",
+            "2017-03-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.011626953390573931
+        },
+        {
+          "fold": 2,
+          "test": [
+            "2018-01-02",
+            "2018-07-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.002921792982987137
+        },
+        {
+          "fold": 3,
+          "test": [
+            "2019-04-04",
+            "2019-10-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.0007343886103648119
+        },
+        {
+          "fold": 4,
+          "test": [
+            "2020-07-06",
+            "2020-12-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.02505627614523226
+        }
+      ],
+      "sweeps": [
+        {
+          "parameter": "window",
+          "grid": [
+            60,
+            120,
+            180
+          ],
+          "curve": [
+            -0.33414826070389914,
+            -0.25861680518608143,
+            -0.24080425698408905
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        },
+        {
+          "parameter": "horizon",
+          "grid": [
+            5,
+            10,
+            20
+          ],
+          "curve": [
+            -0.2555803410077671,
+            -0.25861680518608143,
+            -0.340364263075807
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        }
+      ],
+      "regimes": {
+        "bull_high_vol": {
+          "n_periods": 29,
+          "mean_relative": 8.237475691048114e-07
+        },
+        "bull_low_vol": {
+          "n_periods": 55,
+          "mean_relative": -0.0039510690597426715
+        },
+        "bear_high_vol": {
+          "n_periods": 25,
+          "mean_relative": -0.03929160721307739
+        },
+        "bear_low_vol": {
+          "n_periods": 4,
+          "mean_relative": 0.007656782623047422
+        }
+      },
+      "drop_best_5pct": {
+        "dropped": 6,
+        "mean": -0.01549535155935393,
+        "nw_t": -3.5995866421813854,
+        "sign_flipped": false
+      },
+      "checks": {
+        "6": false,
+        "7": false,
+        "8": false,
+        "9": true,
+        "10": false
+      },
+      "qualified": false
+    },
+    {
+      "name": "short-low-gpa",
+      "window": 0,
+      "complete_case": true,
+      "median_universe": 499.0,
+      "relative": {
+        "n_periods": 119,
+        "mean_per_period": -0.0013106117082661848,
+        "annualised": -0.03276529270665462,
+        "nw_t": -0.5766941528665839,
+        "ci_low": -0.005636597565442372,
+        "ci_high": 0.003287569888841791
+      },
+      "relative_wide": {
+        "n_periods": 119,
+        "mean_per_period": -0.00038722854246934195,
+        "annualised": -0.009680713561733549,
+        "nw_t": -0.12006873823420833,
+        "ci_low": -0.0059139334398672595,
+        "ci_high": 0.005730881261467349
+      },
+      "absolute": {
+        "n_periods": 119,
+        "mean_per_period": -0.009330903525495069,
+        "annualised": -0.23327258813737672,
+        "nw_t": -1.795702914819246,
+        "ci_low": -0.018609854005816683,
+        "ci_high": 0.0015928004826754596
+      },
+      "walk_forward": [
+        {
+          "fold": 1,
+          "test": [
+            "2016-09-30",
+            "2017-03-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.008668544507913364
+        },
+        {
+          "fold": 2,
+          "test": [
+            "2018-01-02",
+            "2018-07-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.005512498890620623
+        },
+        {
+          "fold": 3,
+          "test": [
+            "2019-04-04",
+            "2019-10-02"
+          ],
+          "n_periods": 12,
+          "mean_relative": 0.0017240768234603266
+        },
+        {
+          "fold": 4,
+          "test": [
+            "2020-07-06",
+            "2020-12-31"
+          ],
+          "n_periods": 12,
+          "mean_relative": -0.02618331694245565
+        }
+      ],
+      "sweeps": [
+        {
+          "parameter": "horizon",
+          "grid": [
+            5,
+            10,
+            20
+          ],
+          "curve": [
+            -0.04107242176032648,
+            -0.03276529270665462,
+            -0.0495789982186441
+          ],
+          "verdict": "PLATEAU",
+          "run_length": 3
+        }
+      ],
+      "regimes": {
+        "bull_high_vol": {
+          "n_periods": 32,
+          "mean_relative": -0.004876149375319896
+        },
+        "bull_low_vol": {
+          "n_periods": 58,
+          "mean_relative": 0.0007727954150322534
+        },
+        "bear_high_vol": {
+          "n_periods": 25,
+          "mean_relative": 0.0014361618729687954
+        },
+        "bear_low_vol": {
+          "n_periods": 4,
+          "mean_relative": -0.020163048542382482
+        }
+      },
+      "drop_best_5pct": {
+        "dropped": 6,
+        "mean": -0.0036286840410049578,
+        "nw_t": -1.7129001213758097,
+        "sign_flipped": false
+      },
+      "checks": {
+        "6": false,
+        "7": false,
+        "8": false,
+        "9": true,
+        "10": false
+      },
+      "qualified": false
+    }
+  ],
+  "selected": null
+}

@@ -1,0 +1,28 @@
+{
+  "matched_annual_filings": 11053,
+  "financial_sector_filings": 3164,
+  "mapped_ciks": 3805,
+  "annual_records": 7889,
+  "complete_records": 182,
+  "complete_ciks": 73,
+  "rejected_reasons": {
+    "missing_pair:Depreciation": 3827,
+    "missing_pair:SellingGeneralAndAdministrativeExpense": 453,
+    "no_comparable_previous_year": 1002,
+    "missing_pair:AccountsReceivableNetCurrent/AccountsReceivableNet": 1697,
+    "extraordinary_status_unknown_before_effective_year": 58,
+    "missing_pair:LongTermDebt": 284,
+    "missing_or_conflicting:NetCashProvidedByUsedInOperatingActivities": 72,
+    "missing_pair:AssetsCurrent": 67,
+    "missing_pair:SalesRevenueNet/Revenues/RevenueFromContractWithCustomerExcludingAssessedTax/SalesRevenueGoodsNet": 9,
+    "missing_or_conflicting:NetIncomeLoss": 39,
+    "missing_pair:PropertyPlantAndEquipmentNet": 143,
+    "missing_pair:CostOfGoodsAndServicesSold/CostOfRevenue/CostOfGoodsSold": 44,
+    "missing_pair:LongTermDebtCurrent": 8,
+    "missing_pair:LiabilitiesCurrent": 1,
+    "missing_pair:Assets": 2,
+    "nonpositive_asset_quality_residual": 1
+  },
+  "mapping_sha256": "7ff3c9600cabb5ad565a9d93b5f8ca7756659d767e96dd9e6132ce4703665a49",
+  "method_sha256": "c5e442c5a8edbf414b41d46c24581f784ce033023ad4e91a3897a60776f5c769"
+}
