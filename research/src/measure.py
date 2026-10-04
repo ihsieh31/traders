@@ -341,8 +341,11 @@ def build_portfolio(
             # 0.5 * sum|w_new - w_old| with equal weights 1/len on each
             # side; a period holding fewer than top_k names is weighted by
             # what it actually holds, not by top_k.
+            # fsum, not sum: Python 3.12's sum() compensates float error and
+            # 3.11's does not, so a full replacement read 1.0000000000000002
+            # on 3.11 -- the same book measured differently per interpreter.
             w_new, w_old = 1.0 / len(current), 1.0 / len(previous)
-            turnover[i] = 0.5 * sum(
+            turnover[i] = 0.5 * math.fsum(
                 abs((w_new if j in current else 0.0) - (w_old if j in previous else 0.0))
                 for j in current | previous
             )

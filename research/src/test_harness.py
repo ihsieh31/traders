@@ -512,7 +512,16 @@ def test_fundamentals_are_point_in_time() -> None:
     assert FD.derive_fields({"GrossProfit": None, "Revenues": 100.0, "CostOfRevenue": 60.0}, {})["gross_profit"] is None
     assert FD.derive_fields({}, {"Assets": 0.0})["assets"] is None
 
-    aapl = 320193  # AAPL in the cached SEC ticker map
+    aapl = 320193
+    # Bring a one-row SEC ticker map instead of reading the untracked
+    # research/data cache, so the test runs on a fresh checkout (CI).
+    import json
+    import tempfile
+    from pathlib import Path
+
+    tickers = Path(tempfile.mkdtemp(prefix="harness-sec-")) / "company_tickers_web.json"
+    tickers.write_text(json.dumps([{"cik_str": aapl, "ticker": "AAPL", "title": "Apple Inc."}]))
+    real_map, FD.TICKERS_JSON = FD.TICKERS_JSON, tickers
     rows = [
         dict(adsh="a1", cik=aapl, sic="3571", period="20191231", accepted="2020-02-10",
              revenue=1.0, gross_profit=10.0, assets=100.0, cfo=5.0, liabilities=50.0),
@@ -522,7 +531,12 @@ def test_fundamentals_are_point_in_time() -> None:
              revenue=1.0, gross_profit=10.0, assets=100.0, cfo=5.0, liabilities=50.0),
     ]
     sessions = [date(2020, 2, 10), date(2020, 2, 11), date(2021, 2, 10), date(2021, 2, 11), date(2022, 6, 1)]
-    fp = FD.fundamental_panel(sessions, ["AAPL"], pd.DataFrame(rows))
+    try:
+        fp = FD.fundamental_panel(sessions, ["AAPL"], pd.DataFrame(rows))
+    finally:
+        FD.TICKERS_JSON = real_map
+        tickers.unlink()
+        tickers.parent.rmdir()
     gp = fp.values["gross_profit"][:, 0]
     assert np.isnan(gp[0]), "a filing accepted on the session day is not yet usable"
     assert gp[1] == 10.0 and gp[2] == 10.0
