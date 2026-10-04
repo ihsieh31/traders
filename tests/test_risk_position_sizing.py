@@ -119,6 +119,25 @@ class PositionSizerTests(unittest.TestCase):
         self.assertLessEqual(decision.notional, 1_000.0)
         self.assertIn("requested_notional", decision.caps_applied)
 
+    def test_cent_rounding_never_exceeds_the_binding_cap(self):
+        # 20% of 125,000.03 is 25,000.006; rounding to the nearest cent gave
+        # 25,000.01, above the cap and above a $25,000 per-order safety cap.
+        decision = self.sizer.size_position(
+            equity=125_000.03, price=100.0, atr=0.5, confidence="high",
+            requested_notional=50_000.0,
+        )
+        self.assertTrue(decision.approved)
+        self.assertEqual(decision.caps_applied[0], "max_position_pct")
+        self.assertEqual(decision.notional, 25_000.0)
+
+    def test_side_is_normalized_once_for_stop_distance_and_stop_price(self):
+        decision = PositionSizer(RiskParameters()).size_position(
+            equity=100_000.0, price=100.0, atr=None, confidence="medium",
+            requested_notional=1_000.0, side=" SELL ", stop_loss_price=104.0,
+        )
+        self.assertTrue(decision.approved, decision.reason)
+        self.assertAlmostEqual(decision.stop_loss_price, 104.0, places=6)
+
     def test_total_exposure_limit_blocks_new_position(self):
         decision = self.sizer.size_position(
             equity=100_000.0,

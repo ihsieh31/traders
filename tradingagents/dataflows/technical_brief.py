@@ -520,37 +520,25 @@ def detect_volume(df: pd.DataFrame) -> VolumeState:
 
 
 def detect_market_structure(df: pd.DataFrame) -> MarketStructure:
-    """Detect BOS / CHOCH and last swing points."""
+    """Detect BOS / CHOCH and last swing points.
+
+    BOS: the close broke the most recent swing high (up) or swing low (down).
+    CHOCH: that break went against the prevailing swing structure -- losing
+    the last higher low, or reclaiming the last lower high. Without a swing
+    on a side, the current bar's own high/low stands in and cannot be broken.
+    """
     swing_highs, swing_lows = _get_swing_points(df, lookback=40)
 
-    # Defaults
-    last_sh = float(df["high"].iloc[-1])
-    last_sl = float(df["low"].iloc[-1])
-    bos = False
-    choch = False
+    close = float(df["close"].iloc[-1])
+    last_sh = float(swing_highs[-1][1]) if swing_highs else float(df["high"].iloc[-1])
+    last_sl = float(swing_lows[-1][1]) if swing_lows else float(df["low"].iloc[-1])
+    broke_up = bool(swing_highs) and close > last_sh
+    broke_down = bool(swing_lows) and close < last_sl
+    higher_lows = len(swing_lows) >= 2 and swing_lows[-1][1] > swing_lows[-2][1]
+    lower_highs = len(swing_highs) >= 2 and swing_highs[-1][1] < swing_highs[-2][1]
 
-    if len(swing_highs) >= 2:
-        last_sh = float(swing_highs[-1][1])
-        prev_sh = float(swing_highs[-2][1])
-        # BOS: price closed above previous swing high
-        if df["close"].iloc[-1] > prev_sh:
-            bos = True
-    if len(swing_lows) >= 2:
-        last_sl = float(swing_lows[-1][1])
-        prev_sl = float(swing_lows[-2][1])
-    elif len(swing_lows) >= 1:
-        last_sl = float(swing_lows[-1][1])
-
-    # CHOCH: trend was making HH/HL but last swing broke the pattern
-    if len(swing_highs) >= 2 and len(swing_lows) >= 2:
-        hh = swing_highs[-1][1] > swing_highs[-2][1]
-        hl = swing_lows[-1][1] > swing_lows[-2][1]
-        lh = swing_highs[-1][1] < swing_highs[-2][1]
-        ll = swing_lows[-1][1] < swing_lows[-2][1]
-        # Change of character = trend was bullish (HH+HL) but last swing is LH or LL
-        # or trend was bearish (LH+LL) but last swing is HH or HL
-        if (hh and ll) or (lh and hl):
-            choch = True
+    bos = broke_up or broke_down
+    choch = (broke_down and higher_lows) or (broke_up and lower_highs)
 
     return MarketStructure(
         bos=bos,

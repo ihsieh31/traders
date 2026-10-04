@@ -514,6 +514,25 @@ class EligibilityTests(unittest.TestCase):
         _, err = self._window(_healthy_bars(n=60))
         self.assertEqual(err, "insufficient_bars")
 
+    def test_threshold_config_that_cannot_define_the_factors_is_refused(self):
+        # A window shorter than r60's 60-session lag used to wrap to a
+        # negative index and compute a different return silently; a NaN
+        # floor compares False against every price and admits everything.
+        from tradingagents.screening.llm import resolve_screening_config
+
+        for overrides in ({"screening_required_bars": 40},
+                          {"screening_required_bars": 61.5},
+                          {"screening_min_price": float("nan")},
+                          {"screening_min_adv20_usd": -1.0},
+                          {"screening_min_price": True}):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValueError):
+                    EligibilityThresholds.from_config(overrides)
+                with self.assertRaises(ScreeningConfigError):
+                    resolve_screening_config(_base_config(**overrides))
+        self.assertEqual(
+            EligibilityThresholds.from_config({"screening_required_bars": 80}).required_bars, 80)
+
     def test_price_threshold_is_inclusive_at_five_dollars(self):
         sessions = session_dates_ending_at(_AS_OF, 61)
         at_threshold = _bars_df(sessions, [5.0] * 61, 400_000.0)
@@ -1449,6 +1468,35 @@ class SelectionCacheTests(unittest.TestCase):
         self.assertEqual(len(plan.top20), 19)
         self.assertEqual(plan.scan_stats["selection_shortfall"], 1)
         self.assertEqual(plan.scan_stats["eligible"], 20)
+
+    def test_entry_gate_fingerprint_matches_the_scan_fingerprint(self):
+        # The scan seals with the cleaned RoleSpec; the execution entry gate
+        # recomputes from raw config (spec=None). A blank endpoint or padded
+        # model used to differ ("" vs None) and block every legacy entry.
+        from tradingagents.screening.llm import resolve_screening_config
+
+        config = _base_config(screening_backend_url="", screening_model=" screen-fake ")
+        spec = resolve_screening_config(config)["spec"]
+        self.assertEqual(SelectionStore.config_fingerprint(config, spec),
+                         SelectionStore.config_fingerprint(config, None))
+
+    def test_selection_outside_presented_pool_stops_the_round(self):
+        config = _base_config(allow_shorts=True)
+        universe, bars = _two_sided_screening_world()
+        deps = _deps(universe, bars, positions=[])
+
+        def invoke(candidates, sector_plan, *, select_n, max_per_sector):
+            picked = _fake_llm_invoke(None)(
+                candidates, sector_plan, select_n=select_n, max_per_sector=max_per_sector)
+            picked[-1] = picked[-1].model_copy(update={"symbol": "NOTINPOOL"})
+            return picked
+
+        deps.screening_invoke_fn = invoke
+        plan = prepare_screening_round(config, deps=deps, now=_NOW)
+        self.assertTrue(plan.stopped)
+        self.assertEqual(plan.reason, "SCREENING_INVALID_OUTPUT")
+        self.assertIsNone(
+            SelectionStore(config["screening_selection_cache_path"]).load_raw())
 
     def test_corrupted_and_future_dated_cache_invalid(self):
         config = _base_config()

@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from tradingagents.app_identity import APP_HOME
 from typing import Any, Dict, List, Optional
@@ -44,6 +45,7 @@ DEFAULT_SAFETY_CONFIG: Dict[str, Any] = {
 }
 
 _SAFETY_HOME = APP_HOME / "safety"
+_MARKET_TZ = ZoneInfo("America/New_York")
 
 
 class SafetyStateError(RuntimeError):
@@ -145,8 +147,11 @@ OBSERVATION_HALT_CODES = frozenset({
 
 
 def _today(when: Optional[str] = None) -> str:
+    # The budget day is the US market date, not the machine's local date: a
+    # host east of New York crosses local midnight mid-session and would
+    # otherwise grant one trading day two budgets.
     if when is None:
-        return date.today().isoformat()
+        return datetime.now(_MARKET_TZ).date().isoformat()
     if not isinstance(when, str) or date.fromisoformat(when).isoformat() != when:
         raise ValueError("Safety accounting date must be YYYY-MM-DD")
     return when

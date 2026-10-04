@@ -180,6 +180,24 @@ class LLMBudgetTests(unittest.TestCase):
             guard.record_llm_tokens(2_000_000, when="2026-07-10")
             self.assertTrue(guard.check_llm_budget(when="2026-07-11").allowed)
 
+    def test_default_budget_day_is_the_us_market_date(self):
+        # 03:00 UTC on Jan 2 is still Jan 1 in New York. A machine-local
+        # date (e.g. UTC+8, already Jan 2 at 11:00) would split one US
+        # session's spend across two budget days.
+        import tradingagents.safety.guardrails as guardrails
+
+        class FixedClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                instant = datetime(2030, 1, 2, 3, 0, tzinfo=timezone.utc)
+                return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(guardrails, "datetime", FixedClock):
+            guard = make_guard(tmp, daily_llm_token_budget=1_000_000)
+            guard.record_llm_tokens(1_500_000)
+            self.assertEqual(guard.llm_tokens_used(when="2030-01-01"), 1_500_000)
+            self.assertFalse(guard.check_llm_budget().allowed)
+
     def test_zero_budget_means_unlimited(self):
         with tempfile.TemporaryDirectory() as tmp:
             guard = make_guard(tmp, daily_llm_token_budget=0)

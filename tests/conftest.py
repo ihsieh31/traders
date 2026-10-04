@@ -38,6 +38,50 @@ def isolate_operator_llm_endpoint(monkeypatch):
     monkeypatch.delenv("TRADINGBUFFETT_OPENAI_BASE_URL", raising=False)
 
 
+_CREDENTIAL_MARKERS = (
+    "API_KEY", "SECRET", "TOKEN", "PASSWORD", "BASE_URL", "ENDPOINT",
+    "CHAT_ID", "WEBHOOK",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_operator_credentials(monkeypatch):
+    """Run every test as CI does: without the operator's credentials.
+
+    Importing the package loads this checkout's ``.env``, so on a configured
+    machine a test that forgot to inject a fake client silently reached the
+    real Paper API and could pass or fail differently than in CI.
+    """
+    import os
+
+    for key in list(os.environ):
+        upper = key.upper()
+        if upper.startswith("TRADINGBUFFETT_") and any(m in upper for m in _CREDENTIAL_MARKERS):
+            monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def block_external_network(monkeypatch):
+    """The suite is offline by contract; refuse any non-loopback connection."""
+    import ipaddress
+    import socket
+
+    original_connect = socket.socket.connect
+
+    def guarded_connect(sock, address):
+        if sock.family in (socket.AF_INET, socket.AF_INET6):
+            host = address[0]
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = host == "localhost"
+            if not loopback:
+                raise OSError(f"network access blocked in tests: {host}")
+        return original_connect(sock, address)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+
+
 @pytest.fixture(autouse=True)
 def restore_global_trading_config():
     """Snapshots and restores the process-wide trading config around each test.

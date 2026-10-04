@@ -48,6 +48,8 @@ TREND_EPSILON = 1e-12
 SCREENING_DATA_FEED = "sip"
 
 FACTOR_KEYS = ("adv20", "r5", "r20", "r60", "vol20", "volume_ratio", "trend")
+# The longest factor lag (r60) plus the as_of session itself.
+MIN_REQUIRED_BARS = 61
 
 # score = 100*(0.20*p_adv20 + 0.25*p_r20 + 0.25*p_r60 + 0.15*(1-p_vol20)
 #              + 0.15*p_volume_ratio)
@@ -80,6 +82,22 @@ class EligibilityThresholds:
         if isinstance(self.min_market_cap_usd, bool) or not math.isfinite(threshold) or threshold <= 0:
             raise ValueError("screening_min_market_cap_usd must be positive and finite")
         object.__setattr__(self, "min_market_cap_usd", threshold)
+        # A NaN floor compares False against every value and admits everything.
+        for name, key in (("min_price", "screening_min_price"),
+                          ("min_adv20_usd", "screening_min_adv20_usd")):
+            raw = getattr(self, name)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key} must be finite and non-negative") from exc
+            if isinstance(raw, bool) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{key} must be finite and non-negative")
+            object.__setattr__(self, name, value)
+        # r60 needs closes[t-60]; a shorter window wraps to a negative index
+        # and silently measures a different return.
+        bars = self.required_bars
+        if isinstance(bars, bool) or not isinstance(bars, int) or bars < MIN_REQUIRED_BARS:
+            raise ValueError(f"screening_required_bars must be an integer >= {MIN_REQUIRED_BARS}")
 
     @classmethod
     def from_config(cls, config: Optional[dict]) -> "EligibilityThresholds":
@@ -89,11 +107,14 @@ class EligibilityThresholds:
         )
         if isinstance(raw_market_cap_threshold, bool):
             raise ValueError("screening_min_market_cap_usd must be positive and finite")
+        raw_bars = cfg.get("screening_required_bars", cls.required_bars)
+        if isinstance(raw_bars, float) and raw_bars.is_integer():
+            raw_bars = int(raw_bars)
         return cls(
-            min_price=float(cfg.get("screening_min_price", cls.min_price)),
-            min_adv20_usd=float(cfg.get("screening_min_adv20_usd", cls.min_adv20_usd)),
+            min_price=cfg.get("screening_min_price", cls.min_price),
+            min_adv20_usd=cfg.get("screening_min_adv20_usd", cls.min_adv20_usd),
             min_market_cap_usd=raw_market_cap_threshold,
-            required_bars=int(cfg.get("screening_required_bars", cls.required_bars)),
+            required_bars=raw_bars,
         )
 
 
@@ -154,12 +175,19 @@ class ScanStats:
     excluded: Dict[str, int] = field(default_factory=dict)
     eligible: int = 0
     records: List[dict] = field(default_factory=list)
+    # symbol -> its records, extended lazily: a reverse scan of the whole
+    # universe per exclusion was quadratic in the universe size.
+    _by_symbol: Dict[Any, List[dict]] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _indexed: int = field(default=0, init=False, repr=False, compare=False)
 
     def record(self, reason: str, symbol=None) -> None:
         self.excluded[reason] = self.excluded.get(reason, 0) + 1
         if symbol is not None:
-            for row in reversed(self.records):
-                if row["symbol"] == symbol and row["reason"] is None:
+            for row in self.records[self._indexed:]:
+                self._by_symbol.setdefault(row["symbol"], []).append(row)
+            self._indexed = len(self.records)
+            for row in reversed(self._by_symbol.get(symbol, ())):
+                if row["reason"] is None:
                     row.update(status="excluded", reason=reason, category=reason_category(reason))
                     break
 

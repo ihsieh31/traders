@@ -109,7 +109,7 @@ class RegimeAssessment:
             ),
             f"- **Liquidity**: {self.liquidity_state}"
             + (
-                f" (recent dollar volume {self.metrics['liquidity_ratio']:.2f}x its baseline)"
+                f" (recent share volume {self.metrics['liquidity_ratio']:.2f}x its baseline)"
                 if "liquidity_ratio" in self.metrics
                 else ""
             ),

@@ -20,6 +20,9 @@ _KEYWORD_RES = {
     action: re.compile(rf"\b{action}\b")
     for action in ("LONG", "SHORT", "NEUTRAL", "BUY", "SELL", "HOLD")
 }
+_PROPOSAL_RE = re.compile(
+    r"FINAL TRANSACTION PROPOSAL: \*\*(LONG|SHORT|NEUTRAL|BUY|SELL|HOLD)\*\*"
+)
 
 
 class SignalProcessor:
@@ -43,24 +46,19 @@ class SignalProcessor:
         # First try deterministic extraction to avoid unnecessary LLM calls
         content = str(full_signal or "").upper()
 
-        # Check for trading-mode keywords first (LONG / SHORT / NEUTRAL)
-        for action in ("LONG", "SHORT", "NEUTRAL"):
-            pattern = f"FINAL TRANSACTION PROPOSAL: **{action}**"
-            if pattern in content:
-                return action
-
-        # Check for investment-mode keywords (BUY / SELL / HOLD)
-        for action in ("BUY", "SELL", "HOLD"):
-            pattern = f"FINAL TRANSACTION PROPOSAL: **{action}**"
-            if pattern in content:
-                return action
+        # The decision text may quote an earlier proposal (e.g. the trader's)
+        # before stating its own; the LAST explicit proposal is the decision.
+        proposals = _PROPOSAL_RE.findall(content)
+        if proposals:
+            return proposals[-1]
 
         # Fallback: standalone keyword search in the last 100 characters
         # (word-boundary only, so "BUYBACK" or "SHORTSELL" cannot match).
+        # Two different actions there are ambiguous, not ranked by priority.
         tail = content[-100:]
-        for action in ("LONG", "SHORT", "NEUTRAL", "BUY", "SELL", "HOLD"):
-            if _KEYWORD_RES[action].search(tail):
-                return action
+        in_tail = {action for action in ALLOWED_SIGNALS if _KEYWORD_RES[action].search(tail)}
+        if len(in_tail) == 1:
+            return in_tail.pop()
 
         # If deterministic parsing fails, let the LLM infer. Its response is
         # untrusted free text (it may quote rationale or injected content):

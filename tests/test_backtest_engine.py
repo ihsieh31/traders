@@ -448,6 +448,20 @@ class WalkForwardTests(unittest.TestCase):
         self.assertIsNotNone(result.full_period)
         self.assertEqual(result.full_period.metrics["num_periods"], 29)
 
+    def test_signal_between_windows_applies_at_the_next_window(self):
+        # Window 1 ends Fri 2026-01-16, window 2 starts Mon 2026-01-19. The
+        # full-period replay applies a Saturday signal on Monday; the window
+        # replay used to drop it from both windows.
+        prices = make_prices([100 + i for i in range(20)])
+        result = run_walk_forward(
+            prices, {"2026-01-17": "BUY"}, window_bars=10, commission=0.0,
+            slippage_model="none",
+        )
+        first, second = result.windows
+        self.assertEqual(first["metrics"]["final_equity"], 100_000.0)
+        self.assertGreater(second["metrics"]["final_equity"], 100_000.0)
+        self.assertEqual(len(result.full_period.orders), 1)
+
     def test_rejects_tiny_window(self):
         prices = make_prices([100, 101, 102])
         with self.assertRaises(ValueError):

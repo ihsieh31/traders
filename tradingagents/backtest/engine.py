@@ -366,6 +366,9 @@ def run_walk_forward(
 
     boundaries = list(range(0, len(frame), window_bars))
     windows: List[dict] = []
+    # A signal dated after one window's last bar (a weekend, a halt) applies
+    # on the next window's first bar, exactly as the full-period replay does.
+    previous_last: Optional[str] = None
     for start in boundaries:
         end = start + window_bars
         # Absorb a too-short trailing remainder into the final window.
@@ -374,8 +377,10 @@ def run_walk_forward(
         chunk = frame.iloc[start:end]
         if len(chunk) < 2:
             break
+        last = chunk.index[-1].date().isoformat()
         window_signals = {d: a for d, a in signals.items()
-                          if chunk.index[0].date().isoformat() <= d <= chunk.index[-1].date().isoformat()}
+                          if (previous_last is None or d > previous_last) and d <= last}
+        previous_last = last
         result = run_backtest(chunk, window_signals, **backtest_kwargs)
         windows.append(
             {

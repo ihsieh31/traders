@@ -152,14 +152,19 @@ class SelectionStore:
 
         method = screening_method(config)
 
-        backend = config.get("screening_backend_url")
+        from tradingagents.llm_clients.roles import _clean
+
+        # Without a spec (the execution entry gate), clean the raw values
+        # exactly as resolve_screening_config builds the spec the scan sealed
+        # with, or a blank endpoint ("" vs None) blocks every entry.
+        backend = _clean(config.get("screening_backend_url"))
         if spec is not None:
             provider = spec.provider
             model = spec.model
             backend = spec.backend_url
         else:
-            provider = config.get("screening_provider")
-            model = config.get("screening_model")
+            provider = _clean(config.get("screening_provider"))
+            model = _clean(config.get("screening_model"))
         if method == "exclusion":
             provider, model, backend = "deterministic", FORMULA_VERSION, None
         if provider == "local_openai" or (
@@ -231,8 +236,6 @@ class SelectionStore:
         if seal != _integrity_digest(payload):
             return None
 
-        select_n = int(config.get("screening_select_n", 20))
-        top_k = int(config.get("screening_top_k", 40))
         try:
             if int(payload.get("schema_version", -1)) != SCHEMA_VERSION:
                 return None

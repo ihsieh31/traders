@@ -51,6 +51,26 @@ class NasdaqMarketCapTests(unittest.TestCase):
             self.assertEqual(cached["source"], "nasdaq_screener")
             self.assertEqual(cached["market_caps"], expected)
 
+    def test_share_class_symbols_use_the_broker_dot_notation(self):
+        # Nasdaq lists Berkshire as "BRK/B"; Alpaca trades it as "BRK.B".
+        # Without the mapping the stock always failed the market-cap gate.
+        rows = [{"symbol": "BRK/B", "marketCap": "1,104,258,841,186"},
+                {"symbol": "AAA", "marketCap": "300000000"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            with patch.object(universe_module, "_download_nasdaq_stock_data",
+                              return_value=_nasdaq_payload(rows)):
+                caps = fetch_nasdaq_market_caps(cache_dir=cache_dir, today=_TODAY)
+            self.assertEqual(caps["BRK.B"], 1_104_258_841_186.0)
+            self.assertNotIn("BRK/B", caps)
+            # A cache written before the mapping existed is read the same way.
+            cache_path = cache_dir / f"nasdaq_{_TODAY.isoformat()}.json"
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached["market_caps"] = {"BRK/B": 5e11}
+            cache_path.write_text(json.dumps(cached), encoding="utf-8")
+            again = fetch_nasdaq_market_caps(cache_dir=cache_dir, today=_TODAY)
+            self.assertEqual(again, {"BRK.B": 5e11})
+
     def test_next_day_gets_a_new_daily_cache(self):
         payloads = [
             _nasdaq_payload([{"symbol": "AAA", "marketCap": "300000000"}]),

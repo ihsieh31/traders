@@ -226,6 +226,13 @@ def _coerce_et_time(raw: Any) -> Optional[time]:
             dt = dt.astimezone(EASTERN)
         return dt.timetz().replace(tzinfo=None)
     text = str(raw).strip()
+    # A full datetime string is an instant: convert its offset to ET rather
+    # than reading the wall time in some other zone as an ET time.
+    if "T" in text or " " in text:
+        try:
+            return _coerce_et_time(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError:
+            pass
     # Accept "HH:MM", "HH:MM:SS", or full datetimes containing a time part.
     try:
         # Plain HH:MM[:SS] possibly with trailing timezone like "-05:00".

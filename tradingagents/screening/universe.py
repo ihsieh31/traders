@@ -105,6 +105,11 @@ def _accepts_page_token(client: Any) -> bool:
         return False
 
 
+def _nasdaq_symbol(symbol: Any) -> str:
+    """Nasdaq writes share classes as "BRK/B"; the broker trades "BRK.B"."""
+    return normalize_symbol(symbol).replace("/", ".")
+
+
 def _market_cap_cache_dir() -> Path:
     return app_home() / "cache" / "market_cap"
 
@@ -172,7 +177,7 @@ def _market_caps_from_nasdaq_payload(payload: dict) -> tuple[dict[str, float], i
     for row in rows:
         if not isinstance(row, dict):
             continue
-        symbol = normalize_symbol(row.get("symbol"))
+        symbol = _nasdaq_symbol(row.get("symbol"))
         market_cap = _parse_market_cap(row.get("marketCap"))
         if symbol and market_cap is not None:
             if symbol in market_caps and market_caps[symbol] != market_cap:
@@ -200,7 +205,7 @@ def _read_market_cap_cache(path: Path, *, today: date) -> Optional[dict[str, flo
             return None
         market_caps = {}
         for raw_symbol, raw_cap in payload["market_caps"].items():
-            symbol = normalize_symbol(raw_symbol)
+            symbol = _nasdaq_symbol(raw_symbol)
             cap = _parse_market_cap(raw_cap)
             if symbol and cap is not None:
                 market_caps[symbol] = cap

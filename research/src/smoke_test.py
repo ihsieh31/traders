@@ -228,6 +228,10 @@ def check_calendar_cache() -> None:
             )
 
         common.fetch_trading_calendar = _no_network
+        # The refetch branch checks credentials before it fetches. Without
+        # keys (CI, a fresh checkout) that SystemExit would mask the hook
+        # this test is waiting for.
+        common.require_credentials = lambda: None
 
         # A request strictly inside the cached range is served from cache.
         lo, hi = sessions[0], sessions[-1]

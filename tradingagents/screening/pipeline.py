@@ -305,6 +305,9 @@ def _run_scan(
 
     if not isinstance(candidates, list) or (not deterministic and len(candidates) != effective_n):
         return _stopped("SCREENING_INVALID_OUTPUT", "Screening response does not match the bounded selection count", scan_stats=scan_stats)
+    pool_rows = {item.symbol: item for item in top40}
+    if any(getattr(candidate, "symbol", None) not in pool_rows for candidate in candidates):
+        return _stopped("SCREENING_INVALID_OUTPUT", "Screening selected a symbol outside the presented pool", scan_stats=scan_stats)
     scan_stats["selected"] = len(candidates)
     scan_stats["selection_shortfall"] = select_n - len(candidates)
     scan_stats["screening_llm_symbols"] = [] if deterministic else [item.symbol for item in top40]
@@ -338,7 +341,7 @@ def _run_scan(
                 "symbol": candidate.symbol,
                 "screening_score": float(candidate.screening_score),
                 "short_reason": candidate.short_reason,
-                **next(item.factor_row() for item in top40 if item.symbol == candidate.symbol),
+                **pool_rows[candidate.symbol].factor_row(),
             }
             for candidate in candidates
         ],

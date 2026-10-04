@@ -24,7 +24,7 @@ verified close's freed value credited deterministically from the snapshot.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isfinite
+from math import floor, isfinite
 from typing import Any, Mapping, Optional
 
 from tradingagents.execution.authority import broker_status_to_local, canonical_symbol
@@ -472,7 +472,9 @@ def evaluate_opening_exposure(
             limits,
         )
 
-    clipped = round(effective, 2)
+    # Round DOWN to the cent (as clip_to_portfolio_stop_risk does): rounding
+    # to nearest could exceed the very headroom or cash that bound it.
+    clipped = min(effective, floor(effective * 100 + 1e-6) / 100)
     limits["clipped"] = clipped < proposed
     return ExposureDecision(
         approved=True,

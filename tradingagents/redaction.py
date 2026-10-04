@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import urllib.parse
@@ -41,8 +42,18 @@ _SECRET_VALUE_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}"),
 )
 
+# Shortest text any rule above or a configured value (>=16 chars) can match:
+# "xoxb-" plus 10 characters. Shorter strings cannot carry a credential.
+_MIN_SECRET_TEXT_LEN = 15
+
 # Retain old credentials too: delayed failures may contain a rotated key.
 _CONFIGURED_SECRET_VALUES: Optional[tuple[str, ...]] = None
+
+# Raw environment the configured values were last refreshed from. Rescanning
+# os.environ for every scrubbed string made redaction O(environment) per
+# string (most of a long-run journal save); comparing the raw mapping is one
+# C-level dict comparison, and any change still triggers a full rescan.
+_ENV_SNAPSHOT: Optional[dict] = None
 
 
 def register_secret_values(config: dict) -> None:
@@ -57,11 +68,18 @@ def register_secret_values(config: dict) -> None:
 
 
 def _configured_secret_values() -> tuple[str, ...]:
-    register_secret_values(dict(os.environ))
+    global _ENV_SNAPSHOT
+    raw = getattr(os.environ, "_data", None)
+    current = raw if isinstance(raw, dict) else None
+    if current is None or current != _ENV_SNAPSHOT:
+        register_secret_values(dict(os.environ))
+        _ENV_SNAPSHOT = dict(current) if current is not None else None
     return _CONFIGURED_SECRET_VALUES or ()
 
 
 def _scrub_secret_values(text: str, *, redacted: str = "***") -> str:
+    if len(text) < _MIN_SECRET_TEXT_LEN:
+        return text
     # Keep the "api_key=" prefix readable so the scrubbed message stays
     # diagnosable, then blanket-redact the bare token shapes.
     text = re.sub(
@@ -107,7 +125,11 @@ def sanitize_url(url: Any) -> str:
 
 
 def is_sensitive_key(key: Any) -> bool:
-    normalized = str(key).strip().lower()
+    return _is_sensitive_name(str(key).strip().lower())
+
+
+@functools.lru_cache(maxsize=4096)
+def _is_sensitive_name(normalized: str) -> bool:
     if normalized in SAFE_TOKEN_COUNT_KEYS:
         return False
     return (

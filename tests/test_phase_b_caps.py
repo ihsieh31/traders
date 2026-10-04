@@ -101,6 +101,14 @@ class SymbolCapTests(unittest.TestCase):
         self.assertTrue(decision.approved)
         self.assertEqual(decision.notional, 2000.0)
 
+    def test_clipped_notional_never_rounds_above_available_cash(self):
+        # Cash 1000.006 used to round to 1000.01: a fraction of a cent of buying
+        # power the account does not have.
+        decision = _evaluate(snapshot=_snapshot(cash=1000.006), proposed_notional=5000.0)
+        self.assertTrue(decision.approved)
+        self.assertEqual(decision.notional, 1000.0)
+        self.assertLessEqual(decision.notional, 1000.006)
+
     def test_at_or_over_cap_rejects_any_increase(self):
         # 28% held with a 20% cap: increases are forbidden.
         snapshot = _snapshot(positions=[_pos("AAPL", 100, 28000.0)])

@@ -34,11 +34,22 @@ def validate_trade_intent(trade_intent: Any) -> tuple[Optional[dict[str, Any]], 
         return None, f"Invalid trade intent: {sanitize_for_log(str(exc))}"
 
 
+# Broker side implied by each canonical planned action (agents.schemas).
+_ACTION_SIDES = {
+    "open_long": "buy",
+    "close_short": "buy",
+    "open_short": "sell",
+    "close_long": "sell",
+}
+
+
 def _planned_order_specs(intent: dict[str, Any], dollar_amount: Optional[float]):
     """Map TradeIntent.planned_actions to logical order specs.
 
     Returns list of {role, seq, side, order_type, quantity, notional}.
-    HOLD/STAY (order_type none) => [] (no broker calls).
+    HOLD/STAY (order_type none) => [] (no broker calls). A step without a
+    side takes the one its canonical action implies; a side that cannot be
+    derived raises instead of being guessed.
     """
     planned = intent.get("planned_actions") or []
     actionable = [a for a in planned if isinstance(a, dict) and a.get("order_type") != "none"]
@@ -62,8 +73,10 @@ def _planned_order_specs(intent: dict[str, Any], dollar_amount: Optional[float])
     multi = len(actionable) > 1
     for i, a in enumerate(actionable):
         order_type = str(a.get("order_type") or "market")
-        side = str(a.get("side") or "").lower()
         action_name = str(a.get("action") or "")
+        side = str(a.get("side") or _ACTION_SIDES.get(action_name.lower(), "")).lower()
+        if not side:
+            raise ValueError(f"planned action {action_name!r} has no broker side")
         if multi:
             # close-then-open flip: first leg is the close.
             role = "close" if i == 0 else "open"
@@ -88,17 +101,13 @@ def _planned_order_specs(intent: dict[str, Any], dollar_amount: Optional[float])
             {
                 "role": role,
                 "seq": i,
-                "side": side or ("sell" if "close" in action_name and False else "buy"),
+                "side": side,
                 "order_type": order_type,
                 "action_name": action_name,
                 "quantity": quantity,
                 "notional": notional,
             }
         )
-    # Fix side when planner omitted it: close LONG => sell, close SHORT => buy.
-    for s in specs:
-        if not s["side"]:
-            s["side"] = "sell" if s["role"] == "close" else "buy"
     return specs
 
 

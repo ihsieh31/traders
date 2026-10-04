@@ -171,6 +171,15 @@ def sanitize_error(detail: Any) -> str:
     return text[:600]
 
 
+def _marker_in(marker: str, text: str) -> bool:
+    """Numeric status markers must be whole numbers ("4031 ms" is not 403)."""
+    if marker.isdigit():
+        import re
+
+        return re.search(rf"(?<!\d){marker}(?!\d)", text) is not None
+    return marker in text
+
+
 def classify_provider_error(exc: BaseException) -> str:
     """Classify a provider exception as "transient" or "permanent".
 
@@ -193,10 +202,10 @@ def classify_provider_error(exc: BaseException) -> str:
     if status in ("RESOURCE_EXHAUSTED", "UNAVAILABLE"):
         return "transient"
     for marker in _PERMANENT_TEXT_MARKERS:
-        if marker in text:
+        if _marker_in(marker, text):
             return "permanent"
     for marker in _TRANSIENT_TEXT_MARKERS:
-        if marker in text:
+        if _marker_in(marker, text):
             return "transient"
     return "permanent"
 

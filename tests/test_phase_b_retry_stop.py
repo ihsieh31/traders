@@ -54,6 +54,17 @@ class RetryPolicyValidationTests(unittest.TestCase):
         )
         self.assertEqual(classify_provider_error(ValueError("401 unauthorized")), "permanent")
 
+    def test_status_markers_in_text_match_whole_numbers_only(self):
+        # Digits inside durations or token counts are not HTTP statuses:
+        # these used to be "permanent" and stopped the round on a timeout.
+        self.assertEqual(
+            classify_provider_error(TimeoutError("request timed out after 4031 ms")), "transient")
+        self.assertEqual(
+            classify_provider_error(RuntimeError("Rate limit reached: Used 29403, Requested 812")),
+            "transient")
+        self.assertEqual(classify_provider_error(RuntimeError("HTTP 403: quota")), "permanent")
+        self.assertEqual(classify_provider_error(RuntimeError("status=401")), "permanent")
+
     def test_cloudflare_5xx_family_and_generic_5xx_are_transient(self):
         # A router gateway's Cloudflare 520 stopped a Phase-D round as a
         # "permanent" failure: the extended origin-error family (520-527,

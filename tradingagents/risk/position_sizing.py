@@ -216,12 +216,13 @@ class PositionSizer:
             return _rejection(f"Invalid requested notional: {requested_notional}.")
 
         notes = []
+        short_side = str(side).strip().lower() in ("sell", "short")
         if stop_loss_price is not None:
             try:
                 stop = float(stop_loss_price)
             except (TypeError, ValueError):
                 return _rejection("Invalid executable stop-loss price.")
-            stop_distance = stop - price if str(side).lower() in ("sell", "short") else price - stop
+            stop_distance = stop - price if short_side else price - stop
             if not math.isfinite(stop) or stop <= 0 or stop_distance <= 0:
                 return _rejection("Invalid executable stop-loss price.")
         elif atr is not None and math.isfinite(atr) and atr > 0.0:
@@ -274,10 +275,19 @@ class PositionSizer:
                 notes,
             )
 
-        notional = round(notional, 2)
+        # Round DOWN to the cent: rounding to nearest could lift the size a
+        # fraction of a cent above the very cap that bound it. The epsilon
+        # absorbs binary representation error (0.29 * 100 == 28.999...).
+        notional = math.floor(notional * 100 + 1e-6) / 100
+        if notional < params.min_notional:
+            return _rejection(
+                f"Sized notional {notional:.2f} is below the minimum order "
+                f"size {params.min_notional:.2f} (binding cap: {binding[0]}).",
+                notes,
+            )
         quantity = notional / price
         risk_amount = round(quantity * stop_distance, 2)
-        if str(side).strip().lower() in ("sell", "short"):
+        if short_side:
             stop_loss_price = round(price + stop_distance, 6)
         else:
             stop_loss_price = round(price - stop_distance, 6)

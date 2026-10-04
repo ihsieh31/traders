@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from tradingagents.redaction import sanitize_for_log
 
+import math
 from typing import Any, Callable, Optional
 from pathlib import Path
 from tradingagents.execution.authority import BrokerSnapshot
@@ -389,7 +390,8 @@ def _execute_core(
                 if open_spec.get("notional") is None:
                     continue
                 original = float(open_spec["notional"])
-                clipped_leg = round(original * scale, 2)
+                # Down to the cent: the scaled legs must not sum above the cap.
+                clipped_leg = math.floor(original * scale * 100 + 1e-6) / 100
                 if clipped_leg < original:
                     warnings.append(
                         f"Opening notional clipped from ${original:,.2f} to "

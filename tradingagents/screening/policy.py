@@ -37,7 +37,10 @@ class ExclusionThresholds:
 
 
 def validate_screening_policy(config):
+    from .metrics import EligibilityThresholds
+
     method = screening_method(config)
+    EligibilityThresholds.from_config(config)
     for key, default in (("screening_select_n", 20), ("screening_top_k", 40),
                          ("screening_max_per_sector", 5), ("screening_analysis_limit", 20)):
         raw = config.get(key, default)
