@@ -11,6 +11,7 @@ eval_data/
 data/
 .opencode/
 .zcode/
+.zcodeignore
 .venv-p2/
 build/
 tradingagents/dataflows/data_cache/
